@@ -99,6 +99,28 @@ function ticketStarted(ticket) {
   return false;
 }
 
+const BOX_HOLD_REASONS = Object.freeze({
+  'runner-unreachable': 'runner unreachable',
+  'runner-restart': 'runner restart',
+  'no-box-definition': 'no box definition',
+  'definition-mismatch': 'definition mismatch',
+  'tree-mismatch': 'tree mismatch',
+  'no-share': 'no share',
+  'no-totals': 'no totals',
+  'queue-budget': 'queue budget',
+  'run-budget': 'run budget',
+  'box-build-budget': 'box build',
+  'box-build-failed': 'box build',
+  'box-build-interrupted': 'box build',
+  'outcome-unknown': 'outcome unknown',
+});
+
+function boxHoldReason(t) {
+  const h = t && t.verifyHold;
+  if (!h || t.state !== 'done' || t.loopStep !== 'verify' || h.step !== 'verify: box') return '';
+  return Object.prototype.hasOwnProperty.call(BOX_HOLD_REASONS, h.code) ? BOX_HOLD_REASONS[h.code] : 'unknown';
+}
+
 // `assign` below is the other dispatch door: without this copy the same act is
 // refused when typed and allowed when clicked. The SENTENCE is as load-bearing as
 // the predicate — it carries the fix instruction.
@@ -708,6 +730,7 @@ function shape(t, now, stallMs, projectDir = null) {
     // wire what core keeps apart on disk.
     mergeWaiting: str(t.mergeWaiting),
     mergeError: str(t.mergeError),
+    boxHold: boxHoldReason(t),
     cost: ticketCost(t, projectDir),
   };
 }
@@ -1481,7 +1504,7 @@ module.exports._internals = {
   confine, readTickets, readTicketsAt, readManifest, stallMsFor, shape,
   board, teams, projects, teamsRoot, projectsRoot, teamIndex, projectRootFor,
   teamCost, readTeamLedger, rollupTeam, parseTeamLedger, ticketCost, ticketTaskDir,
-  clodexHome, projectDirFor, nextTicketId, ticketTitle, extractTaskDir, ticketStarted,
+  clodexHome, projectDirFor, nextTicketId, ticketTitle, extractTaskDir, ticketStarted, BOX_HOLD_REASONS, boxHoldReason,
   atomicWriteFileSync, resolveProject, ticketTaskDirRefusal,
   confineOrThrow, confineUnder, stripFileTail, resolveTaskDir,
   taskDirRuleClause, ticketTaskDirLine, ticketTaskDirLineFor,

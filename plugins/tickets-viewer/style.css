@@ -742,3 +742,7 @@
 .tv-feed-row:hover {
   background: var(--surface-hover);
 }
+
+.tv-box-hold {
+  color: var(--error);
+}

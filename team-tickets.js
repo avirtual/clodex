@@ -20,7 +20,7 @@ const { trackedSessionIds: entrySessionIds } = require('./session-info');
 const { hostNotice } = require('./host-stamp');
 const { idleClearAfterMs, IDLE_CLEAR_MIN_MS } = require('./assistant-sleep');
 const { localHalf, failingNames } = require('./suite-client');
-const { boxVerdict, fallbackOf, pickRunner, runnerLoad, BUILD_BUDGET_MS } = require('./suite-client');
+const { boxVerdict, fallbackOf, FALLBACK_CODES, pickRunner, runnerLoad, BUILD_BUDGET_MS } = require('./suite-client');
 const {
   matchSeatRole, nameRole, defaultLeadSeat, ROLE_RE, RESERVED_ROLE_KEYS, STOCK_ROLE_DEFS,
   DEFAULT_ROLE_DISPATCH, TRUNK_HEAD, effectiveHandCap, DONE_VALUES, normalizeDone, NAME_RE: NODE_NAME_RE, TEST_RUNNER_HANDS, TEST_RUNNER_GATE, TEST_RUNNER_FALLBACK, TEST_RUNNER_WIRE_PUSH: WIRE_PUSH, TEST_RUNNER_POOL_MAX,
@@ -3281,11 +3281,13 @@ function createTicketMethods(deps, shared) {
       if (!client || typeof client.decideTally !== 'function') return '';
       let t;
       try { t = client.decideTally({ team: team.name }); } catch { return ''; }
-      if (!t || !(t.box || t.home)) return '; gate runs: none yet';
+      if (!t || !(t.box || t.home || t.held)) return '; gate runs: none yet';
       const flat = (v) => String(v).replace(/[\x00-\x1f\x7f]+/g, ' ').slice(0, 60);
       const why = (t.fallbacks || []).map((f) => `${flat(f.reason)} ${f.count}`).join(', ');
+      const heldWhy = (t.holds || []).map((f) => `${flat(f.reason)} ${f.count}`).join(', ');
+      const held = t.held ? `, ${t.held} held${heldWhy ? ` (${heldWhy})` : ''}` : '';
       const per = (t.runners || []).map((r) => `${flat(r.runner)} ${r.box} box, ${r.home} home`).join('; ');
-      return `; gate runs: ${t.box} decided by the box, ${t.home} fell back to home${why ? ` (${why})` : ''}${per ? `; per runner: ${per}` : ''}`;
+      return `; gate runs: ${t.box} decided by the box, ${t.home} fell back to home${why ? ` (${why})` : ''}${held}${per ? `; per runner: ${per}` : ''}`;
     },
 
     _runnerLabelTally(team, cur) {
@@ -3428,7 +3430,7 @@ function createTicketMethods(deps, shared) {
       }
       const released = (m) => {
         if (!(cur && cur.fallback === 'hold') || (m.testRunner && m.testRunner.fallback === 'hold')) return '';
-        const n = this._reverifyBoxHeld(m);
+        const n = this._reverifyBoxHeld(m, m.testRunner && m.testRunner.gate === 'on' ? 'fallback-home' : 'gate-off');
         return ` — re-verifying ${n} ticket${n === 1 ? '' : 's'} held at "${BOX_HOLD_STEP}"`;
       };
       if (fb != null && intent.gate == null && intent.hands == null) {
@@ -3497,8 +3499,9 @@ function createTicketMethods(deps, shared) {
         return;
       }
       if (intent.value === 'off') {
-        deps.setTeamTestRunner(team.name, null);
-        reply(`test runner of ${team.name} removed`);
+        const m = deps.setTeamTestRunner(team.name, null);
+        const n = this._reverifyBoxHeld(m, 'runner-off');
+        reply(`test runner of ${team.name} removed${n ? ` — re-verifying ${n} ticket${n === 1 ? '' : 's'} held at "${BOX_HOLD_STEP}"` : ''}`);
         return;
       }
       if (intent.value === 'add' || intent.value === 'rm') {
@@ -6206,6 +6209,7 @@ function createTicketMethods(deps, shared) {
       const reentry = ticket.state === 'done' && ticket.loopStep === 'verify' && !!ticket.verifyHold;
       // Read before the re-stamp below deletes `verifyHold`, or the reply prints "undefined" for the check.
       const heldAt = (ticket.verifyHold && ticket.verifyHold.step) || null;
+      const boxHeld = reentry && this._boxHeld(ticket);
       if (ticket.state !== 'open' && !reentry) {
         // Reachable only from a record the current arms do not produce (a legacy stamp): every class stamped today satisfies the re-entry gate,
         // which tests the stamp's presence, not its class.
@@ -6277,6 +6281,7 @@ function createTicketMethods(deps, shared) {
       // loopStep is stamped in the same write that closes it:
       // a process dying between close and a later stamp would leave a done ticket nothing ever nudges.
       const loopEligible = ticket.done === 'report' ? true : !!(ticket.worktree && ticket.worktree.branch && ticket.worktree.baseSha);
+      if (boxHeld) this._releaseBoxHold(ticket, session.name, 'task-done');
       if (loopEligible) {
         if (ticket.runnerPid && ticket.runnerOwner === RUNNER_OWNER) this._reapRunner(ticket.id, ticket.runnerPid);
         delete ticket.runnerPid;
@@ -6712,10 +6717,11 @@ function createTicketMethods(deps, shared) {
     async _boxDecide(team, ticket, cwd, opts) {
       const tr = team.testRunner;
       const kind = opts && opts.merge ? 'post-merge' : 'verify';
-      const ret = { decided: false, fallback: null, out: null, client: null, wire: tr.wire === 'pull' ? 'pull' : WIRE_PUSH, kind };
+      const ret = { decided: false, fallback: null, out: null, client: null, wire: tr.wire === 'pull' ? 'pull' : WIRE_PUSH, kind, jobId: null };
+      const next = kind === 'verify' && tr.fallback === 'hold' ? 'the ticket is held (fallback:hold)' : 'running the suite here';
       const fall = (code, why) => {
         const f = fallbackOf(code);
-        log.warn('ticket', `ticket ${ticket.id}: ${kind} box run did not decide (${f.fallback}) — ${why}; running the suite here`);
+        log.warn('ticket', `ticket ${ticket.id}: ${kind} box run did not decide (${f.fallback}) — ${why}; ${next}`);
         return { ...ret, ...f, why };
       };
       const client = typeof deps.getSuiteClient === 'function' ? deps.getSuiteClient() : null;
@@ -6777,8 +6783,9 @@ function createTicketMethods(deps, shared) {
         code = boxVerdict(out, def, tr.shares || []).fallbackCode;
       }
       ret.out = out;
+      ret.jobId = jobId || (out.record && out.record.jobId) || null;
       if (!code) return { ...ret, decided: true };
-      const id = jobId || (out.record && out.record.jobId) || null;
+      const id = ret.jobId;
       if (id && typeof client.cancel === 'function') {
         try {
           const c = await client.cancel(via.peer, id, ret.wire);
@@ -6795,7 +6802,7 @@ function createTicketMethods(deps, shared) {
       try {
         box.client.decided({
           team: team.name, kind: box.kind, ticket: String(ticket.id), wire: box.wire, box: box.out, local,
-          decidedBy: box.decided ? 'box' : 'home', fallback: box.decided ? null : box.fallback, fallbackCode: box.decided ? null : box.fallbackCode, ...(box.runner ? { runner: box.runner } : {}),
+          decidedBy: box.held ? null : box.decided ? 'box' : 'home', ...(box.held ? { held: true } : {}), fallback: box.decided ? null : box.fallback, fallbackCode: box.decided ? null : box.fallbackCode, ...(box.runner ? { runner: box.runner } : {}),
         });
       } catch (e) {
         log.warn('ticket', `ticket ${ticket.id}: box decision row dropped — ${e && e.message ? e.message : e}`);
@@ -6874,11 +6881,12 @@ function createTicketMethods(deps, shared) {
       if (box && !box.decided && !(opts && opts.merge) && gateRunner.fallback === 'hold') {
         const rec = (box.out && box.out.record) || null;
         const stamped = (rec && rec.env && rec.env.box) || {};
+        this._boxRow(team, ticket, { ...box, held: true }, null);
         return Object.assign(out, {
           held: true, decidedBy: null, fallback: box.fallback, fallbackCode: box.fallbackCode, fallbackClass: box.fallbackClass, fallbackWhy: box.why || null,
           error: `no box result (${box.fallback}): ${box.why || 'no reason given'}; not run on the home suite (fallback:hold)`,
           box: {
-            runner: null, jobId: (rec && rec.jobId) || null, treeHash: (rec && rec.treeHash) || null,
+            runner: null, jobId: box.jobId || (rec && rec.jobId) || null, treeHash: (rec && rec.treeHash) || null,
             definitionHash: stamped.definitionHash || null, image: stamped.imageId || null,
             fallbackCode: box.fallbackCode ?? null, fallbackClass: box.fallbackClass ?? null,
           },
@@ -6980,7 +6988,7 @@ function createTicketMethods(deps, shared) {
         const stamped = (rec && rec.env && rec.env.box) || {};
         out.box = {
           runner: box.decided ? box.runner || (this._runnerMembers(gateRunner)[0] || {}).peer || null : null,
-          jobId: (rec && rec.jobId) || null, treeHash: (rec && rec.treeHash) || null,
+          jobId: box.jobId || (rec && rec.jobId) || null, treeHash: (rec && rec.treeHash) || null,
           definitionHash: stamped.definitionHash || null, image: stamped.imageId || null,
           fallbackCode: box.decided ? null : box.fallbackCode ?? null, fallbackClass: box.decided ? null : box.fallbackClass ?? null,
         };
@@ -7309,7 +7317,8 @@ function createTicketMethods(deps, shared) {
       }
     },
 
-    _releaseBoxHold(ticket) {
+    _releaseBoxHold(ticket, by, cause) {
+      recordEvent(ticket, { kind: 'verify-release', by, cause });
       delete ticket.verifyHold;
       delete ticket.verifyPhase;
       ticket.suiteProvenance = { ...suiteProvenanceOf(ticket), verify: null };
@@ -7321,14 +7330,14 @@ function createTicketMethods(deps, shared) {
       return !!t && t.state === 'done' && t.loopStep === 'verify' && !!t.verifyHold && t.verifyHold.step === BOX_HOLD_STEP;
     },
 
-    _reverifyBoxHeld(team) {
+    _reverifyBoxHeld(team, cause) {
       let tickets;
       try { tickets = ticketsStore.load(team.root); } catch { return 0; }
       const own = this._ownRowFilter(team);
       const ids = [];
       for (const t of tickets) {
         if (!own(t) || !this._boxHeld(t)) continue;
-        this._releaseBoxHold(t);
+        this._releaseBoxHold(t, 'ticket-loop', cause);
         ids.push(t.id);
       }
       if (!ids.length) return 0;
@@ -7358,7 +7367,7 @@ function createTicketMethods(deps, shared) {
         reply(`error: ticket ${intent.id} is ${state} — only a ticket held at "${BOX_HOLD_STEP}" can be re-verified`);
         return;
       }
-      this._releaseBoxHold(ticket);
+      this._releaseBoxHold(ticket, session.name, 'task-verify');
       ticketsStore.save(team.root, tickets);
       log.info('intent', `task verify ${ticket.id} by ${session.name}`);
       ack(`ticket ${ticket.id} re-verifying (was held at "${BOX_HOLD_STEP}")`);
@@ -8928,8 +8937,9 @@ function createTicketMethods(deps, shared) {
       // The stored step renders verbatim, on both row shapes.
       const mergeErrorMark = (t) => (t.mergeError ? ` !! MERGE FAILED: ${t.mergeError}` : '');
       const capMark = (t) => (t.parked && t.parkedBy === 'cap' ? ` (parked: cap ${t.parkedCap || '?'})` : '');
+      const boxHoldMark = (t) => (this._boxHeld(t) ? ` held: box — ${(FALLBACK_CODES[t.verifyHold.code] || { reason: 'unknown' }).reason}` : '');
       const row = (t) =>
-        `${t.id} [${t.state}${t.parked ? ' parked' : ''}]${reportMark(t)} ${shownFor(t)} ${humanizeAge(now - (t.openedAt || now))} — ${t.title || '(untitled)'}${capMark(t)}${respecMark(t)}${mergeWaitingMark(t)}${mergeErrorMark(t)}`;
+        `${t.id} [${t.state}${t.parked ? ' parked' : ''}]${reportMark(t)}${boxHoldMark(t)} ${shownFor(t)} ${humanizeAge(now - (t.openedAt || now))} — ${t.title || '(untitled)'}${capMark(t)}${respecMark(t)}${mergeWaitingMark(t)}${mergeErrorMark(t)}`;
       const reportMark = (t) => (t.done === 'report' ? ' [report]' : '');
       const verifyMark = (t) => {
         if (t.state !== 'done' || t.verifyHold || (t.loopStep !== 'verify' && t.loopStep !== 'review')) return '';
@@ -8941,7 +8951,7 @@ function createTicketMethods(deps, shared) {
         return ` in verify: review round ${(Number(t.reviewRound) || 0) + 1}`;
       };
       const closedRow = (t) =>
-        `${t.id} [${t.state}]${reportMark(t)}${verifyMark(t)} ${shownFor(t)} closed ${humanizeAge(now - t.closedAt)} ago — ${t.title || '(untitled)'}${respecMark(t)}${mergeWaitingMark(t)}${mergeErrorMark(t)}`;
+        `${t.id} [${t.state}]${reportMark(t)}${verifyMark(t)}${boxHoldMark(t)} ${shownFor(t)} closed ${humanizeAge(now - t.closedAt)} ago — ${t.title || '(untitled)'}${respecMark(t)}${mergeWaitingMark(t)}${mergeErrorMark(t)}`;
       const lines = shown.map(row);
       const head = filter === 'open' ? `tickets on ${team.name}` : `tickets on ${team.name} [${filter}]`;
       const closed = filter === 'open' ? tickets.filter((t) => t.state !== 'open') : [];
