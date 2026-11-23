@@ -15,4 +15,5 @@ A `queue-operation` `enqueue` (string `content`) is written for anything queued 
 
 A subagent's report reaches the transcript as a plain `user` record with a string `content`, `promptId` set and no `isMeta`, `origin` or attachment — metadata-identical to a typed prompt (claude CLI 2.1.28x); only the `Another Claude session sent a message:` preamble plus the `<teammate-message teammate_id=…>` tag identifies it.
 A subagent's idle notification arrives in the same wrapper with a JSON body `{"type":"idle_notification",…,"result":"<text>"}`; the card shows `result`.
-clodent (0.5–0.9) writes `<hook-context event="…">…</hook-context>` as the first text block of the user record that carries the prompt; `HOOK_CONTEXT_RE` strips it before the `<`-led drop, or the session's first prompt is lost.
+clodent (0.5–0.9) writes `<hook-context event="…">…</hook-context>` as the first text block of the user record that carries the prompt; 0.10.0 writes the prompt first, then an optional `[clodent: previous turn interrupted by the user]` block, then the hook blocks, and parked dms ride as a trailing UserPromptSubmit block. `HOOK_CONTEXT_RE` strips it before the `<`-led drop, or the session's first prompt is lost.
+A complete `<hook-context event="…">…</hook-context>` element is removed anywhere in a record's text, even one a user quoted inside a prompt; an unclosed tag is kept.

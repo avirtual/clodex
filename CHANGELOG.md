@@ -14,6 +14,7 @@ blocks a release.
 ## Unreleased
 
 - Conversation pane, clodent seats: the first prompt of a session and its ticket card are no longer dropped when the record begins with hook context; tool rows no longer print `null files`, and a `[exit N]` line is read as the exit code.
+- Conversation pane, clodent seats: hook context is ignored wherever it appears in a message, so ticket cards and inbound messages no longer show it (needed for clodent 0.10.0, which writes the prompt first).
 
 ## 5.195.0 — 2026-11-23
 
