@@ -1792,7 +1792,7 @@ test('every bash hook spawn in this file carries HOOK_SPAWN, so a stalled child 
   const src = fs.readFileSync(__filename, 'utf8');
   const calls = src.match(/(?:spawn|spawnSync|execFileSync)\('bash'/g) || [];
   const guarded = src.match(/(?:spawn|spawnSync|execFileSync)\('bash',[^{]*\{\s*\.\.\.HOOK_SPAWN\b/g) || [];
-  assert.strictEqual(calls.length, 24);
+  assert.strictEqual(calls.length, 25);
   assert.strictEqual(guarded.length, calls.length);
   assert.deepStrictEqual(HOOK_SPAWN, { timeout: 30000, killSignal: 'SIGKILL' });
 });
@@ -2315,4 +2315,101 @@ test('ident hook: a subagent MCP call stamp ignores tool_use_id', () => {
   const { ident } = out.hookSpecificOutput.updatedInput;
   const nonce = ident.split('.')[3];
   assert.strictEqual(ident, identToken(crypto, ICRED, 'a1', 'gp', 'sess-1', nonce));
+});
+
+function seatHooksLiteral(p, clodent) {
+  const turn = (ev) => ({ type: 'command', command: `${p('turnScript')} ${ev}` });
+  return {
+    SessionStart: [{ matcher: '', hooks: [{ type: 'command', command: p('hook') }, ...(clodent ? [turn('SessionStart')] : [])] }],
+    ...(clodent ? { Stop: [{ matcher: '', hooks: [turn('Stop')] }] } : {}),
+    Notification: [{ matcher: '', hooks: [{ type: 'command', command: p('attnScript') }] }],
+    SubagentStart: [{ matcher: '', hooks: [{ type: 'command', command: p('identScript') }] }],
+    SubagentStop: [{ matcher: '', hooks: [{ type: 'command', command: p('subqScript') }] }],
+    PreCompact: [{ matcher: '', hooks: [{ type: 'command', command: p('attnScript') }] }],
+    UserPromptSubmit: [{
+      matcher: '',
+      hooks: [
+        ...(clodent ? [turn('UserPromptSubmit')] : []),
+        { type: 'command', command: p('ipcdeltaScript') },
+        { type: 'command', command: p('acksScript') },
+        { type: 'command', command: p('pendingScript') },
+        { type: 'command', command: p('selectionScript') },
+        { type: 'command', command: p('noticeScript') },
+        { type: 'command', command: p('ctxwarnScript') },
+        { type: 'command', command: p('pollGuardScript') },
+      ],
+    }],
+    PreToolUse: [{
+      matcher: 'Bash',
+      hooks: [
+        { type: 'command', command: p('bashLiveScript') },
+        { type: 'command', command: p('bashGuardScript'), onFailure: 'block', timeout: 15 },
+        { type: 'command', command: p('identScript') },
+      ],
+    }, {
+      matcher: 'mcp__clodex__term_exec|mcp__clodex__term_read|mcp__clodex__dm|mcp__clodex__exec',
+      hooks: [{ type: 'command', command: p('identScript') }],
+    }, {
+      matcher: '',
+      hooks: [{ type: 'command', command: p('pollGuardScript'), onFailure: 'block', timeout: 15 }],
+    }],
+    PostToolUse: [
+      { matcher: '', hooks: [{ type: 'command', command: p('pendingScript') }, { type: 'command', command: p('subqScript') }] },
+      { matcher: 'Bash', hooks: [{ type: 'command', command: p('bashConsoleScript') }] },
+      { matcher: 'Bash', hooks: [{ type: 'command', command: p('pollGuardScript') }] },
+      { matcher: 'Agent|Task', hooks: [{ type: 'command', command: p('pollGuardScript') }] },
+    ],
+    PostToolUseFailure: [{ matcher: 'Bash', hooks: [{ type: 'command', command: p('bashConsoleScript') }] }],
+  };
+}
+
+const CLODENT_HOOK_ARGS = [null, null, [], [], [], null, null, [], false, null, null, [], [], null, null, null, null, null, true];
+
+test('clodent turn hooks: the clodent registration is the claude one plus the turn script on SessionStart, Stop and first in UserPromptSubmit; the claude seat is unchanged and has no turn script', () => {
+  const REGISTRY_DIR = tmp();
+  const h = mk(REGISTRY_DIR);
+  h.setupClaudeHook('cl1', ...CLODENT_HOOK_ARGS);
+  h.setupClaudeHook('cc1');
+  const read = (n) => JSON.parse(fs.readFileSync(pathFor(REGISTRY_DIR, n, 'settings'), 'utf-8')).hooks;
+  const p = (n) => (k) => pathFor(REGISTRY_DIR, n, k);
+  assert.deepStrictEqual(read('cl1'), seatHooksLiteral(p('cl1'), true));
+  assert.deepStrictEqual(read('cl1').SessionStart[0].hooks[1], { type: 'command', command: `${p('cl1')('turnScript')} SessionStart` });
+  assert.deepStrictEqual(read('cl1').Stop, [{ matcher: '', hooks: [{ type: 'command', command: `${p('cl1')('turnScript')} Stop` }] }]);
+  assert.deepStrictEqual(read('cl1').UserPromptSubmit[0].hooks[0], { type: 'command', command: `${p('cl1')('turnScript')} UserPromptSubmit` });
+  assert.deepStrictEqual(read('cc1'), seatHooksLiteral(p('cc1'), false));
+  assert.ok(!JSON.stringify(read('cc1')).includes('turn.sh'));
+  assert.strictEqual(fs.existsSync(p('cc1')('turnScript')), false);
+});
+
+test('clodent turn hooks: the turn script is byte-pinned, swallows stdin, prints nothing and appends one turn_hook attn line per event', () => {
+  const REGISTRY_DIR = tmp();
+  const h = mk(REGISTRY_DIR);
+  h.setupClaudeHook('cl2', ...CLODENT_HOOK_ARGS);
+  const scriptPath = pathFor(REGISTRY_DIR, 'cl2', 'turnScript');
+  const attn = pathFor(REGISTRY_DIR, 'cl2', 'attn');
+  assert.strictEqual(fs.readFileSync(scriptPath, 'utf-8'), `#!/bin/bash
+cat > /dev/null
+printf '{"turn_hook":"%s"}\\n' "$1" >> "${attn}" 2>/dev/null || true
+exit 0
+`);
+  for (const ev of ['UserPromptSubmit', 'Stop', 'SessionStart']) {
+    const out = cp.execFileSync('bash', [scriptPath, ev], { ...HOOK_SPAWN, input: JSON.stringify({ hook_event_name: ev, prompt: 'x'.repeat(70000) }), encoding: 'utf-8' });
+    assert.strictEqual(out, '');
+  }
+  const lines = fs.readFileSync(attn, 'utf-8').split('\n').filter(Boolean).map((l) => JSON.parse(l));
+  assert.deepStrictEqual(lines, [{ turn_hook: 'UserPromptSubmit' }, { turn_hook: 'Stop' }, { turn_hook: 'SessionStart' }]);
+});
+
+test('clodent turn hooks: a clodent seat still receives parked messages through its UserPromptSubmit pending drain', () => {
+  const REGISTRY_DIR = tmp();
+  const h = mk(REGISTRY_DIR);
+  h.setupClaudeHook('cl3', ...CLODENT_HOOK_ARGS);
+  const pendDir = path.join(REGISTRY_DIR, 'pending', 'cl3');
+  fs.mkdirSync(pendDir, { recursive: true });
+  fs.writeFileSync(path.join(pendDir, 'm0.json'), JSON.stringify({ text: 'parked for clodent' }));
+  const ups = JSON.parse(fs.readFileSync(pathFor(REGISTRY_DIR, 'cl3', 'settings'), 'utf-8')).hooks.UserPromptSubmit[0].hooks.map((x) => x.command);
+  assert.ok(ups.includes(pathFor(REGISTRY_DIR, 'cl3', 'pendingScript')));
+  const out = runPending(REGISTRY_DIR, 'cl3', JSON.stringify({ hook_event_name: 'UserPromptSubmit' }));
+  assert.match(JSON.parse(out).hookSpecificOutput.additionalContext, /parked for clodent/);
+  assert.ok(!fs.existsSync(path.join(pendDir, 'm0.json')));
 });

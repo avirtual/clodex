@@ -15,6 +15,7 @@ blocks a release.
 
 - Conversation pane, clodent seats: the first prompt of a session and its ticket card are no longer dropped when the record begins with hook context; tool rows no longer print `null files`, and a `[exit N]` line is read as the exit code.
 - clodent seats now get the split Conversation view with the message box, as Claude Code seats do; a reply is no longer shown twice.
+- clodent seats now show as busy for the whole turn (from the CLI's prompt-submit and stop hooks), so the busy dot, the Working row and the delivery hold work as they do for Claude Code seats.
 
 ## 5.195.0 — 2026-11-23
 

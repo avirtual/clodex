@@ -626,6 +626,7 @@ names (clodex-paths grammar); the parked-DM DATA stays in the shared
 |---|---|---|
 | SessionStart | `run/<name>/hook.sh` | repoints transcript symlink (atomic); emits memory digest on startup/clear/compact |
 | Notification, PreCompact | `run/<name>/attn.sh` | appends raw hook JSON to `run/<name>/attn.jsonl` (attention state) |
+| SessionStart, Stop, UserPromptSubmit (first) — clodent seats only | `run/<name>/turn.sh <event>` | swallows stdin, appends `{"turn_hook":"<event>"}` to `attn.jsonl`; `_onTurnHook` goes busy at UserPromptSubmit, idle at Stop or SessionStart. Until the first Stop of a session the transcript's end_turn record also ends the turn (an older clodent without Stop degrades to that); after it, transcript records drive no activity |
 | UserPromptSubmit | `run/<name>/ipcdelta.sh` | emits the IPC-prompt delta from `promptcache/<name>/delta.md`, then advances the baseline |
 | UserPromptSubmit | `run/<name>/acks.sh` | read+truncate memory + task acks (lossy-tolerant): a ticket verb's success confirmation written here is lost if the seat dies before its next turn, which is acceptable because the ticket record and `[agent:task list]` stay the truth |
 | UserPromptSubmit | `run/<name>/pending.sh` | atomic rename-claim drain of parked DMs from `pending/<name>/` (zero-loss), and spools one `delivered.jsonl` line per handed-over entry (`{ts, ev, file, head}`), tailed by the seat's ctxWatcher into an `ipc-message` `kind:'delivered'` row |
