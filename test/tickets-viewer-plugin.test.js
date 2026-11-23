@@ -2344,6 +2344,7 @@ test('tickets-viewer: `ticket` serves a record\'s own rounds[] plus verdictText 
         respecCount: 1,
         mergeWaiting: '',
         mergeError: '',
+        boxHold: '',
         cost: null,
         respecs: [{ at: 1699000000000, spec: 'the old spec' }],
         events: [],

@@ -301,7 +301,7 @@ test('t2382: a held row is counted only as held — not as a box decision, a hom
     held,
   ]);
   assert.deepStrictEqual(client.tally({ team: 'tm', envKey: 'k1' }), {
-    envKey: 'k1', agree: 1, disagree: 0, outcomeAgreed: 1, sameCounts: 1, skipped: 0, oneSided: [], platforms: null,
+    envKey: 'k1', agree: 1, disagree: 0, outcomeAgreed: 1, sameCounts: 0, skipped: 0, oneSided: [], platforms: null,
   });
   assert.deepStrictEqual(client.decideTally({ team: 'tm' }), {
     box: 1, home: 1, held: 3, fallbacks: [{ reason: 'queue budget', count: 1 }],
