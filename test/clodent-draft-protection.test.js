@@ -5,7 +5,7 @@ const assert = require('node:assert');
 const fs = require('node:fs');
 const { InjectQueue } = require('../inject-queue');
 const { createSessionManager } = require('../session-manager');
-const { isDraftOpen } = require('../proxy-util');
+const { isDraftOpen, isHumanPtyInput, draftChunkSignal } = require('../proxy-util');
 const { parkDelivery, drainPending, hasPending, hasActivePending, countPending } = require('../pending-store');
 const { mkTmpRoot } = require('./lib/tmp-roots');
 
@@ -20,7 +20,7 @@ function boot(type) {
   const SessionManager = createSessionManager({
     knownSkillNames: () => [],
     InjectQueue: NoSleepQueue,
-    PENDING_DIR, parkDelivery, drainPending, hasActivePending, isDraftOpen, countPending,
+    PENDING_DIR, parkDelivery, drainPending, hasActivePending, isDraftOpen, isHumanPtyInput, draftChunkSignal, countPending,
     INJECT_QUIET_MS: 2000,
     INJECT_QUIET_MAXWAIT: 3_600_000,
     INJECT_BOOT_MAXWAIT: 0,
@@ -30,7 +30,9 @@ function boot(type) {
     bootDrainSettleMs: 0,
     log: { info: () => {}, warn: () => {}, error: () => {}, debug: () => {} },
     hintArm: { holding: () => false },
+    intentEnabled: require('../intent-catalog').intentEnabled,
     getPersistence: () => ({ get: () => null, list: () => [] }),
+    getRemoteServer: () => null, getPeerManager: () => null, getUiSettings: () => ({ get: () => ({}) }),
   });
   const m = new SessionManager();
   m._broadcast = () => {};
@@ -177,7 +179,7 @@ async function typedThenDm(h) {
   assert.deepStrictEqual([h.s.lastUserInputTs, isDraftOpen(h.s)], [T0, true], 'ENTER: the keystroke stamped the seat and opened a draft');
   h.writes.length = 0;
   mock.timers.tick(1000);
-  h.m._deliverMessage('hand', 'lead', 'please review', 'dm');
+  h.m._deliverMessage('hand', 'reminder', 'please review', 'dm');
   assert.deepStrictEqual([await drained(h), stored(h)], [[], ['active']], 'no byte reaches the pty; the dm is parked');
   mock.timers.tick(1000);
   h.m.write('hand', '\r');
@@ -194,8 +196,7 @@ test('typed 1 s ago into a clodent seat: a dm writes nothing, and is typed at th
     assert.deepStrictEqual([h.s.activityState, await drained(h), stored(h)], ['thinking', [], ['active']]);
     h.m._routeAttnEntry(h.s, { turn_hook: 'Stop' });
     const w = await drained(h);
-    assert.deepStrictEqual([w.length, w[0], w[2], stored(h)], [3, '\x15', '\r', []]);
-    assert.match(w[1], /^\[agent:from lead\] please review/);
+    assert.deepStrictEqual([w, stored(h)], [TYPED_NOW('[agent:from reminder] please review'), []]);
   } finally { cleanup(h); }
 }));
 
@@ -209,7 +210,6 @@ test('a clodent session that never fires the turn hooks: the parked dm is typed 
     assert.deepStrictEqual([h.s.activityState, await drained(h), stored(h)], ['thinking', [], ['active']]);
     emit('idle', true);
     const w = await drained(h);
-    assert.deepStrictEqual([w.length, w[0], w[2], stored(h)], [3, '\x15', '\r', []]);
-    assert.match(w[1], /^\[agent:from lead\] please review/);
+    assert.deepStrictEqual([w, stored(h)], [TYPED_NOW('[agent:from reminder] please review'), []]);
   } finally { cleanup(h); }
 }));
