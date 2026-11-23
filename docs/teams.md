@@ -1089,9 +1089,12 @@ the verify, its re-measure and post-merge) asks `pickRunner` (suite-client.js):
 among the members that are attached (pull) or online with the `suite`
 capability (push), whose info route answers within the usual request timeout,
 and, for a box job, whose info reports the box ready for the team's definition
-hash (the lead passes the hash on the info call) — or, when no member is ready, one whose info says `building` that hash, then one that says `can-build`, so a second member is not sent a duplicate build while one builds — the one with the most free
-slots (`slots.total - slots.inUse`; a runner that reports no slots reads as one
-slot, in use while a job runs), then the shortest queue, then manifest order. When
+hash (the lead passes the hash on the info call) — or, when no member is ready, one whose info says `building` that hash, then one that says `can-build`, so a second member is not sent a duplicate build while one builds — one with a free slot
+(`slots.total - slots.inUse`; a runner that reports no slots reads as one slot, in
+use while a job runs; a fenced or draining runner reports every slot in use), then
+the fewest slots in use, so an idle runner beats a busy one whatever their sizes,
+then the most free slots, then the shortest queue, then manifest order. When no
+member has a free slot, the shortest queue then manifest order decides. When
 none qualifies the first member is used exactly as with no pool. A chosen member
 is asked once, not waited on, until it accepts the job: if it answers unreachable,
 not attached or refusing before that, the job is picked again once without it
