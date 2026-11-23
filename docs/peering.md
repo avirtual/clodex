@@ -368,6 +368,18 @@ logs `reply not needed, call already settled`, and any other refusal (404,
   accepted (<why>) after <n> attempts` on giving up; `reply not accepted
   (<why>) (resend dropped: too many pending)` past a bound.
 
+- While the schedule is closed (`admit` false) a `POST /api/suite/jobs` is
+  answered 503 `offer closed`; poll, output and cancel for existing jobs are
+  still served.
+- When the grant is withdrawn (offer off, scope back to discovery, or the
+  peer unticked), the next ring cancels every job this claimer submitted and
+  claims stop.
+- The announce to a peer says scope `run` only while the hello carries
+  `suite-pull` and the engine exists.
+- `offer:get` carries `claims`, one row per ticked peer under a run offer:
+  `claiming` with `lastClaim`, `not-connected` or `runner-off`. Preferences ▸ Test boxes ▸
+  Offer test boxes shows them as status lines.
+
 **Connections and the request-failure line.** The claim, blob and reply
 requests go through their own agent (`_deskAgent`: `keepAlive: false`,
 `maxSockets: 16`), so each opens a new connection and none is written to a
@@ -385,19 +397,8 @@ socket; `idle` is how long that socket sat free before the request took it,
 and `-` when the socket was new. A `reused=true` failure with an `idle` near
 the lead's keep-alive timeout points at a stale socket; `reused=false` does
 not. At most one line per peer per route class per 10 s; the next one ends
-` +<n> more`. Nothing is retried.
-
-- While the schedule is closed (`admit` false) a `POST /api/suite/jobs` is
-  answered 503 `offer closed`; poll, output and cancel for existing jobs are
-  still served.
-- When the grant is withdrawn (offer off, scope back to discovery, or the
-  peer unticked), the next ring cancels every job this claimer submitted and
-  claims stop.
-- The announce to a peer says scope `run` only while the hello carries
-  `suite-pull` and the engine exists.
-- `offer:get` carries `claims`, one row per ticked peer under a run offer:
-  `claiming` with `lastClaim`, `not-connected` or `runner-off`. Preferences ▸ Test boxes ▸
-  Offer test boxes shows them as status lines.
+` +<n> more`. A request cut off by `stop()` or `repoint()` logs nothing. Nothing
+is retried.
 
 ### 2a. Web view + the wirescope forward (t30b, t443)
 
