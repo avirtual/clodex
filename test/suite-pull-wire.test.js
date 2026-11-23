@@ -162,7 +162,13 @@ function startRunner(t, port, { offer = RUN_OFFER, engine = null, concurrency, d
     await waitFor(() => rings.length > n, 'a ring on the hello tick');
     await rings[rings.length - 1];
   };
-  return { conn, state, claimer, rings, tick };
+  const idle = async () => {
+    for (let n = -1; n !== rings.length;) {
+      n = rings.length;
+      await Promise.all(rings);
+    }
+  };
+  return { conn, state, claimer, rings, tick, idle };
 }
 
 async function attach(t, lead, opts) {
@@ -232,6 +238,7 @@ test('without a run grant the runner never claims, counted after a granted row c
   const root = mkTmpRoot('pull-wire-');
   const { runner } = engineAt(t, root);
   const r = await attach(t, lead, { engine: runner });
+  await r.idle();
   const granted = lead.claims.length;
   assert.ok(granted >= 1, 'ENTER: the granted row claimed');
   const rows = [
