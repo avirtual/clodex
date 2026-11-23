@@ -424,7 +424,7 @@ for (const [label, state, act, want] of BOX_RETRY_END_ROWS) {
     await f.verb('lead', '[agent:team runner]');
     await act(f);
     const [t] = store.load(root);
-    if (label !== 'nothing (control)') assert.notDeepStrictEqual([t.state, t.loopStep, t.verifyHold], [state, held.loopStep, held.verifyHold], 'ENTER: the act changed the row');
+    if (label !== 'nothing (control)') assert.notDeepStrictEqual([t.state, t.loopStep, t.verifyHold, (t.events || []).length], [state, held.loopStep, held.verifyHold, 0], 'ENTER: the act changed the row');
     assert.deepStrictEqual(t.boxRetry, want);
   });
 }

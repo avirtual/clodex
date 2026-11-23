@@ -6293,7 +6293,7 @@ function createTicketMethods(deps, shared) {
         delete ticket.verifyPhase;
         // verifyHold is cleared here, in the same write that re-stamps the step: TICKET_SUITE_TIMEOUT_MS (20m lock wait + 21m = 41m) outlasts TICKET_STALL_MS (30m),
         // so a stale hold beside loopStep 'verify' fires the wrong alarm and lets a second reviewer spawn in ordinary operation.
-        delete ticket.verifyHold; delete ticket.boxHoldReason; delete ticket.boxRetry;
+        delete ticket.verifyHold; delete ticket.boxHoldReason;
         // Opening an in-flight phase is a new stall episode, so it spends a fresh nudge here: after `done` nothing else clears nudgedAt
         // (`_touchTicketActivity` skips any ticket that is not `open`).
         ticket.nudgedAt = null;
