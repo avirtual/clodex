@@ -246,7 +246,7 @@ function mkFixture(t, { gitWorktree: gwOverride = null } = {}) {
   // A real linked worktree on `branch`, recorded the way _spawnTicketSeat records
   // one. `ephemeral` is THE fact under test, so it is always passed explicitly.
   const worktreeSeat = (name, branch, { ephemeral, baseSha }) => {
-    const wtPath = pathReal.join(osReal.tmpdir(), `clodex-t482-wt-${name}-${Date.now()}`);
+    const wtPath = pathReal.join(osReal.tmpdir(), `clodex-t482-wt-${name}-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`);
     execFileSync('git', ['-C', repoDir, 'worktree', 'add', '-q', wtPath, branch], { encoding: 'utf8' });
     tmpDirs.push(wtPath);
     persistence.upsert({ name, cwd: wtPath, ephemeral, worktree: { path: wtPath, branch, ...(baseSha ? { baseSha } : {}) } });
