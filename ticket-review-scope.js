@@ -34,6 +34,8 @@ const VERDICT_GRAMMAR = [
   'That single intent delivers the verdict and retires you. A pass that never emits',
   'it reports to nobody.',
   '',
+  'Start VERDICT, MUST-FIX and NITS each on its own line.',
+  '',
   '- **VERDICT**: ACCEPT | REWORK — one line, unambiguous.',
   '- **MUST-FIX**: each blocking defect as its own item, with a `file:line` anchor',
   '  and why it is wrong (the failing interleaving / the unmet case / the broken',

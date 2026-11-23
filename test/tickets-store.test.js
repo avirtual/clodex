@@ -604,3 +604,46 @@ test('tickets-store read: a missing or unparseable board reads as empty, as load
   writeBoard(store, root, [{ id: 't9' }]);
   assert.deepStrictEqual(store.read(root), [{ id: 't9' }]);
 });
+
+test('a verdict written on one line ends the must-fix body at the next inline header', () => {
+  const cases = [
+    ['**VERDICT**: ACCEPT — **MUST-FIX**: (none) — **NITS**: (1) the helper is duplicated in two files', 0],
+    ['VERDICT: ACCEPT\nMUST-FIX: (none)\nNITS: the helper is duplicated', 0],
+    ['**MUST-FIX**: none — **NITS**: none', 0],
+    ['VERDICT: ACCEPT — MUST-FIX: (none) — NITS: (1) the helper is duplicated', 0],
+    ['**MUST-FIX**: (none) but the lock is never released — **NITS**: (1) x', 1],
+    ['**VERDICT**: ACCEPT — **MUST-FIX**: (1) the lock is never released — **NITS**: (none)', 1],
+    ['**VERDICT**: ACCEPT — **MUST-FIX**: none except the lock — **NITS**: (none)', 1],
+    ['VERDICT: ACCEPT — MUST-FIX: (1) the lock is never released — NITS: (none)', 1],
+  ];
+  for (const [input, expected] of cases) {
+    assert.strictEqual(countMustFix(extractMustFix(input)), expected,
+      `countMustFix(extractMustFix(${JSON.stringify(input)})) must be ${expected}`);
+  }
+  assert.strictEqual(extractMustFix('**VERDICT**: ACCEPT — **MUST-FIX**: (1) the lock is never released — **NITS**: (none)'),
+    '1. the lock is never released');
+  assert.ok(countMustFix(extractMustFix('MUST-FIX:\n(none)\n- the lock is never released')) >= 1,
+    'a list item under the placeholder at its own depth is a must-fix');
+});
+
+test('the must-fix placeholder words, and the qualified forms that are not placeholders', () => {
+  const cases = [
+    ['none', 0], ['(none)', 0], ['none.', 0], ['n/a', 0], ['-', 0], ['0', 0],
+    ['no must-fixes', 0], ['No must-fix.', 0], ['nothing', 0], ['(none) —', 0], ['none;', 0],
+    ['`(none)` |', 0],
+    ['(none) but see below', 1], ['none except X', 1], ['none, but the lock leaks', 1],
+    ['(none)\n- the lock is never released', 1],
+    ['(none)\n\n  - **MF1** — traced.', 0],
+  ];
+  for (const [input, expected] of cases) {
+    assert.strictEqual(countMustFix(input), expected,
+      `countMustFix(${JSON.stringify(input)}) must be ${expected}`);
+  }
+});
+
+test('a one-line REWORK verdict is still REWORK', () => {
+  const scan = scanVerdict('VERDICT: REWORK — MUST-FIX: (1) the lock is never released — NITS: (none)');
+  assert.strictEqual(scan.verdict, 'REWORK');
+  assert.strictEqual(scan.ambiguous, false);
+  assert.deepStrictEqual(scan.mustFixHeaders, [1]);
+});

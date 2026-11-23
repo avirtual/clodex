@@ -4876,3 +4876,33 @@ for (const [box, home] of [['green', 'red'], ['red', 'green']]) {
     }
   });
 }
+
+test('a one-line ACCEPT verdict whose MUST-FIX reads "(none)" merges', async () => {
+  const repo = mkRepo();
+  commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
+  const f = mkMerge({ repo });
+  const before = f.masterHead();
+
+  await f.m._autoMergeTicket(f.team, 't1',
+    { verdict: 'ACCEPT', mustFix: null, reviewRound: 1 },
+    '**VERDICT**: ACCEPT — **MUST-FIX**: (none) — **NITS**: (1) the helper is duplicated in two files');
+
+  assert.deepStrictEqual(f.esc(), [], 'the trailing separator and the NITS section are not a must-fix');
+  assert.notStrictEqual(f.masterHead(), before, 'the branch landed');
+});
+
+test('a one-line ACCEPT verdict with a real must-fix still refuses', async () => {
+  const repo = mkRepo();
+  commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
+  const f = mkMerge({ repo });
+  const before = f.masterHead();
+
+  await f.m._autoMergeTicket(f.team, 't1',
+    { verdict: 'ACCEPT', mustFix: null, reviewRound: 1 },
+    '**VERDICT**: ACCEPT — **MUST-FIX**: (1) the lock is never released — **NITS**: (none)');
+
+  const esc = f.esc();
+  assert.strictEqual(esc.length, 1, 'ENTER: the gate refused');
+  assert.match(esc[0].body, /the verdict is ACCEPT but its MUST-FIX body is not empty \(1 item\): 1\. the lock is never released/);
+  assert.strictEqual(f.masterHead(), before, 'master did not move');
+});
