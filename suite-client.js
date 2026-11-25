@@ -198,12 +198,11 @@ function createSuiteClient({
   async function ask(ctx, fn, progress, attempts = Infinity, lostAfterMs = Infinity) {
     let since = null;
     for (let n = 1; ; n += 1) {
-      const sent = now();
       const r = await once(ctx.peer, fn, ctx.wire);
       if (ctx.wire === 'pull' && r.status === 503 && r.body == null) { try { ctx.onDetach(); } catch {} }
       if (REFUSED.has(r.status)) throw Object.assign(new Error('runner refused the token'), { refused: true });
       if (!UNREACHABLE.has(r.status) || (r.body && r.body.code === 'box-unavailable')) return r;
-      if (since == null) since = sent;
+      if (since == null) since = now();
       const left = deadlineOf(ctx) - now();
       if (left <= 0 || n >= attempts) return { ...r, unreachable: true };
       const toLost = since + lostAfterMs - now();
