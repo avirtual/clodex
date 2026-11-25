@@ -1099,9 +1099,34 @@ member has a free slot, the shortest queue then manifest order decides. When
 none qualifies the first member is used exactly as with no pool. A chosen member
 is asked once, not waited on, until it accepts the job: if it answers unreachable,
 not attached or refusing before that, the job is picked again once without it
-(the first member when no other qualifies) and then waited on as usual; after the
-runner accepted the job there is no repick and today's fallback to the home suite
-applies. Compare rows of a pooled team carry `runner: <member>`, the member that
+(the first member when no other qualifies) and then waited on as usual. After the
+runner accepted the job, a gate run (pooled or not) counts its runner lost when
+every status poll for the job has answered unreachable (or, on the pull wire, the
+desk's 503 "not attached" or an expired call) for 150 s in a row
+(`LOST_AFTER_MS`; one answered poll resets the count). 150 s is above the runner's
+2 min lease, so by then the runner has stopped a job nobody polls. On a loss the
+run is rerouted once: `_runnerReroute` asks `pickRunner` among the other members
+(never the lost one, no fall back to the first member); the lost job gets a
+best-effort cancel, and the same snapshot, definition, shares and env go to the new
+member under the next `<run id>-<attempt>` job id, waited on for what is left of the
+original deadline, never a fresh budget. With no other member, or on a second loss,
+the run ends `runner unreachable` (transient) at once, so a single-runner team falls
+back or holds after 150 s rather than at the run budget. Nothing else reroutes: a
+red result, `no-totals`, `tree-mismatch`, `definition-mismatch`, `no-share`, a run,
+queue or build budget and `box-build-*` end the run as before, and `runner-restart`
+keeps its one same-runner resubmit. Only the current job decides; while it runs, the
+abandoned job is asked for (one `wait=0` poll at a time) and, when its runner
+answers, discarded like any stale job: a live one is cancelled, a finished one is
+recorded as `late-pass` or `late-fail` (exit code) and never used. A suite may
+therefore execute twice when the lost runner was only partitioned, and must
+tolerate that. The run result, its ledger row and its compare row carry
+`attempts: [{runner, jobId, outcome}]` (the abandoned one `lost`, `late-pass` or
+`late-fail`); the verify and MERGED notices say `(box, rerouted from <old> to
+<new>)`, and a `late-fail` beside a deciding pass adds `runner <old> reported red
+late for the abandoned attempt; <new> decided green`. None of this is persisted: a
+source restart ends the run loop as before, no abandoned job is revived and no
+reroute repeats. The held-ticket retry sweep does not reroute; its pick may choose
+the lost member again once that member answers info. Compare rows of a pooled team carry `runner: <member>`, the member that
 ran the job, and a superseded job's cancel goes to that member. Hand routing is
 not pooled: `route()` and the channel host's runner lookup read the first member
 only, with the pull refusal above.

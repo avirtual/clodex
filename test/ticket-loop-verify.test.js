@@ -7252,6 +7252,25 @@ for (const [local, script, late, lateGreen] of [['red', SHADOW_LOCAL.red, 'green
   });
 }
 
+test('t2412: a rerouted box pass says (box, rerouted from …) and a late red from the abandoned attempt adds its line once', async () => {
+  const b = boxLoop(null, { suite: 'red' });
+  const real = boxRemote('green', b.events).client;
+  const attempts = [{ runner: 'runner-0', jobId: 'j', outcome: 'late-fail' }, { runner: 'runner-1', jobId: 'j-2', outcome: 'pass' }];
+  b.holder.client = { ...real, run: async (o) => ({ ...(await real.run(o)), attempts, rerouted: { from: 'runner-0', to: 'runner-1' } }) };
+  b.f.team.testRunner = GATE_ON;
+  b.f.team.dir = mkTmpRoot('clodex-box-team-');
+  require('../team-box').writeBox(b.f.team.dir, BOX_DEF);
+  b.f.tstore.save(b.f.team.root, [{ ...b.f.one(), state: 'done', loopStep: 'verify', report: 'r', reportedBy: 'team-hand' }]);
+  const notes = traceLoopRows(b.f);
+  await b.f.m._runTicketLoop(b.f.team, 't1');
+  await new Promise((r) => setImmediate(r));
+  assert.strictEqual(b.f.created.length, 1, 'ENTER: the reviewer was spawned');
+  const late = notes.filter((n) => n !== 'SPAWN' && /reported red late/.test(n.body));
+  assert.deepStrictEqual(late.map((n) => n.body), [
+    'ticket t1 verify: suite green (5/5 passing, 0 failing (exit 0)) (box, rerouted from runner-0 to runner-1) — spawning reviewer\nrunner runner-0 reported red late for the abandoned attempt; runner-1 decided green',
+  ]);
+});
+
 test('t2338: a gate:on verify decided by a box pass spawns the reviewer with no home run and says (box)', async () => {
   const b = boxLoop(null, { suite: 'red' });
   b.holder.client = boxRemote('green', b.events).client;
