@@ -71,6 +71,7 @@ const BUILDS_PER_DAY = 12;
 const BUILD_DISK_FLOOR = 10 * 1024 ** 3;
 const BUILD_TAIL_LINES = 20;
 const BUILD_TAIL_BYTES = 8 * 1024;
+const BOX_PRUNE_EVERY_MS = 60 * MIN;
 
 const ACTIVITY_RECENT = 10;
 const ACTIVITY_MS = 1000;
@@ -527,6 +528,7 @@ function createSuiteRunner({
   let buildHold = bootBuild && typeof bootBuild.token === 'string' ? { ...bootBuild, why: 'not swept since the runner started' } : null;
   let building = null;
   let buildSweeping = null;
+  let boxPrunedAt = null;
   const coolOff = new Map();
   const builtIds = new Set();
 
@@ -1246,6 +1248,8 @@ function createSuiteRunner({
 
   async function pruneBoxImages() {
     if (!box || typeof box.listBoxImages !== 'function') return [];
+    if (boxPrunedAt != null && now() - boxPrunedAt < BOX_PRUNE_EVERY_MS) return [];
+    boxPrunedAt = now();
     const listed = await box.listBoxImages();
     if (!listed.ok) { log(`suite-runner: box image retention skipped: ${listed.why}`); return []; }
     const at = now();
@@ -1263,8 +1267,9 @@ function createSuiteRunner({
     const cache = readJson(cacheFile, {});
     for (const hash of stamp) if (!(boxKey(hash) in cache)) cache[boxKey(hash)] = at;
     const left = new Set(listed.images.filter((im) => !gone.includes(im)).map((im) => im.hash));
-    for (const im of gone) if (!left.has(im.hash)) delete cache[boxKey(im.hash)];
-    if (stamp.length || gone.length) writeJson(cacheFile, cache);
+    const stale = Object.keys(cache).filter((key) => key.startsWith(BOX_KEY) && !left.has(key.slice(BOX_KEY.length)));
+    for (const key of stale) delete cache[key];
+    if (stamp.length || stale.length) writeJson(cacheFile, cache);
     return gone.map((im) => im.tags[0] || im.id);
   }
 

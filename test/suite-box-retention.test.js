@@ -69,6 +69,7 @@ async function fixture(t, { images, cache = {}, fail = {}, refuse = new Set(), e
   };
   return {
     root, work, runner, rms, logs, images, pass,
+    lists: () => base.calls.filter((c) => c.args[1] === 'ls' && c.args[c.args.length - 1] === 'label=clodex.box').length,
     cache: () => JSON.parse(fs.readFileSync(state.cache, 'utf8')),
     at: (ms) => { clock = ms; },
   };
@@ -100,7 +101,7 @@ test('t2413: an image with no record is stamped on first sight and kept; the nex
 });
 
 test('t2413: the box image usedAt record survives the restart reconcile, which drops only missing paths', async (t) => {
-  const f = await fixture(t, { images: [], cache: { [`box:${H1}`]: T0, 'mirrors/gone.git': T0 } });
+  const f = await fixture(t, { images: [img(H1, 1)], cache: { [`box:${H1}`]: T0, 'mirrors/gone.git': T0 } });
   await f.pass();
   assert.deepStrictEqual(f.cache(), { [`box:${H1}`]: T0 });
 });
@@ -169,4 +170,33 @@ test('t2413: no box image is removed while a job is live', async (t) => {
   assert.strictEqual(sub.state, 'awaiting-pack', 'ENTER: the job is live');
   assert.deepStrictEqual(await f.runner.tick(), { ran: false });
   assert.deepStrictEqual(f.rms, []);
+});
+
+test('t2413: the image pass lists at most once an hour: two idle passes 15 s apart list once, one 61 minutes later lists again', async (t) => {
+  const f = await fixture(t, { images: [img(H1, 1)], cache: { [`box:${H1}`]: T0 } });
+  f.at(T0 + 60 * 1000);
+  assert.strictEqual((await f.pass()).ran, true);
+  f.at(T0 + 75 * 1000);
+  assert.strictEqual((await f.pass()).ran, true, 'ENTER: the second maintenance pass ran');
+  assert.strictEqual(f.lists(), 1);
+  f.at(T0 + 60 * 1000 + 61 * 60 * 1000);
+  await f.pass();
+  assert.strictEqual(f.lists(), 2);
+});
+
+test('t2413: a failed listing counts as the hour\'s pass: the next tick neither lists nor logs again', async (t) => {
+  const f = await fixture(t, { images: [img(H1, 1)], cache: { [`box:${H1}`]: T0 }, fail: { 'image ls': { ok: false, code: 1, stderr: 'Cannot connect to the Docker daemon' } } });
+  f.at(T0 + 60 * 1000);
+  await f.pass();
+  f.at(T0 + 75 * 1000);
+  assert.strictEqual((await f.pass()).ran, true, 'ENTER: the second maintenance pass ran');
+  assert.strictEqual(f.lists(), 1);
+  assert.strictEqual(f.logs.filter((l) => l.startsWith('suite-runner: box image retention skipped: ')).length, 1);
+});
+
+test('t2413: a box row whose image is no longer listed is dropped after a successful listing', async (t) => {
+  const f = await fixture(t, { images: [img(H1, 1)], cache: { [`box:${H1}`]: T0, [`box:${H2}`]: T0 } });
+  f.at(T0 + DAY);
+  await f.pass();
+  assert.deepStrictEqual(f.cache(), { [`box:${H1}`]: T0 });
 });
