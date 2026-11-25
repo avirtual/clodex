@@ -16,6 +16,7 @@ const DEFAULT_BUDGET_MS = 36 * 60 * 1000;
 const DEFAULT_RUN_MS = 21 * 60 * 1000;
 const BUILD_BUDGET_MS = 25 * 60 * 1000;
 const SNAPSHOT_WAIT_MS = 2000;
+const LOST_AFTER_MS = 150000;
 const UNREACHABLE = new Set([0, 429, 502, 503, 504]);
 const REFUSED = new Set([401, 403]);
 const RETRY_TEXT = {
@@ -111,8 +112,10 @@ function createSuiteClient({
       t0: now(), budgetMs, queueBudgetMs, runBudgetMs, buildBudgetMs, buildSince: null, timeoutMs, onSubmitted, onDetach, onState, shouldStop,
       failFast: typeof opts.repick === 'function', submitted: false,
       shares: box && Array.isArray(shares) ? shares.map(({ share, version }) => ({ share, version })) : [],
+      lostAfterMs: typeof opts.reroute === 'function' ? LOST_AFTER_MS : Infinity, cap: null, attempts: [], abandoned: null, ended: false,
     };
     let repick = typeof opts.repick === 'function' ? opts.repick : null;
+    let reroute = typeof opts.reroute === 'function' ? opts.reroute : null;
     const progress = (line) => {
       log(line);
       try { onProgress(line); } catch {}
@@ -156,6 +159,28 @@ function createSuiteClient({
             continue;
           }
         }
+        if (out.lost) {
+          const pick = reroute;
+          repick = null;
+          reroute = null;
+          const next = pick ? await Promise.resolve().then(() => pick(ctx.where)).catch(() => null) : null;
+          if (!next || !next.peer || (next.name || next.peer) === ctx.where) return conclude(ctx, { unknown: 'runner unreachable', lost: true });
+          const old = { runner: ctx.where, peer: ctx.peer, wire: ctx.wire, jobId: ctx.jobId };
+          const row = { runner: old.runner, jobId: old.jobId, outcome: 'lost' };
+          ctx.attempts.push(row);
+          ctx.abandoned = { peer: old.peer, wire: old.wire, jobId: old.jobId, asking: false };
+          ctx.cap = deadlineOf(ctx);
+          ctx.peer = next.peer;
+          ctx.wire = next.wire === 'pull' ? 'pull' : 'push';
+          ctx.where = next.name || next.peer;
+          Object.assign(ctx, { jobId: null, t0: now(), started: false, startedAt: null, buildSince: null, submitted: false, env: null });
+          progress(`runner ${old.runner}: no answer for ${LOST_AFTER_MS}ms; resubmitting to ${ctx.where}`);
+          try { (opts.onReroute || (() => {}))({ peer: ctx.peer, wire: ctx.wire, name: ctx.where, from: old.runner }); } catch {}
+          const c = await Promise.resolve().then(() => cancel(old.peer, old.jobId, old.wire)).catch((e) => ({ ok: false, error: e && e.message ? e.message : String(e) }));
+          log(`suite-client: cancel of lost job ${old.jobId} on ${old.runner}: ${c && c.ok ? 'confirmed' : `not confirmed (${(c && c.error) || 'no answer'})`}`);
+          if (ctx.shouldStop()) return conclude(ctx, { unknown: 'cancelled by the caller before submit' });
+          continue;
+        }
         if (out.thrown) return conclude(ctx, { unknown: out.unknown });
         if (out.retry && !used.has(out.retry) && now() < deadlineOf(ctx)) {
           used.add(out.retry);
@@ -170,21 +195,30 @@ function createSuiteClient({
     }
   }
 
-  async function ask(ctx, fn, progress, attempts = Infinity) {
+  async function ask(ctx, fn, progress, attempts = Infinity, lostAfterMs = Infinity) {
+    let since = null;
     for (let n = 1; ; n += 1) {
+      const sent = now();
       const r = await once(ctx.peer, fn, ctx.wire);
       if (ctx.wire === 'pull' && r.status === 503 && r.body == null) { try { ctx.onDetach(); } catch {} }
       if (REFUSED.has(r.status)) throw Object.assign(new Error('runner refused the token'), { refused: true });
       if (!UNREACHABLE.has(r.status) || (r.body && r.body.code === 'box-unavailable')) return r;
+      if (since == null) since = sent;
       const left = deadlineOf(ctx) - now();
       if (left <= 0 || n >= attempts) return { ...r, unreachable: true };
+      const toLost = since + lostAfterMs - now();
+      if (toLost <= 0) return { ...r, unreachable: true, lost: true };
       progress(`waiting for runner ${ctx.peer}`);
-      await sleep(Math.min(retryMs, left));
+      await sleep(Math.min(retryMs, left, toLost));
     }
   }
 
   function deadlineOf(ctx) {
-    if (ctx.buildSince != null) return ctx.buildSince + ctx.buildBudgetMs;
+    const d = ctx.buildSince != null ? ctx.buildSince + ctx.buildBudgetMs : runDeadline(ctx);
+    return ctx.cap != null ? Math.min(d, ctx.cap) : d;
+  }
+
+  function runDeadline(ctx) {
     let d = ctx.t0 + ctx.budgetMs;
     if (!ctx.started && ctx.queueBudgetMs != null) d = Math.min(d, ctx.t0 + ctx.queueBudgetMs);
     if (ctx.started && ctx.runBudgetMs != null) d = Math.min(d, ctx.startedAt + ctx.runBudgetMs);
@@ -193,6 +227,7 @@ function createSuiteClient({
 
   function budgetText(ctx) {
     if (ctx.buildSince != null) return `the box build did not finish within the ${ctx.buildBudgetMs}ms build budget (cancelled)`;
+    if (ctx.cap != null && ctx.cap < runDeadline(ctx)) return `no result within the ${ctx.budgetMs}ms budget (cancelled)`;
     if (!ctx.started && ctx.queueBudgetMs != null && ctx.queueBudgetMs < ctx.budgetMs) {
       return `the job did not start within the ${ctx.queueBudgetMs}ms queue budget (cancelled)`;
     }
@@ -324,6 +359,32 @@ function createSuiteClient({
     });
   }
 
+  async function discard(ctx, stale, peer, wire, waitingOn) {
+    log(`suite-client: discarded a result for job ${stale.id} while waiting on ${waitingOn}`);
+    const row = ctx.attempts.find((a) => a.jobId === stale.id);
+    if (row && !ctx.ended && stale.state === 'done' && stale.reason == null) row.outcome = stale.exit && stale.exit.code === 0 ? 'late-pass' : 'late-fail';
+    await cancel(peer, stale.id, wire);
+  }
+
+  function askAbandoned(ctx, waitingOn) {
+    const a = ctx.abandoned;
+    if (!a || a.asking) return;
+    a.asking = true;
+    Promise.resolve()
+      .then(() => once(a.peer, (c) => c.suiteAsk('GET', `/api/suite/jobs?ids=${encodeURIComponent(a.jobId)}&wait=0`, null, POLL_SLACK_MS), a.wire))
+      .then((r) => {
+        a.asking = false;
+        if (ctx.abandoned !== a || ctx.ended || !r || !r.body || !r.body.ok) return null;
+        ctx.abandoned = null;
+        const job = (Array.isArray(r.body.jobs) ? r.body.jobs : []).find((j) => j && j.id === a.jobId);
+        return job && job.state !== 'gone' ? discard(ctx, job, a.peer, a.wire, waitingOn) : null;
+      })
+      .catch((e) => {
+        a.asking = false;
+        log(`suite-client: asking for abandoned job ${a.jobId} failed: ${e && e.message ? e.message : e}`);
+      });
+  }
+
   async function waitDone(ctx, jobId, progress) {
     let last = null;
     for (;;) {
@@ -333,7 +394,9 @@ function createSuiteClient({
         return { unknown: budgetText(ctx), outcome: 'timeout' };
       }
       const wait = Math.min(pollWaitMs, left);
-      const r = await ask(ctx, (c) => c.suiteAsk('GET', `/api/suite/jobs?ids=${encodeURIComponent(jobId)}&wait=${wait}`, null, wait + POLL_SLACK_MS), progress);
+      askAbandoned(ctx, jobId);
+      const r = await ask(ctx, (c) => c.suiteAsk('GET', `/api/suite/jobs?ids=${encodeURIComponent(jobId)}&wait=${wait}`, null, wait + POLL_SLACK_MS), progress, Infinity, ctx.lostAfterMs);
+      if (r.lost) return { lost: true };
       if (r.unreachable) {
         await cancel(ctx.peer, jobId, ctx.wire);
         return { unknown: 'runner unreachable' };
@@ -343,10 +406,7 @@ function createSuiteClient({
         return { retry: 'runner-restart' };
       }
       const jobs = Array.isArray(r.body.jobs) ? r.body.jobs : [];
-      for (const stale of jobs.filter((j) => j && j.id !== jobId)) {
-        log(`suite-client: discarded a result for job ${stale.id} while waiting on ${jobId}`);
-        await cancel(ctx.peer, stale.id, ctx.wire);
-      }
+      for (const stale of jobs.filter((j) => j && j.id !== jobId)) await discard(ctx, stale, ctx.peer, ctx.wire, jobId);
       const job = jobs.find((j) => j && j.id === jobId);
       if (!job || job.state === 'gone') return { retry: 'runner-restart' };
       if (job.treeHash !== ctx.treeHash) return { unknown: `runner answered for tree ${String(job.treeHash).slice(0, 8)}, not ${ctx.treeHash.slice(0, 8)}` };
@@ -413,8 +473,12 @@ function createSuiteClient({
       queueMs: job ? job.queueMs : null, setupMs: job ? job.setupMs : null, runMs: job ? job.runMs : null,
       env: ctx.env,
     };
+    ctx.ended = true;
+    const attempts = ctx.attempts.length
+      ? [...ctx.attempts.map((a) => ({ ...a })), { runner: ctx.where, jobId: ctx.jobId, outcome: out.lost ? 'lost' : outcome }] : null;
+    if (attempts) record.attempts = attempts;
     appendLedger(record);
-    return { res, unknown, record };
+    return { res, unknown, record, ...(attempts ? { attempts, rerouted: { from: attempts[0].runner, to: ctx.where } } : {}) };
   }
 
   const shadows = new Map();
@@ -476,10 +540,12 @@ function createSuiteClient({
         ...(notSent ? { skipped: 'not-sent', ...NO_AGREEMENT } : agreement(me.local, remote)),
         ...(!notSent && namesUnknown(me.local, remote) ? { names: 'unknown' } : {}),
         ...(opts.pool ? { runner: me.name } : {}),
+        ...(me.remote.attempts ? { attempts: me.remote.attempts } : {}),
       });
     };
+    const moved = (next) => { me.peer = next.peer; me.wire = next.wire; me.name = next.name; };
     Promise.resolve()
-      .then(() => run({ ...opts, snap, scope: 'full', onJob: ({ jobId }) => { me.jobId = jobId; me.sawDetach = false; }, onSubmitted: ({ jobId }) => { me.submitted = jobId; }, onDetach: () => { me.sawDetach = true; }, onRepick: (next) => { me.peer = next.peer; me.wire = next.wire; me.name = next.name; } }))
+      .then(() => run({ ...opts, snap, scope: 'full', onJob: ({ jobId }) => { me.jobId = jobId; me.sawDetach = false; }, onSubmitted: ({ jobId }) => { me.submitted = jobId; }, onDetach: () => { me.sawDetach = true; }, onRepick: moved, onReroute: moved }))
       .catch((e) => ({ unknown: `client error: ${e.message}`, res: null, record: null }))
       .then((out) => {
         me.remote = out;
@@ -508,7 +574,7 @@ function createSuiteClient({
       envKey: e.envKey || null, wire: wire === 'pull' ? 'pull' : 'push',
       localEnv: local ? { os: platform, arch } : null,
       remoteEnv: rec ? { os: e.platform || null, arch: e.arch || null, isolation: e.isolation || null, imageId: (e.box && e.box.imageId) || null, definitionHash: (e.box && e.box.definitionHash) || null, ...(e.box && Array.isArray(e.box.shares) ? { shares: e.box.shares } : {}) } : null,
-      local, remote: box ? remoteHalf(box) : null, ...NO_AGREEMENT, decidedBy, ...(held ? { held: true } : {}), ...(bypass ? { bypass: true } : {}), fallback, ...(fallbackCode ? { fallbackCode } : {}), ...(runner ? { runner } : {}),
+      local, remote: box ? remoteHalf(box) : null, ...NO_AGREEMENT, decidedBy, ...(held ? { held: true } : {}), ...(bypass ? { bypass: true } : {}), fallback, ...(fallbackCode ? { fallbackCode } : {}), ...(runner ? { runner } : {}), ...(box && box.attempts ? { attempts: box.attempts } : {}),
     });
   }
 
@@ -944,4 +1010,4 @@ function createChannelHost({
   };
 }
 
-module.exports = { createSuiteClient, createChannelHost, route, lastTotals, localHalf, failingNames, agreement, boxVerdict, fallbackOf, FALLBACK_CODES, pickRunner, runnerLoad, HAND_QUEUE_MS, HAND_RUN_MS, BUILD_BUDGET_MS };
+module.exports = { createSuiteClient, createChannelHost, route, lastTotals, localHalf, failingNames, agreement, boxVerdict, fallbackOf, FALLBACK_CODES, pickRunner, runnerLoad, HAND_QUEUE_MS, HAND_RUN_MS, BUILD_BUDGET_MS, LOST_AFTER_MS };

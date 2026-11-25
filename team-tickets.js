@@ -2341,7 +2341,7 @@ function createTicketMethods(deps, shared) {
         this._notifyMergeLanded(team, ticketId, {
           branch, target, sha: merged.sha, rounds, summary: `${suite.summary}${this._suiteWhere(suite)}`, changelog, unioned: merged.unioned, closeOut, mergedTip, branchTip,
           slow: slowPass ? suite.slow.filter((n) => !mergeSlowOwned.includes(n)) : null,
-          slowOwned: slowPass ? mergeSlowOwned : null,
+          slowOwned: slowPass ? mergeSlowOwned : null, late: this._suiteLateRed(suite),
         });
       } catch (e) {
         fail('unexpected', `the auto-merge threw: ${e && e.message ? e.message : String(e)}`,
@@ -2380,7 +2380,7 @@ function createTicketMethods(deps, shared) {
       }
     },
 
-    _notifyMergeLanded(team, ticketId, { branch, target = null, sha, rounds, summary, changelog, unioned, closeOut = null, slow = null, slowOwned = null, mergedTip = null, branchTip = null }) {
+    _notifyMergeLanded(team, ticketId, { branch, target = null, sha, rounds, summary, changelog, unioned, closeOut = null, slow = null, slowOwned = null, mergedTip = null, branchTip = null, late = null }) {
       try {
         const into = target || gitWorktree.mergeTargetForSync(team, this._loadTicket(team, ticketId));
         const collapse = (v, max) => String(v == null ? '' : v).replace(/\s+/g, ' ').trim().slice(0, max);
@@ -2414,7 +2414,7 @@ function createTicketMethods(deps, shared) {
               + `The loop could not close it out: ${wideLine(closeOutDetail(ticketId, (closeOut && closeOut.text) || 'it did not run'))}`;
         const quiet = closedOutOk && !closeOut.already
           && !(mergedTip && branchTip && mergedTip !== branchTip)
-          && !(slow && slow.length) && !(slowOwned && slowOwned.length) && !unioned && !stamp && !bypassed
+          && !(slow && slow.length) && !(slowOwned && slowOwned.length) && !unioned && !stamp && !bypassed && !late
           && measured && (changelog.touched === true || changelog.present === false);
         const body = quiet
           ? `[ticket ${ticketId} MERGED] ${branch} → ${into} as ${sha} — closed out (${closeOut.remote ? 'standing remote seat not retired' : 'seat retired'}, tree removed, branch deleted); ${rounds} review round(s); suite ${defuseSenderLines(oneLine(summary))}.`
@@ -2428,6 +2428,7 @@ function createTicketMethods(deps, shared) {
           '',
           `Review rounds: ${rounds}. Suite on ${into} after the merge: ${defuseSenderLines(summary)}.`,
           ...(bypassed ? [`Verify passed${this._suiteWhere(bypassed)}.`] : []),
+          ...(late ? [defuseSenderLines(late)] : []),
           ...(slowOwned && slowOwned.length ? [`slow gate tripped by tests this diff touched (load-only, 0 failing; merge kept): ${defuseSenderLines(wideLine(slowOwned.join('; ')))}`] : []),
           ...(slow && slow.length ? [`slow gate tripped by tests outside this diff: ${defuseSenderLines(wideLine(slow.join('; ')))}`] : []),
           ...(unioned ? [`${unioned} conflicted with a bullet another ticket merged first; the loop kept BOTH (the earlier one above this ticket's). Read ## Unreleased once before the next release.`] : []),
@@ -3238,6 +3239,14 @@ function createTicketMethods(deps, shared) {
         const next = (await this._pickGateRunner(tr, box, [failed])) || this._runnerMembers(tr)[0];
         const { via } = this._runnerVia(next);
         return via;
+      };
+    },
+
+    _runnerReroute(tr, box) {
+      return async (lost) => {
+        const next = await this._pickGateRunner(tr, box, [lost]);
+        if (!next || next.peer === lost) return null;
+        return this._runnerVia(next).via;
       };
     },
 
@@ -6649,7 +6658,7 @@ function createTicketMethods(deps, shared) {
           return;
         }
 
-        this._broadcast('ipc-message', { type: 'task', from: 'ticket-loop', to: team.lead, body: `ticket ${ticketId} verify: suite green (${suite.summary})${this._suiteWhere(suite)} — spawning reviewer` });
+        this._broadcast('ipc-message', { type: 'task', from: 'ticket-loop', to: team.lead, body: [`ticket ${ticketId} verify: suite green (${suite.summary})${this._suiteWhere(suite)} — spawning reviewer`, this._suiteLateRed(suite)].filter(Boolean).join('\n') });
         this._stampVerifyPhase(team, ticketId, { phase: 'reviewer', since: Date.now() });
         this._setLoopStep(team, ticketId, 'review');
         atStep = 'review';
@@ -6735,6 +6744,7 @@ function createTicketMethods(deps, shared) {
           queueBudgetMs: TICKET_SUITE_LOCK_WAIT_MS, budgetMs: TICKET_SUITE_TIMEOUT,
           ...(pooled ? { pool: true } : {}),
           ...(chosen ? { repick: this._runnerRepick(tr, box) } : {}),
+          reroute: this._runnerReroute(tr, box),
         });
       } catch (e) {
         log.warn('ticket', `ticket ${ticket.id}: ${kind} shadow run not submitted — ${e && e.message ? e.message : e}`);
@@ -6818,6 +6828,16 @@ function createTicketMethods(deps, shared) {
               ret.runner = next.name;
             },
           } : {}),
+          reroute: this._runnerReroute(tr, def),
+          onReroute: (next) => {
+            via = { peer: next.peer, ...(next.wire === 'pull' ? { wire: 'pull' } : {}) };
+            ret.wire = next.wire === 'pull' ? 'pull' : WIRE_PUSH;
+            ret.runner = next.name;
+            ret.rerouted = { from: next.from, to: next.name };
+            jobId = null;
+            submittedId = null;
+            cancelSent = false;
+          },
         }))
         .catch((e) => ({ unknown: `client error: ${e && e.message ? e.message : e}`, res: null, record: null }));
       const buildable = def && typeof def.definition === 'string';
@@ -6879,7 +6899,14 @@ function createTicketMethods(deps, shared) {
         const flat = (v) => defuseSenderLines(String(v == null ? '' : v).replace(/\s+/g, ' ').trim());
         return ` (home, by ${flat(suite.bypass.by)}: ${flat(suite.bypass.reason)})`;
       }
-      return suite.decidedBy === 'box' ? ' (box)' : ` (home, box unavailable: ${suite.fallback})`;
+      if (suite.decidedBy === 'box') return suite.rerouted ? ` (box, rerouted from ${suite.rerouted.from} to ${suite.rerouted.to})` : ' (box)';
+      return ` (home, box unavailable: ${suite.fallback})`;
+    },
+
+    _suiteLateRed(suite) {
+      if (!suite || suite.decidedBy !== 'box' || !suite.green || !suite.rerouted || !Array.isArray(suite.attempts)) return null;
+      const late = suite.attempts.find((a) => a && a.outcome === 'late-fail');
+      return late ? `runner ${late.runner} reported red late for the abandoned attempt; ${suite.rerouted.to} decided green` : null;
     },
 
     _takeHomeBypass(team, ticket) {
@@ -7115,6 +7142,7 @@ function createTicketMethods(deps, shared) {
           definitionHash: stamped.definitionHash || null, image: stamped.imageId || null,
           fallbackCode: box.decided ? null : box.fallbackCode ?? null, fallbackClass: box.decided ? null : box.fallbackClass ?? null,
         };
+        if (box.out && box.out.rerouted) Object.assign(out, { rerouted: box.out.rerouted, attempts: box.out.attempts });
         this._boxRow(team, ticket, box, boxed ? null : localHalf({ ...res, durationMs: out.durationMs }));
       } else if (home) {
         const after = await gitWorktree.revParse(team.root, wt.branch).catch(() => null);
