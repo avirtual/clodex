@@ -726,7 +726,7 @@ test('t2413: an append that would take the compare log past 5 MB rotates it to .
   const fresh = fs.readFileSync(file, 'utf8').trim().split('\n').map((l) => JSON.parse(l));
   assert.deepStrictEqual(fresh.map((r) => [r.ticket, r.decidedBy]), [['t9', 'home']]);
   assert.deepStrictEqual(client.decideTally({ team: 'tm' }), { box: 1, home: 1, held: 0, bypassed: 0, fallbacks: [{ reason: 'queue budget', count: 1 }], holds: [], runners: [] });
-  client.shadowSkip({ team: 'tm', kind: 'post-merge', ticket: 't10', runner: 'laptop', skipped: 'detached' });
+  client.decided({ team: 'tm', kind: 'verify', ticket: 't10', decidedBy: null, box: { record: { env: { envKey: 'k1' } } } });
   assert.strictEqual(fs.readFileSync(file, 'utf8').trim().split('\n').length, 2, 'under the cap the append does not rotate');
-  assert.deepStrictEqual(client.tally({ team: 'tm', envKey: 'k1' }), { envKey: 'k1', agree: 1, disagree: 0, outcomeAgreed: 1, sameCounts: 0, skipped: 0, oneSided: [], platforms: null });
+  assert.deepStrictEqual(client.tally({ team: 'tm', envKey: 'k1' }), { envKey: 'k1', agree: 1, disagree: 1, outcomeAgreed: 1, sameCounts: 0, skipped: 0, oneSided: [], platforms: null });
 });
