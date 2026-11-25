@@ -702,7 +702,7 @@ test('t2412: a runner lost while the job is queued leaves the replacement the ru
     pB: { poll: (id, t) => (t < 300000 ? jobAt(id, 'queued') : t < 600000 ? jobAt(id, 'running') : jobAt(id, 'done')) },
   });
   const out = await r.client.run({ ...r.base, queueBudgetMs: 300000, reroute: r.to(r.B) });
-  assert.deepStrictEqual(r.asked, [['runner-a', 240000]], 'ENTER: lost while queued');
+  assert.deepStrictEqual(r.asked, [['runner-a', 225000]], 'ENTER: lost while queued');
   assert.deepStrictEqual([out.record.outcome, out.record.where, out.record.endedAt], ['pass', 'runner-b', '1970-01-01T00:10:00.000Z']);
 });
 
