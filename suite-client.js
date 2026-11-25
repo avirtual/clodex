@@ -170,7 +170,7 @@ function createSuiteClient({
           const row = { runner: old.runner, jobId: old.jobId, outcome: 'lost' };
           ctx.attempts.push(row);
           ctx.abandoned = { peer: old.peer, wire: old.wire, jobId: old.jobId, asking: false };
-          ctx.cap = Math.min(ctx.t0 + ctx.budgetMs, ctx.started && ctx.runBudgetMs != null ? ctx.startedAt + ctx.runBudgetMs : Infinity);
+          ctx.cap = ctx.t0 + ctx.budgetMs;
           ctx.peer = next.peer;
           ctx.wire = next.wire === 'pull' ? 'pull' : 'push';
           ctx.where = next.name || next.peer;
@@ -327,7 +327,7 @@ function createSuiteClient({
       fs.closeSync(fd);
     }
     const { bytes, sha256 } = pack;
-    const done = await ask(ctx, (c) => c.suiteAsk('POST', `${jobPath}/commit`, { bytes, sha256 }, COMMIT_TIMEOUT_MS), progress);
+    const done = await ask(ctx, (c) => c.suiteAsk('POST', `${jobPath}/commit`, { bytes, sha256 }, COMMIT_TIMEOUT_MS), progress, Infinity, ctx.lostAfterMs);
     if (done.lost) return { lost: true };
     if (done.unreachable) return { unknown: 'runner unreachable' };
     if (done.body && done.body.ok) return null;

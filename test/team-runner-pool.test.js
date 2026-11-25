@@ -633,6 +633,7 @@ function lostRig(script) {
       calls.push(`${peer} ${method} ${p.split('?')[0]}${p.includes('wait=0') ? ' wait=0' : ''}`);
       const s = script[peer];
       if (p.startsWith('/api/suite/info')) return { status: 200, body: { ok: true, limits: {}, env: { envKey: 'k' }, shares: [{ name: 'assets', version: 'v1' }], box: { state: 'ready', env: { box: { definitionHash: s.hash || DEF.definitionHash } } } } };
+      if (method === 'POST' && p.endsWith('/commit')) return s.commit ? s.commit() : { status: 200, body: { ok: true } };
       if (method === 'POST') { posts.push([peer, body.id, body.treeHash, body.box && body.box.definitionHash, JSON.stringify(body.shares), body.setup, JSON.stringify(body.env)]); return s.post ? s.post() : { status: 200, body: { ok: true, state: 'queued' } }; }
       if (method === 'DELETE') return s.cancel ? s.cancel(clock.t) : { status: 200, body: { ok: true } };
       if (p.includes('/output?')) {
@@ -709,6 +710,17 @@ test('t2412: a runner lost while the job is queued leaves the replacement the ru
 test('t2412: a runner lost during the pack upload is rerouted, and the lost job is cancelled once', async () => {
   const r = lostRig({
     pA: { post: () => ({ status: 200, body: { ok: true, state: 'awaiting-pack', have: [] } }), poll: () => DOWN },
+    pB: { poll: (id) => jobAt(id, 'done') },
+  });
+  const out = await r.client.run({ ...r.base, reroute: r.to(r.B) });
+  assert.deepStrictEqual(r.asked, [['runner-a', 150000]]);
+  assert.deepStrictEqual(r.calls.filter((c) => c.includes('DELETE')), ['pA DELETE /api/suite/jobs/run-1']);
+  assert.deepStrictEqual([out.record.outcome, out.record.where, out.res.jobId], ['pass', 'runner-b', 'run-1-2']);
+});
+
+test('t2412: a runner lost at the pack commit is rerouted, and the lost job is cancelled once', async () => {
+  const r = lostRig({
+    pA: { post: () => ({ status: 200, body: { ok: true, state: 'awaiting-pack', have: [] } }), put: () => ({ status: 200, body: { ok: true, size: 1 } }), commit: () => DOWN, poll: () => DOWN },
     pB: { poll: (id) => jobAt(id, 'done') },
   });
   const out = await r.client.run({ ...r.base, reroute: r.to(r.B) });

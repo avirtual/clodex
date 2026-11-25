@@ -1109,7 +1109,7 @@ run is rerouted once: `_runnerReroute` asks `pickRunner` among the other members
 (never the lost one, no fall back to the first member); the lost job gets a
 best-effort cancel, and the same snapshot, definition, shares and env go to the new
 member under the next `<run id>-<attempt>` job id, waited on for what is left of the
-original run deadline (the overall budget, or the run budget once the lost job had started; its queue or build budget does not carry over), never a fresh budget. With no other member, or on a second loss,
+original overall budget (the replacement's own queue, build and run budgets still apply inside it), never a fresh budget. A commit call waits up to its 120 s request timeout, so a runner lost at commit is declared lost when the second failed call returns, about 255 s in. With no other member, or on a second loss,
 the run ends `runner unreachable` (transient) at once, so a single-runner team falls
 back or holds after 150 s rather than at the run budget. Nothing else reroutes: a
 red result, `no-totals`, `tree-mismatch`, `definition-mismatch`, `no-share`, a run,
