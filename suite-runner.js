@@ -97,6 +97,29 @@ function tailTotals(file) {
   }
 }
 
+const BOX_KEY = 'box:';
+const boxKey = (hash) => `${BOX_KEY}${hash}`;
+
+function boxHashOf(job) {
+  if (job.isolation !== 'container') return null;
+  if (job.build) return job.build.definitionHash || null;
+  return (job.identity && job.identity.box && job.identity.box.definitionHash) || null;
+}
+
+function boxPrunePlan({ images, cache, jobs, building = null, at, idleMs }) {
+  const keep = new Set();
+  for (const job of jobs) if (LIVE.has(job.state) && boxHashOf(job)) keep.add(boxHashOf(job));
+  if (building && building.hash) keep.add(building.hash);
+  const stamp = new Set();
+  const remove = [];
+  for (const im of images) {
+    const key = boxKey(im.hash);
+    if (!(key in cache)) { stamp.add(im.hash); continue; }
+    if (!keep.has(im.hash) && at - cache[key] > idleMs) remove.push(im);
+  }
+  return { stamp: [...stamp], remove };
+}
+
 function activityJob(job, lastOutputAt = null, streams = null) {
   const container = job.isolation === 'container';
   const box = container && job.identity && job.identity.box ? job.identity.box : null;
@@ -749,6 +772,7 @@ function createSuiteRunner({
 
   function recordBuilt(imageId, definitionHash) {
     builtIds.add(imageId);
+    touchCache(boxKey(definitionHash));
     const rows = readJson(builtFile, []);
     writeJson(builtFile, [...(Array.isArray(rows) ? rows : []), { imageId, definitionHash, at: now() }], 0o600);
   }
@@ -862,7 +886,7 @@ function createSuiteRunner({
   function reconcile() {
     const cache = readJson(cacheFile, {});
     const kept = {};
-    for (const [rel, at] of Object.entries(cache)) if (fs.existsSync(path.join(work, rel))) kept[rel] = at;
+    for (const [rel, at] of Object.entries(cache)) if (rel.startsWith(BOX_KEY) || fs.existsSync(path.join(work, rel))) kept[rel] = at;
     const depsRoot = path.join(work, 'deps');
     for (const repo of fs.readdirSync(depsRoot)) {
       const dir = path.join(depsRoot, repo);
@@ -1110,6 +1134,7 @@ function createSuiteRunner({
     const mirror = snapshot.mirrorPath(work, job.repoKey);
     forceRemove(jobDir);
     for (const d of ['home', 'tmp']) fs.mkdirSync(path.join(jobDir, d), { recursive: true });
+    if (boxHashOf(job)) touchCache(boxKey(boxHashOf(job)));
     if (job.build) {
       let built;
       try { built = await buildBox(job, jobDir); } finally { releaseBuild(job); }
@@ -1219,6 +1244,30 @@ function createSuiteRunner({
     return out;
   }
 
+  async function pruneBoxImages() {
+    if (!box || typeof box.listBoxImages !== 'function') return [];
+    const listed = await box.listBoxImages();
+    if (!listed.ok) { log(`suite-runner: box image retention skipped: ${listed.why}`); return []; }
+    const at = now();
+    const plan = (images) => boxPrunePlan({ images, cache: readJson(cacheFile, {}), jobs: jobs.values(), building, at: now(), idleMs: lim.cacheIdleMs });
+    const { stamp, remove } = plan(listed.images);
+    const gone = [];
+    for (const im of remove) {
+      if (!plan([im]).remove.length) continue;
+      const name = im.tags[0] || shortImage(im.id);
+      const r = await box.removeImage(im.id);
+      if (!r.ok) { log(`suite-runner: box image ${name} not removed: ${r.why}`); continue; }
+      log(`suite-runner: removed box image ${name} (${(im.bytes / 1024 ** 3).toFixed(2)} GiB)`);
+      gone.push(im);
+    }
+    const cache = readJson(cacheFile, {});
+    for (const hash of stamp) if (!(boxKey(hash) in cache)) cache[boxKey(hash)] = at;
+    const left = new Set(listed.images.filter((im) => !gone.includes(im)).map((im) => im.hash));
+    for (const im of gone) if (!left.has(im.hash)) delete cache[boxKey(im.hash)];
+    if (stamp.length || gone.length) writeJson(cacheFile, cache);
+    return gone.map((im) => im.tags[0] || im.id);
+  }
+
   async function maintain() {
     if (recovering || maintenance || anyLive() || active.size) return { ran: false };
     maintenance = (async () => {
@@ -1241,7 +1290,8 @@ function createSuiteRunner({
         }
       }
       writeJson(cacheFile, cache);
-      return { ran: true, removed };
+      const images = await pruneBoxImages();
+      return { ran: true, removed, images };
     })();
     try { return await maintenance; } finally { maintenance = null; pump(); }
   }
@@ -1570,5 +1620,5 @@ function createSuiteRunner({
 
 module.exports = {
   createSuiteRunner, noneIsolation, resolveFs, userIsolation, envIdentity, jobPaths, statePaths, jobPath, jobLang, DEFAULT_LIMITS, BOX_DEFINITION_MAX,
-  BUILD_TIMEOUT_MS, BUILD_COOL_OFF_MS, BUILDS_PER_DAY, BUILD_DISK_FLOOR,
+  BUILD_TIMEOUT_MS, BUILD_COOL_OFF_MS, BUILDS_PER_DAY, BUILD_DISK_FLOOR, boxPrunePlan,
 };
