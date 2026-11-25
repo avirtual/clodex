@@ -657,7 +657,7 @@ function lostRig(script, { trees = [TREE] } = {}) {
     now: () => clock.t,
     sleep: async (ms) => { clock.t += ms; },
     randomUUID: () => `run-${(n += 1)}`,
-    snapshot: { snapshotTree: async () => ({ treeHash: TREE, head: 'b'.repeat(40), headTree: TREE }), releaseSnapshot: () => {}, buildPack: async () => { fs.writeFileSync(path.join(path.dirname(compareFile), 'pack'), 'x'); return { file: path.join(path.dirname(compareFile), 'pack'), bytes: 1, sha256: 'h' }; } },
+    snapshot: { snapshotTree: async () => ({ treeHash: trees[Math.min((snaps += 1) - 1, trees.length - 1)], head: 'b'.repeat(40), headTree: TREE }), releaseSnapshot: () => {}, buildPack: async () => { fs.writeFileSync(path.join(path.dirname(compareFile), 'pack'), 'x'); return { file: path.join(path.dirname(compareFile), 'pack'), bytes: 1, sha256: 'h' }; } },
   });
   const asked = [];
   const to = (next) => async (lost) => { asked.push([lost, clock.t]); return next; };
