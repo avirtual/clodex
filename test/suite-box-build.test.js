@@ -282,10 +282,11 @@ test('t2364: a failed build ends every waiter box-failed with the tail, cools of
   const line = 'suite-runner: box build: docker build exited 1: ERROR: failed to solve: boom\n';
   assert.strictEqual(await f.stderr('j2'), `#1 step one\nERROR: failed to solve: boom\n${line}`);
   assert.strictEqual(await f.stderr('j1'), `#1 step one\nERROR: failed to solve: boom\n${line}`);
-  const calls = f.docker.calls.length;
+  const probes = () => f.docker.calls.filter((c) => c.args[c.args.length - 1] !== 'label=clodex.box').length;
+  const calls = probes();
   assert.deepStrictEqual(await f.runner.submit(f.body('j4', BUILD())), { ok: true, id: 'j4', state: 'done', position: null });
   assert.strictEqual(await f.stderr('j4'), `#1 step one\nERROR: failed to solve: boom\n${line}`);
-  assert.strictEqual(f.docker.calls.length, calls);
+  assert.strictEqual(probes(), calls, 'a cooled-off submit probes nothing; the retention listing after maintenance is not a probe');
   assert.strictEqual(f.builds().length, 1);
   f.tick(10 * 60 * 1000 + 1);
   const again = heldBuild(f);
