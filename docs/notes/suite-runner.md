@@ -9,6 +9,10 @@ The engine runs git in a job tree only before `isolation.prepare`: once the suit
 
 ## maintain
 Maintenance checks for a live job before each mirror gc and again before removing anything: a submit can land while `git gc` runs. `commit` waits for a running maintenance before `ingestPack`.
+Cleanup: mirrors and deps entries are evicted when idle past `cacheIdleMs` or while their total exceeds `cacheMaxBytes`, oldest first; box images follow age only (`pruneBoxImages`, docs/notes/suite-box.md `listBoxImages`).
+
+## boxPrunePlan
+A box image's usedAt lives in `cache.json` under `box:<definition hash>`, stamped at a job start naming that definition and by `recordBuilt`; the colon keeps it apart from the `mirrors/` and `deps/` path keys, and `reconcile` keeps `box:` rows because they name no path. `pruneBoxImages` re-plans each image just before its `image rm`, so a job that lands during the listing protects its image.
 
 ## noneIsolation
 Runs the suite as the engine user with the scrubbed env only; it does not meet the no-credentials requirement and is for a loopback throwaway box.
