@@ -21,7 +21,7 @@ const H1 = '1'.repeat(64);
 const H2 = '2'.repeat(64);
 const H3 = '3'.repeat(64);
 const H4 = '4'.repeat(64);
-const img = (hash, n) => ({ id: `sha256:${String(n).repeat(64)}`, labels: [`clodex.box=${hash}`], tags: [`clodex-box:${hash.slice(0, 12)}`], size: n * 1024 ** 3 });
+const img = (hash, n) => ({ hash, id: `sha256:${String(n).repeat(64)}`, labels: [`clodex.box=${hash}`], tags: [`clodex-box:${hash.slice(0, 12)}`], size: n * 1024 ** 3 });
 
 async function fixture(t, { images, cache = {}, fail = {}, refuse = new Set(), extraIds = [] }) {
   const root = mkTmpRoot('suite-box-retention-');
