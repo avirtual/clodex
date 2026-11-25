@@ -628,11 +628,12 @@ function lostRig(script) {
   const calls = [];
   const posts = [];
   const conn = (peer) => ({
+    suitePut: async () => (script[peer].put ? script[peer].put() : DOWN),
     suiteAsk: async (method, p, body) => {
       calls.push(`${peer} ${method} ${p.split('?')[0]}${p.includes('wait=0') ? ' wait=0' : ''}`);
       const s = script[peer];
       if (p.startsWith('/api/suite/info')) return { status: 200, body: { ok: true, limits: {}, env: { envKey: 'k' }, shares: [{ name: 'assets', version: 'v1' }], box: { state: 'ready', env: { box: { definitionHash: s.hash || DEF.definitionHash } } } } };
-      if (method === 'POST') { posts.push([peer, body.id, body.treeHash, body.box && body.box.definitionHash, JSON.stringify(body.shares), body.setup, JSON.stringify(body.env)]); return { status: 200, body: { ok: true, state: 'queued' } }; }
+      if (method === 'POST') { posts.push([peer, body.id, body.treeHash, body.box && body.box.definitionHash, JSON.stringify(body.shares), body.setup, JSON.stringify(body.env)]); return s.post ? s.post() : { status: 200, body: { ok: true, state: 'queued' } }; }
       if (method === 'DELETE') return s.cancel ? s.cancel(clock.t) : { status: 200, body: { ok: true } };
       if (p.includes('/output?')) {
         const text = p.includes('stream=stdout') ? (s.stdout || GREEN) : '';
@@ -654,7 +655,7 @@ function lostRig(script) {
     now: () => clock.t,
     sleep: async (ms) => { clock.t += ms; },
     randomUUID: () => `run-${(n += 1)}`,
-    snapshot: { snapshotTree: async () => ({ treeHash: TREE, head: 'b'.repeat(40), headTree: TREE }), releaseSnapshot: () => {} },
+    snapshot: { snapshotTree: async () => ({ treeHash: TREE, head: 'b'.repeat(40), headTree: TREE }), releaseSnapshot: () => {}, buildPack: async () => { fs.writeFileSync(path.join(path.dirname(compareFile), 'pack'), 'x'); return { file: path.join(path.dirname(compareFile), 'pack'), bytes: 1, sha256: 'h' }; } },
   });
   const asked = [];
   const to = (next) => async (lost) => { asked.push([lost, clock.t]); return next; };
@@ -693,6 +694,38 @@ test('t2412: the replacement waits only for what is left of the original deadlin
   assert.deepStrictEqual(r.asked, [['runner-a', 1200000]], 'ENTER: lost at 20 minutes');
   assert.deepStrictEqual([out.record.outcome, out.record.reason, out.record.endedAt], ['timeout', 'no result within the 1800000ms budget (cancelled)', '1970-01-01T00:30:00.000Z']);
   assert.deepStrictEqual(r.calls.filter((c) => c.includes('DELETE')), ['pA DELETE /api/suite/jobs/run-1', 'pB DELETE /api/suite/jobs/run-1-2']);
+});
+
+test('t2412: a runner lost while the job is queued leaves the replacement the run budget, not the 5 min queue budget', async () => {
+  const r = lostRig({
+    pA: { poll: (id, t) => (t < 60000 ? jobAt(id, 'queued') : DOWN) },
+    pB: { poll: (id, t) => (t < 300000 ? jobAt(id, 'queued') : t < 600000 ? jobAt(id, 'running') : jobAt(id, 'done')) },
+  });
+  const out = await r.client.run({ ...r.base, queueBudgetMs: 300000, reroute: r.to(r.B) });
+  assert.deepStrictEqual(r.asked, [['runner-a', 240000]], 'ENTER: lost while queued');
+  assert.deepStrictEqual([out.record.outcome, out.record.where, out.record.endedAt], ['pass', 'runner-b', '1970-01-01T00:10:00.000Z']);
+});
+
+test('t2412: a runner lost during the pack upload is rerouted, and the lost job is cancelled once', async () => {
+  const r = lostRig({
+    pA: { post: () => ({ status: 200, body: { ok: true, state: 'awaiting-pack', have: [] } }), poll: () => DOWN },
+    pB: { poll: (id) => jobAt(id, 'done') },
+  });
+  const out = await r.client.run({ ...r.base, reroute: r.to(r.B) });
+  assert.deepStrictEqual(r.asked, [['runner-a', 150000]]);
+  assert.deepStrictEqual(r.calls.filter((c) => c.includes('DELETE')), ['pA DELETE /api/suite/jobs/run-1']);
+  assert.deepStrictEqual([out.record.outcome, out.record.where, out.res.jobId], ['pass', 'runner-b', 'run-1-2']);
+});
+
+test('t2412: the replacement gets its own runner-restart retry after the lost runner used one', async () => {
+  const gone = { status: 200, body: { ok: true, jobs: [] } };
+  const r = lostRig({
+    pA: { poll: (id) => (id === 'run-1' ? gone : DOWN) },
+    pB: { poll: (id) => (id === 'run-1-3' ? gone : jobAt(id, 'done')) },
+  });
+  const out = await r.client.run({ ...r.base, reroute: r.to(r.B) });
+  assert.deepStrictEqual(r.posts.map((p) => [p[0], p[1]]), [['pA', 'run-1'], ['pA', 'run-1-2'], ['pB', 'run-1-3'], ['pB', 'run-1-4']]);
+  assert.deepStrictEqual([out.record.outcome, out.record.where, out.res.jobId], ['pass', 'runner-b', 'run-1-4']);
 });
 
 test('t2412: one answered poll inside the 150 s resets the count and nothing is rerouted', async () => {
@@ -798,7 +831,7 @@ test('t2412: two tickets losing the same runner each reroute on their own and ne
   ]);
   assert.deepStrictEqual(rig.posts.map((p) => [p[0], p[1]]).sort(), [['pA', 'run-1'], ['pA', 'run-2'], ['pB', 'run-1-2'], ['pB', 'run-2-2']]);
   for (const got of [one, two]) {
-    assert.deepStrictEqual([got.decided, got.runner, got.rerouted], [true, 'runner-2', { from: 'runner-1', to: 'runner-2' }]);
+    assert.deepStrictEqual([got.decided, got.runner, got.out.rerouted], [true, 'runner-2', { from: 'runner-1', to: 'runner-2' }]);
     assert.deepStrictEqual(got.out.attempts.map((a) => [a.runner, a.outcome]), [['runner-1', 'lost'], ['runner-2', 'pass']]);
   }
   rig.f.m._boxRow(rig.team, { id: 't1' }, one, null);

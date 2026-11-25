@@ -6833,7 +6833,6 @@ function createTicketMethods(deps, shared) {
             via = { peer: next.peer, ...(next.wire === 'pull' ? { wire: 'pull' } : {}) };
             ret.wire = next.wire === 'pull' ? 'pull' : WIRE_PUSH;
             ret.runner = next.name;
-            ret.rerouted = { from: next.from, to: next.name };
             jobId = null;
             submittedId = null;
             cancelSent = false;

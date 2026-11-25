@@ -169,11 +169,13 @@ function createSuiteClient({
           const row = { runner: old.runner, jobId: old.jobId, outcome: 'lost' };
           ctx.attempts.push(row);
           ctx.abandoned = { peer: old.peer, wire: old.wire, jobId: old.jobId, asking: false };
-          ctx.cap = deadlineOf(ctx);
+          ctx.cap = Math.min(ctx.t0 + ctx.budgetMs, ctx.started && ctx.runBudgetMs != null ? ctx.startedAt + ctx.runBudgetMs : Infinity);
           ctx.peer = next.peer;
           ctx.wire = next.wire === 'pull' ? 'pull' : 'push';
           ctx.where = next.name || next.peer;
           Object.assign(ctx, { jobId: null, t0: now(), started: false, startedAt: null, buildSince: null, submitted: false, env: null });
+          used.clear();
+          full = false;
           progress(`runner ${old.runner}: no answer for ${LOST_AFTER_MS}ms; resubmitting to ${ctx.where}`);
           try { (opts.onReroute || (() => {}))({ peer: ctx.peer, wire: ctx.wire, name: ctx.where, from: old.runner }); } catch {}
           const c = await Promise.resolve().then(() => cancel(old.peer, old.jobId, old.wire)).catch((e) => ({ ok: false, error: e && e.message ? e.message : String(e) }));
@@ -280,7 +282,7 @@ function createSuiteClient({
     if (sub.body.state === 'awaiting-pack') {
       const sent = await upload(ctx, snap, jobPath, sub.body.have || [], limits, progress);
       if (sent) {
-        await cancel(ctx.peer, jobId, ctx.wire);
+        if (!sent.lost) await cancel(ctx.peer, jobId, ctx.wire);
         return sent;
       }
     }
@@ -308,7 +310,8 @@ function createSuiteClient({
         const n = fs.readSync(fd, buf, 0, Math.min(buf.length, pack.bytes - offset), offset);
         const chunk = Buffer.from(buf.subarray(0, n));
         const headers = { 'Content-Range': `bytes ${offset}-${offset + chunk.length - 1}/*` };
-        const r = await ask(ctx, (c) => c.suitePut(`${jobPath}/pack`, chunk, headers), progress);
+        const r = await ask(ctx, (c) => c.suitePut(`${jobPath}/pack`, chunk, headers), progress, Infinity, ctx.lostAfterMs);
+        if (r.lost) return { lost: true };
         if (r.unreachable) return { unknown: 'runner unreachable' };
         if (r.body && r.body.ok) { offset = r.body.size; continue; }
         if (r.status === 409 && r.body && Number.isInteger(r.body.have) && r.body.have <= pack.bytes && resumes < MAX_RESUMES) {
@@ -324,6 +327,7 @@ function createSuiteClient({
     }
     const { bytes, sha256 } = pack;
     const done = await ask(ctx, (c) => c.suiteAsk('POST', `${jobPath}/commit`, { bytes, sha256 }, COMMIT_TIMEOUT_MS), progress);
+    if (done.lost) return { lost: true };
     if (done.unreachable) return { unknown: 'runner unreachable' };
     if (done.body && done.body.ok) return null;
     if (done.status === 409 && done.body && done.body.incomplete) return { retry: 'incomplete' };
@@ -544,7 +548,7 @@ function createSuiteClient({
     };
     const moved = (next) => { me.peer = next.peer; me.wire = next.wire; me.name = next.name; };
     Promise.resolve()
-      .then(() => run({ ...opts, snap, scope: 'full', onJob: ({ jobId }) => { me.jobId = jobId; me.sawDetach = false; }, onSubmitted: ({ jobId }) => { me.submitted = jobId; }, onDetach: () => { me.sawDetach = true; }, onRepick: moved, onReroute: moved }))
+      .then(() => run({ ...opts, snap, scope: 'full', onJob: ({ jobId }) => { me.jobId = jobId; me.sawDetach = false; }, onSubmitted: ({ jobId }) => { me.submitted = jobId; }, onDetach: () => { me.sawDetach = true; }, onRepick: moved, onReroute: (next) => { moved(next); me.jobId = null; } }))
       .catch((e) => ({ unknown: `client error: ${e.message}`, res: null, record: null }))
       .then((out) => {
         me.remote = out;
