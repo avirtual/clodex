@@ -102,6 +102,7 @@ test('t2413: an image with no record is stamped on first sight and kept; the nex
 
 test('t2413: the box image usedAt record survives the restart reconcile, which drops only missing paths', async (t) => {
   const f = await fixture(t, { images: [img(H1, 1)], cache: { [`box:${H1}`]: T0, 'mirrors/gone.git': T0 } });
+  f.at(T0 + DAY);
   await f.pass();
   assert.deepStrictEqual(f.cache(), { [`box:${H1}`]: T0 });
 });

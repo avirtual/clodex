@@ -1257,6 +1257,7 @@ function createSuiteRunner({
     const { stamp, remove } = plan(listed.images);
     const gone = [];
     for (const im of remove) {
+      if (anyLive() || active.size) break;
       if (!plan([im]).remove.length) continue;
       const name = im.tags[0] || shortImage(im.id);
       const r = await box.removeImage(im.id);
