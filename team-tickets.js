@@ -3250,6 +3250,12 @@ function createTicketMethods(deps, shared) {
       };
     },
 
+    async _handRunners(tr) {
+      const push = { ...tr, pool: (Array.isArray(tr.pool) ? tr.pool : []).filter((p) => p && p.wire !== 'pull') };
+      const chosen = this._runnerMembers(push).length > 1 ? await this._pickGateRunner(push, false) : null;
+      return { chosen: chosen ? chosen.peer : null, repick: chosen ? this._runnerRepick(push, false) : null, reroute: this._runnerReroute(push, false) };
+    },
+
     _runnerInvalid(team) {
       return (team.droppedFields || []).some((d) => d && d.field === 'testRunner' && d.status === 'invalid');
     },

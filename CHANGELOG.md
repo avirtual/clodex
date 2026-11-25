@@ -16,6 +16,7 @@ blocks a release.
 - Peers: a peer you add now has its own tick, 'Share my agents with this peer', so the peer's agents can see yours in `who` without enabling relay. Relay now covers only the agents of your other peers. Existing peers keep their current behaviour.
 - Test runners: a box image no suite has used for 14 days is removed from the runner, so changed box definitions no longer pile up on disk. The suite compare log is rotated at 5 MB.
 - Test runners: when a runner stops answering after it accepted a suite, the suite is sent once to another runner in the pool instead of waiting out its time budget; with no other runner the ticket falls back or is held after 150 seconds. The notice names both runners.
+- Test runners: a hand's test run sent to a runner now picks from the team's pool and moves once to another runner if the first stops answering. It still ends 'result unknown' rather than running locally when no runner can finish it.
 
 ## 5.198.0 — 2026-11-24
 

@@ -927,7 +927,7 @@ function requestError(msg) {
 }
 
 function createChannelHost({
-  client, team, seat = null, ticket = null, listWorktrees, resolvePeer, send,
+  client, team, seat = null, ticket = null, listWorktrees, resolvePeer, send, pool = null,
   notifyLead = () => {}, log = () => {}, snapshot = snapshotLib, realpath = fs.realpathSync,
   queueBudgetMs = HAND_QUEUE_MS, runMs = HAND_RUN_MS,
 }) {
@@ -984,26 +984,31 @@ function createChannelHost({
       return say({ run: 'local', why: d.why, override: d.override || null });
     }
     if (!client) return say({ run: 'remote', runner: d.peer, unknown: 'no suite client on this node' });
-    const peer = resolvePeer(d.peer);
-    if (!peer) return say({ run: 'remote', runner: d.peer, unknown: `runner ${d.peer} is not a known peer` });
-    if (wantCancel) return say({ run: 'remote', runner: d.peer, unknown: 'cancelled by the caller' });
-    inflight = { peer, jobId: null };
+    const picked = pool ? await Promise.resolve().then(() => pool()).catch(() => null) : null;
+    const name = (picked && picked.chosen) || d.peer;
+    const peer = resolvePeer(name);
+    if (!peer) return say({ run: 'remote', runner: name, unknown: `runner ${name} is not a known peer` });
+    if (wantCancel) return say({ run: 'remote', runner: name, unknown: 'cancelled by the caller' });
+    inflight = { peer, name, jobId: null };
+    const moved = (next) => { inflight.peer = next.peer; inflight.name = next.name || next.peer; inflight.jobId = null; };
     const tr = team.testRunner;
     const out = await client.run({
-      peer, name: d.peer, tree, kind: 'hand', scope: msg.scope, team: team.name, ticket, seat,
+      peer, name, tree, kind: 'hand', scope: msg.scope, team: team.name, ticket, seat,
       files: msg.files || [], flags: msg.flags || {}, setup: tr.setup || null, env: tr.env || {},
       queueBudgetMs, runBudgetMs: runMs, timeoutMs: runMs, route: d.why,
       shouldStop: () => wantCancel,
       onSubmitted: ({ jobId }) => { inflight.jobId = jobId; fireCancel(); },
       onProgress: (line) => say({ progress: line }),
+      ...(picked && picked.repick ? { repick: picked.repick, onRepick: moved } : {}),
+      ...(picked && picked.reroute ? { reroute: picked.reroute, onReroute: moved } : {}),
     });
     finished = true;
-    if (out.unknown || !out.res) return say({ run: 'remote', runner: d.peer, unknown: out.unknown || 'no result' });
+    if (out.unknown || !out.res) return say({ run: 'remote', runner: inflight.name, unknown: out.unknown || 'no result' });
     const r = out.res;
     const note = await treeNote(tree, r.treeHash);
     return say({
-      run: 'remote', runner: d.peer, status: r.status, signal: r.signal, stdout: r.stdout, stderr: r.stderr,
-      error: null, unknown: null, treeHash: r.treeHash, note,
+      run: 'remote', runner: inflight.name, status: r.status, signal: r.signal, stdout: r.stdout, stderr: r.stderr,
+      error: null, unknown: null, treeHash: r.treeHash, note, ...(out.rerouted ? { rerouted: out.rerouted } : {}),
     });
   }
 

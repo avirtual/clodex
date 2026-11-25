@@ -970,10 +970,19 @@ capability is refused. A first peer starts at `hands:full`.
 shows the peer, the mode, and whether the runner is reachable, with its queue
 length and environment identity. `full` sends full-scope hand runs
 (`clodex-run-tests`) to the runner and keeps own-scope runs local; `all` sends
-both. The decision is `route()` in suite-client.js. A routed run prints the same
-digest a local one would; a run the runner cannot complete (unreachable,
-timeout, disconnect, restart, tree mismatch) prints `result unknown — …` and
-exits non-zero, never a green line and never a local fallback. `{"local": true}`
+both. The decision is `route()` in suite-client.js. On a pool, a routed run
+picks its member with the gate's pick (`_handRunners`, no box) among the push
+members only (a pull member serves the gate only), is picked again once when
+that member refuses or is unreachable before accepting, and is rerouted once,
+as a gate run is, when its runner is lost after accepting; with no pick it
+goes to the first member. Because the loss is counted for every routed run, a
+single runner that stops answering ends a hand run as `result unknown` after
+150 s instead of at the run budget. A routed run prints the same digest a
+local one would, followed by `(runner <name>)`, or `(rerouted from <old> to
+<new>)` after a reroute; a run the runner cannot complete (unreachable,
+timeout, disconnect, restart, tree mismatch, a lost runner with no reroute
+left) prints `result unknown — …` naming the last runner tried and exits
+non-zero, never a green line and never a local fallback. `{"local": true}`
 in the payload runs it here, records `override:'call'` in the suite ledger and
 leaves a `ticket-loop` traffic row to the lead. A routed hand run waits at most
 15 minutes for the runner to take the job (queue and upload) and at most 21
