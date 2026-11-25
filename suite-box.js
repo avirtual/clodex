@@ -330,6 +330,32 @@ function boxIsolation({
     await removeBuiltImages(token);
   }
 
+  async function listBoxImages() {
+    const ls = await docker.call(['image', 'ls', '-a', '-q', '--no-trunc', '--filter', `label=${BOX_LABEL}`], { timeoutMs: PROBE_MS });
+    if (!ls.ok) return { ok: false, why: `docker image ls failed: ${callError(ls)}` };
+    const ids = [...new Set(String(ls.stdout).split('\n').map((s) => s.trim()).filter((s) => IMAGE_RE.test(s)))];
+    if (!ids.length) return { ok: true, images: [] };
+    const i = await docker.call(['image', 'inspect', ...ids], { timeoutMs: PROBE_MS });
+    if (!i.ok) return { ok: false, why: `docker image inspect failed: ${callError(i)}` };
+    let rows;
+    try { rows = JSON.parse(String(i.stdout)); } catch { rows = null; }
+    if (!Array.isArray(rows)) return { ok: false, why: 'docker image inspect answered no JSON list' };
+    const images = [];
+    for (const row of rows) {
+      if (!row || typeof row !== 'object' || !ids.includes(row.Id)) continue;
+      const hash = row.Config && row.Config.Labels ? row.Config.Labels[BOX_LABEL] : null;
+      if (!BOX_HASH_RE.test(String(hash))) continue;
+      images.push({ id: row.Id, hash, tags: Array.isArray(row.RepoTags) ? row.RepoTags : [], bytes: Number(row.Size) || 0 });
+    }
+    return { ok: true, images };
+  }
+
+  async function removeImage(id) {
+    if (!IMAGE_RE.test(String(id))) return { ok: false, why: 'bad image id' };
+    const r = await docker.call(['image', 'rm', id], { timeoutMs: CLEAR_MS });
+    return r.ok ? { ok: true } : { ok: false, why: callError(r) };
+  }
+
   async function freeBytes() {
     const d = await docker.call(['info', '--format', '{{.DockerRootDir}}'], { timeoutMs: PROBE_MS });
     const dataRoot = d.ok ? firstLine(d.stdout) : '';
@@ -364,6 +390,8 @@ function boxIsolation({
       if (child && child.pid > 0) { try { kill(-child.pid, 'SIGKILL'); } catch {} }
     },
     endBuild,
+    listBoxImages,
+    removeImage,
     freeBytes,
     env() { return { ...BOX_ENV }; },
     async prepare() {},

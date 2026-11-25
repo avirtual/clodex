@@ -282,10 +282,11 @@ test('t2364: a failed build ends every waiter box-failed with the tail, cools of
   const line = 'suite-runner: box build: docker build exited 1: ERROR: failed to solve: boom\n';
   assert.strictEqual(await f.stderr('j2'), `#1 step one\nERROR: failed to solve: boom\n${line}`);
   assert.strictEqual(await f.stderr('j1'), `#1 step one\nERROR: failed to solve: boom\n${line}`);
-  const calls = f.docker.calls.length;
+  const probes = () => f.docker.calls.filter((c) => c.args[c.args.length - 1] !== 'label=clodex.box').length;
+  const calls = probes();
   assert.deepStrictEqual(await f.runner.submit(f.body('j4', BUILD())), { ok: true, id: 'j4', state: 'done', position: null });
   assert.strictEqual(await f.stderr('j4'), `#1 step one\nERROR: failed to solve: boom\n${line}`);
-  assert.strictEqual(f.docker.calls.length, calls);
+  assert.strictEqual(probes(), calls, 'a cooled-off submit probes nothing; the retention listing after maintenance is not a probe');
   assert.strictEqual(f.builds().length, 1);
   f.tick(10 * 60 * 1000 + 1);
   const again = heldBuild(f);
@@ -530,4 +531,22 @@ test('t2366: the lead client reports each job state change to onState', async ()
   const seen = [];
   const out = await l.client.run({ ...RUN, onState: (s) => seen.push(s) });
   assert.deepStrictEqual([out.record.outcome, seen], ['pass', ['queued', 'build', 'done']]);
+});
+
+test('t2413: a successful build and a later job start each stamp the box row in cache.json', async (t) => {
+  const f = await fixture(t);
+  const cacheRow = () => JSON.parse(fs.readFileSync(f.stateFile('cache.json'), 'utf8'))[`box:${HASH}`];
+  const started = heldBuild(f);
+  assert.strictEqual((await f.upload(f.body('j1', BUILD()))).state, 'queued');
+  const c = await started;
+  const atStart = cacheRow();
+  assert.strictEqual(typeof atStart, 'number', 'ENTER: the build job start stamped the row');
+  f.tick(1000);
+  f.succeed(c);
+  await waitState(f.runner, 'j1', 'done');
+  assert.strictEqual(cacheRow(), atStart + 1000);
+  f.tick(5000);
+  await f.upload(f.body('j2', BUILD()));
+  assert.strictEqual((await waitState(f.runner, 'j2', 'done')).env.box.imageId, IMG_BUILT);
+  assert.strictEqual(cacheRow(), atStart + 6000);
 });

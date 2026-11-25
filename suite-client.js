@@ -16,6 +16,7 @@ const DEFAULT_BUDGET_MS = 36 * 60 * 1000;
 const DEFAULT_RUN_MS = 21 * 60 * 1000;
 const BUILD_BUDGET_MS = 25 * 60 * 1000;
 const SNAPSHOT_WAIT_MS = 2000;
+const COMPARE_MAX_BYTES = 5 * 1024 ** 2;
 const UNREACHABLE = new Set([0, 429, 502, 503, 504]);
 const REFUSED = new Set([401, 403]);
 const RETRY_TEXT = {
@@ -423,10 +424,21 @@ function createSuiteClient({
     if (!compareFile) return;
     try {
       fs.mkdirSync(path.dirname(compareFile), { recursive: true });
-      fs.appendFileSync(compareFile, `${JSON.stringify(rec)}\n`);
+      const line = `${JSON.stringify(rec)}\n`;
+      let size = 0;
+      try { size = fs.statSync(compareFile).size; } catch {}
+      if (size > 0 && size + Buffer.byteLength(line) > COMPARE_MAX_BYTES) fs.renameSync(compareFile, `${compareFile}.1`);
+      fs.appendFileSync(compareFile, line);
     } catch (e) {
       log(`suite-client: comparison write failed: ${e.message}`);
     }
+  }
+
+  function readCompare() {
+    if (!compareFile) return '';
+    return [`${compareFile}.1`, compareFile].map((p) => {
+      try { return fs.readFileSync(p, 'utf8'); } catch { return ''; }
+    }).join('\n');
   }
 
   async function shadow(opts) {
@@ -513,8 +525,7 @@ function createSuiteClient({
   }
 
   function tally({ team, envKey = null, definitionHash = null }) {
-    let text = '';
-    try { text = compareFile ? fs.readFileSync(compareFile, 'utf8') : ''; } catch { text = ''; }
+    const text = readCompare();
     const recs = [];
     for (const line of text.split('\n')) {
       if (!line.trim()) continue;
@@ -556,8 +567,7 @@ function createSuiteClient({
   }
 
   function decideTally({ team }) {
-    let text = '';
-    try { text = compareFile ? fs.readFileSync(compareFile, 'utf8') : ''; } catch { text = ''; }
+    const text = readCompare();
     const out = { box: 0, home: 0, held: 0, bypassed: 0, fallbacks: [], holds: [], runners: [] };
     const bump = (list, r) => {
       const reason = String(r.fallback || 'unknown');
