@@ -623,7 +623,8 @@ const RED = 'TOTALS: 4 pass, 1 fail, 5 tests\n';
 const BOX_ENV = { isolation: 'container', box: { imageId: 'sha256:e', definitionHash: DEF.definitionHash } };
 const jobAt = (id, state, over = {}) => ({ status: 200, body: { ok: true, jobs: [{ id, state, treeHash: TREE, exit: { code: 0, signal: null }, reason: null, queueMs: 1, setupMs: 1, runMs: 1, out: {}, ...over }] } });
 
-function lostRig(script) {
+function lostRig(script, { trees = [TREE] } = {}) {
+  let snaps = 0;
   const clock = { t: 0 };
   const calls = [];
   const posts = [];
@@ -656,7 +657,7 @@ function lostRig(script) {
     now: () => clock.t,
     sleep: async (ms) => { clock.t += ms; },
     randomUUID: () => `run-${(n += 1)}`,
-    snapshot: { snapshotTree: async () => ({ treeHash: TREE, head: 'b'.repeat(40), headTree: TREE }), releaseSnapshot: () => {}, buildPack: async () => { fs.writeFileSync(path.join(path.dirname(compareFile), 'pack'), 'x'); return { file: path.join(path.dirname(compareFile), 'pack'), bytes: 1, sha256: 'h' }; } },
+    snapshot: { snapshotTree: async () => ({ treeHash: trees[Math.min((snaps += 1) - 1, trees.length - 1)], head: 'b'.repeat(40), headTree: TREE }), releaseSnapshot: () => {}, buildPack: async () => { fs.writeFileSync(path.join(path.dirname(compareFile), 'pack'), 'x'); return { file: path.join(path.dirname(compareFile), 'pack'), bytes: 1, sha256: 'h' }; } },
   });
   const asked = [];
   const to = (next) => async (lost) => { asked.push([lost, clock.t]); return next; };
@@ -814,6 +815,24 @@ test('t2412: a cancel of the lost job that rejects does not stop the reroute', a
   const out = await r.client.run({ ...r.base, reroute: r.to(r.B) });
   assert.ok(r.calls.includes('pA DELETE /api/suite/jobs/run-1'), 'ENTER: the cancel was tried');
   assert.deepStrictEqual([out.record.outcome, out.record.where], ['pass', 'runner-b']);
+});
+
+test('t2414: a shadow run rerouted off a lost runner forgets the lost job id, so a superseding shadow cancels nothing on the new runner', async () => {
+  let release;
+  const held = new Promise((res) => { release = res; });
+  const r = lostRig({ pA: { poll: () => DOWN, cancel: () => held }, pB: { poll: (id) => jobAt(id, 'done') } }, { trees: [TREE, TREE2] });
+  const turn = () => new Promise((res) => setImmediate(res));
+  const first = await r.client.shadow({ ...r.base, pool: true, reroute: r.to(r.B) });
+  for (let i = 0; i < 50 && !r.calls.includes('pA DELETE /api/suite/jobs/run-1'); i += 1) await turn();
+  assert.deepStrictEqual(r.asked, [['runner-a', 150000]], 'ENTER: the shadow run was rerouted and is cancelling the lost job');
+  const second = await r.client.shadow({ ...r.base, peer: 'pB', name: 'runner-b' });
+  assert.ok(second, 'ENTER: the second shadow run was taken');
+  for (let i = 0; i < 5; i += 1) await turn();
+  release({ status: 200, body: { ok: true } });
+  for (let i = 0; i < 20; i += 1) await turn();
+  assert.ok(!r.calls.includes('pB DELETE /api/suite/jobs/run-1'), r.calls.join('\n'));
+  first.local({ outcome: 'pass', pass: 5, fail: 0, tests: 5, failing: [], slow: [], durationMs: 1 });
+  second.local({ outcome: 'pass', pass: 5, fail: 0, tests: 5, failing: [], slow: [], durationMs: 1 });
 });
 
 const RA = { id: 'pA', label: 'runner-1', online: true, caps: ['peer', 'suite'] };

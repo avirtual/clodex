@@ -73,7 +73,7 @@ function stubClient({ hang = false, result = null } = {}) {
   };
 }
 
-function hostFor({ team = teamWith('all'), client = null, snapshot = stubSnap() } = {}) {
+function hostFor({ team = teamWith('all'), client = null, snapshot = stubSnap(), peers = { 'runner-1': 'p1' }, pool } = {}) {
   const dir = fs.realpathSync(mkTmpRoot('suite-route-'));
   const sent = [];
   const notes = [];
@@ -84,10 +84,10 @@ function hostFor({ team = teamWith('all'), client = null, snapshot = stubSnap() 
     team: team && { ...team, root: dir },
     seat: 'hand-1',
     listWorktrees: async () => ({ ok: true, worktrees: [{ path: dir }] }),
-    resolvePeer: (n) => (n === 'runner-1' ? 'p1' : null),
+    resolvePeer: (n) => peers[n] || null,
     send: (m) => { sent.push(m); if (m.run) settle(m); },
     notifyLead: (b) => notes.push(b),
-    snapshot,
+    snapshot, pool,
   });
   return { host, sent, notes, dir, done };
 }
@@ -169,7 +169,7 @@ test('host: an unknown result is passed on as unknown with the runner name', asy
   assert.deepStrictEqual(await f.done, { run: 'remote', runner: 'runner-1', unknown: 'runner unreachable' });
 });
 
-function execFixture(t, bin, { client = null, team = null } = {}) {
+function execFixture(t, bin, { client = null, team = null, peers = null, desk = null } = {}) {
   const { createSessionManager } = require('../session-manager');
   const { isFilenameToken, parseAndValidate } = require('../exec-schema');
   const REGISTRY_DIR = mkTmpRoot('suite-route-exec-');
@@ -207,7 +207,8 @@ function execFixture(t, bin, { client = null, team = null } = {}) {
   m._injectText = () => {};
   m._broadcast = (ch, p) => broadcasts.push(p);
   m._teamOfOrNull = () => team;
-  m._runnerPeerStatus = (n) => (n === 'runner-1' ? { id: 'p1' } : null);
+  m._runnerPeerStatus = peers ? (n) => peers[n] || null : (n) => (n === 'runner-1' ? { id: 'p1' } : null);
+  if (desk) m._runnerDesk = () => desk;
   mock.timers.enable({ apis: ['setTimeout'] });
   t.after(() => {
     for (const c of children) c.emit('close', 0, null);
@@ -355,7 +356,7 @@ const wall = (s) => String(s).replace(/\d+m \d{2}s/g, '<WALL>');
 const stamps = (s) => String(s).replace(/^# (start|when): .*$/gm, '# $1: <STAMP>');
 
 for (const name of Object.keys(CAPTURED)) {
-  test(`both arms: one captured ${name} output gives a byte-identical digest line${name === 'red' ? ' and failing-output file' : ''}`, async () => {
+  test(`both arms: one captured ${name} output gives the same digest line, the remote one naming its runner${name === 'red' ? ' and failing-output file' : ''}`, async () => {
     const captured = CAPTURED[name];
     const root = mkRoot(captured);
     const leaf = path.basename(root);
@@ -368,7 +369,7 @@ for (const name of Object.keys(CAPTURED)) {
     ]);
     assert.strictEqual(remote.ran, null, 'the remote arm never started the local runner');
     assert.ok(local.digest.startsWith(`[${leaf}] ${PREFIX[name]}`), `ENTER: ${local.digest}`);
-    assert.strictEqual(wall(remote.digest), wall(local.digest));
+    assert.strictEqual(wall(remote.digest), `${wall(local.digest)} (runner runner-1)`);
     assert.strictEqual(remote.code, local.code);
     assert.ok(remote.lines.includes('runner runner-1: job running'), 'progress reached stderr');
     if (name === 'red') {
@@ -416,7 +417,7 @@ test('a tree changed during a remote run appends the note to the digest', async 
   const r = await runWithHost(root, '{}', path.join(root, 'h'), () => [
     { run: 'remote', runner: 'runner-1', ...CAPTURED.green, signal: null, unknown: null, treeHash: TREE, note: '(tree changed during the run; the suite measured aaaaaaaa)' },
   ]);
-  assert.match(r.digest, /^\[[^\]]+\] 3\/3 green \(\d+m \d{2}s\) \(tree changed during the run; the suite measured aaaaaaaa\)$/);
+  assert.match(r.digest, /^\[[^\]]+\] 3\/3 green \(\d+m \d{2}s\) \(runner runner-1\) \(tree changed during the run; the suite measured aaaaaaaa\)$/);
 });
 
 function stubConn(handler) {
@@ -632,3 +633,126 @@ test('reexecInMeasured runs only on the local arm: the measured tree\'s own scri
   await runWithHost(root, '{}', path.join(root, 'h2'), () => [{ run: 'local', why: 'hands:off', override: null }]);
   assert.strictEqual(fs.readFileSync(marker, 'utf8'), 'ran');
 });
+
+const POOL_TEAM = (pool = [{ peer: 'runner-b', wire: 'push' }]) => ({ name: 'tm', lead: 'lead-1', root: '/r', testRunner: { peer: 'runner-a', hands: 'all', wire: 'push', pool } });
+const POOL_PEERS = { 'runner-a': 'pA', 'runner-b': 'pB' };
+const VIA_B = { peer: 'pB', wire: 'push', name: 'runner-b' };
+const DOWN = { status: 0, body: null, error: 'socket closed' };
+
+function poolRig(script) {
+  const clock = { t: 0 };
+  const calls = [];
+  const conn = (peer) => ({
+    suiteAsk: async (method, p) => {
+      calls.push(`${peer} ${method} ${p.split('?')[0]}`);
+      if (p.startsWith('/api/suite/info')) return { status: 200, body: { ok: true, limits: {}, env: { envKey: 'k' } } };
+      if (method === 'POST') return { status: 200, body: { ok: true, state: 'queued' } };
+      if (method === 'DELETE') return { status: 200, body: { ok: true } };
+      if (p.includes('/output?')) {
+        const text = p.includes('stream=stdout') ? 'TOTALS: 4 pass, 0 fail, 4 tests\n' : '';
+        return { status: 200, body: { ok: true, text, offset: 0, total: Buffer.byteLength(text) } };
+      }
+      if (script[peer].lost) return DOWN;
+      const id = decodeURIComponent(/ids=([^&]+)/.exec(p)[1]);
+      return { status: 200, body: { ok: true, jobs: [{ id, state: 'done', treeHash: TREE, exit: { code: 0, signal: null }, reason: null, queueMs: 0, setupMs: 1, runMs: 2, out: {} }] } };
+    },
+  });
+  const ledgerFile = path.join(mkTmpRoot('suite-hand-pool-'), 'suite-runs.jsonl');
+  const client = createSuiteClient({
+    getPeerManager: () => ({ get: (id) => (script[id] ? conn(id) : null) }),
+    ledgerFile, now: () => clock.t, sleep: async (ms) => { clock.t += ms; }, randomUUID: () => 'run-1', snapshot: stubSnap(),
+  });
+  const ends = () => fs.readFileSync(ledgerFile, 'utf8').trim().split('\n').map((l) => JSON.parse(l)).filter((x) => x.phase === 'end');
+  return { client, calls, ends };
+}
+
+const posts = (calls) => calls.filter((c) => / POST \/api\/suite\/jobs$/.test(c));
+
+test('t2414: on a two-member pool whose first member is offline the hand run goes to the second, never to a pull member, and the digest names it', async (t) => {
+  const asked = [];
+  const client = stubClient({ result: { unknown: null, res: { status: 0, signal: null, ...CAPTURED.green, treeHash: TREE } } });
+  client.reachable = async (peer) => { asked.push(peer); return { ok: true, info: { limits: {}, env: {} } }; };
+  const team = { ...POOL_TEAM([{ peer: 'laptop', wire: 'pull' }, { peer: 'runner-b', wire: 'push' }]), root: fs.realpathSync(mkTmpRoot('suite-route-tree-')) };
+  const peers = { 'runner-a': { id: 'pA', online: false, caps: ['suite'] }, 'runner-b': { id: 'pB', online: true, caps: ['suite'] } };
+  const f = execFixture(t, 'clodex-run-tests.js', { client, team, peers, desk: { attached: () => true } });
+  await turns(2);
+  f.children[0].emit('message', ask(team.root));
+  await turns(40);
+  assert.strictEqual(client.runs.length, 1, 'ENTER: the run was submitted');
+  assert.deepStrictEqual(asked, ['pB']);
+  const run = client.runs[0];
+  assert.deepStrictEqual([run.peer, run.name, typeof run.repick, typeof run.reroute], ['pB', 'runner-b', 'function', 'function']);
+  for (let i = 0; i < 5000 && !f.children[0].sends.some((m) => m.run); i += 1) await turns(1);
+  const reply = f.children[0].sends.find((m) => m.run);
+  assert.deepStrictEqual([reply.run, reply.runner, reply.unknown], ['remote', 'runner-b', null]);
+  const root = mkRoot(CAPTURED.green);
+  const d = await runWithHost(root, '{}', path.join(root, 'h'), () => [reply]);
+  assert.match(d.digest, /^\[[^\]]+\] 3\/3 green \(\d+m \d{2}s\) \(runner runner-b\)$/);
+});
+
+test('t2414: a hand run whose runner is lost after accept is rerouted once; the reply, the digest and the ledger row name both runners', async () => {
+  const r = poolRig({ pA: { lost: true }, pB: {} });
+  const f = hostFor({ client: r.client, team: POOL_TEAM(), peers: POOL_PEERS, pool: async () => ({ chosen: null, repick: null, reroute: async (lost) => (lost === 'runner-a' ? VIA_B : null) }) });
+  f.host.onMessage(ask(f.dir));
+  const m = await f.done;
+  assert.deepStrictEqual([m.run, m.runner, m.unknown, m.rerouted], ['remote', 'runner-b', null, { from: 'runner-a', to: 'runner-b' }]);
+  assert.deepStrictEqual(posts(r.calls), ['pA POST /api/suite/jobs', 'pB POST /api/suite/jobs']);
+  assert.deepStrictEqual(r.ends().map((x) => [x.kind, x.where, x.runner, x.attempts]), [['hand', 'runner-b', 'pB', [{ runner: 'runner-a', jobId: 'run-1', outcome: 'lost' }, { runner: 'runner-b', jobId: 'run-1-2', outcome: 'pass' }]]]);
+  const root = mkRoot({ status: m.status, stdout: m.stdout, stderr: m.stderr });
+  const d = await runWithHost(root, '{}', path.join(root, 'h'), () => [m]);
+  assert.match(d.digest, /^\[[^\]]+\] 4\/4 green \(\d+m \d{2}s\) \(rerouted from runner-a to runner-b\)$/);
+});
+
+test('t2414: a lost runner with no other member ends the hand run unknown at 150 s naming it, exits non-zero and starts no local run', async () => {
+  const r = poolRig({ pA: { lost: true } });
+  const f = hostFor({ client: r.client, team: POOL_TEAM([]), peers: POOL_PEERS, pool: async () => ({ chosen: null, repick: null, reroute: async () => null }) });
+  f.host.onMessage(ask(f.dir));
+  const m = await f.done;
+  assert.deepStrictEqual(m, { run: 'remote', runner: 'runner-a', unknown: 'runner unreachable' });
+  assert.deepStrictEqual(r.ends().map((x) => [x.where, x.outcome, x.endedAt]), [['runner-a', 'unknown', '1970-01-01T00:02:30.000Z']]);
+  const root = mkRoot(CAPTURED.green);
+  const d = await runWithHost(root, '{}', path.join(root, 'h'), () => [m]);
+  assert.strictEqual(d.digest, `[${path.basename(root)}] result unknown — the suite did not complete on runner runner-a: runner unreachable`);
+  assert.deepStrictEqual([d.code, d.ran], [1, null]);
+});
+
+test('t2414: a second loss after the reroute ends the hand run unknown naming the second runner, with no third submit', async () => {
+  const r = poolRig({ pA: { lost: true }, pB: { lost: true } });
+  const f = hostFor({ client: r.client, team: POOL_TEAM(), peers: POOL_PEERS, pool: async () => ({ chosen: null, repick: null, reroute: async () => VIA_B }) });
+  f.host.onMessage(ask(f.dir));
+  assert.deepStrictEqual(await f.done, { run: 'remote', runner: 'runner-b', unknown: 'runner unreachable' });
+  assert.deepStrictEqual(posts(r.calls), ['pA POST /api/suite/jobs', 'pB POST /api/suite/jobs']);
+});
+
+test('t2414: local:true runs here and never asks the pool', async () => {
+  let picks = 0;
+  const client = stubClient();
+  const f = hostFor({ client, team: POOL_TEAM(), peers: POOL_PEERS, pool: async () => { picks += 1; return null; } });
+  f.host.onMessage(ask(f.dir, { local: true }));
+  assert.deepStrictEqual(await f.done, { run: 'local', why: 'local:true in the call', override: 'call' });
+  assert.deepStrictEqual([picks, client.runs.length], [0, 0]);
+});
+
+test('t2414: a pull-wire team still answers local with its reason and never asks the pool', async () => {
+  let picks = 0;
+  const f = hostFor({ client: stubClient(), team: pullTeam('all'), pool: async () => { picks += 1; return null; } });
+  f.host.onMessage(ask(f.dir));
+  assert.deepStrictEqual(await f.done, { run: 'local', why: 'wire:pull serves the merge gate only (gate:shadow or gate:on)', override: null });
+  assert.strictEqual(picks, 0);
+});
+
+const PICK_ROWS = [
+  ['a pick that returns nothing uses the first member', async () => ({ chosen: null, repick: null, reroute: async () => null }), ['pA', 'runner-a', false]],
+  ['a pick that throws uses the first member', async () => { throw new Error('probe failed'); }, ['pA', 'runner-a', false]],
+  ['a chosen member gets the repick', async () => ({ chosen: 'runner-b', repick: async () => VIA_B, reroute: async () => null }), ['pB', 'runner-b', true]],
+];
+
+for (const [name, pool, want] of PICK_ROWS) {
+  test(`t2414: ${name}`, async () => {
+    const client = stubClient({ result: { unknown: null, res: { status: 0, signal: null, stdout: '', stderr: '', treeHash: TREE } } });
+    const f = hostFor({ client, team: POOL_TEAM(), peers: POOL_PEERS, pool });
+    f.host.onMessage(ask(f.dir));
+    assert.strictEqual((await f.done).runner, want[1]);
+    assert.deepStrictEqual([client.runs[0].peer, client.runs[0].name, 'repick' in client.runs[0]], want);
+  });
+}

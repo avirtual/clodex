@@ -432,7 +432,8 @@ no terminal tabs `no terminal on this host`. The `term_read` MCP tool
   the tree against the team's worktrees and each file entry (relative, no `..`,
   no leading `-`), then answers `{run:'local'}`, `{run:'refused'}` or streams
   `{progress}` lines and ends with `{run:'remote', status, stdout, stderr,
-  unknown, treeHash, note}`. The exec timeout kill and a channel disconnect each
+  unknown, treeHash, note}` (plus `rerouted: {from, to}` after a reroute). The
+  runner comes from the deps' `pool` (`_handRunners`). The exec timeout kill and a channel disconnect each
   cancel the in-flight runner job once. A script with no channel (a shell, an
   older host) runs locally.
 - **`[agent:exec status] {}` is a reserved name, not a registered command.** It

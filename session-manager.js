@@ -8049,6 +8049,7 @@ function createSessionManager(deps) {
               const peer = this._runnerPeerStatus(name);
               return peer ? peer.id : null;
             },
+            pool: () => this._handRunners(execTeam.testRunner),
             send: (m) => { if (child.connected) child.send(m); },
             notifyLead: (body) => this._broadcast('ipc-message', { type: 'task', from: 'ticket-loop', to: execTeam ? execTeam.lead : null, body }),
             log: (m) => log.warn('intent', m),

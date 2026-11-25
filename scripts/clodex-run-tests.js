@@ -484,9 +484,10 @@ function askHost() {
     if (m.run !== 'remote' || m.unknown) {
       emit(`[${LEAF}] ${TAG}result unknown — the suite did not complete on runner ${m.runner || '?'}: ${m.unknown || `unexpected reply ${JSON.stringify(m.run)}`}`, 1, 400);
     }
+    const via = m.rerouted && m.rerouted.from ? `(rerouted from ${m.rerouted.from} to ${m.rerouted.to})` : m.runner ? `(runner ${m.runner})` : null;
     digest({
       status: m.status, signal: m.signal, stdout: m.stdout, stderr: m.stderr, error: null,
-    }, Date.now() - startedAt, m.note || null);
+    }, Date.now() - startedAt, [via, m.note].filter(Boolean).join(' ') || null);
   });
   startedIso = nowIso();
   startedAt = Date.now();
