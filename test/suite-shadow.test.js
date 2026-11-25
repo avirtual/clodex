@@ -712,3 +712,21 @@ test('t2319: a named box submit answered 503 box-unavailable ends at once with t
   const out = await boxClient(r.conn).client.run({ ...OPTS, box: DEF });
   assert.deepStrictEqual([posts, out.record.outcome, out.record.reason], [['/api/suite/jobs'], 'unknown', 'runner refused the job: box unavailable: docker not found on PATH']);
 });
+
+test('t2413: an append that would take the compare log past 5 MB rotates it to .1, and both tallies read the old rows and the new one', () => {
+  const file = path.join(mkTmpRoot('suite-rotate-'), 'suite-compare.jsonl');
+  const old = [rec('k1', true, [], []), { team: 'tm', kind: 'verify', decidedBy: 'box', fallback: null }];
+  const oldText = `${old.map((l) => JSON.stringify(l)).join('\n')}\n`;
+  const pad = `${'x'.repeat(5 * 1024 ** 2 - Buffer.byteLength(oldText) - 10)}\n`;
+  fs.writeFileSync(file, oldText + pad);
+  fs.writeFileSync(`${file}.1`, 'stale\n');
+  const client = createSuiteClient({ getPeerManager: () => null, compareFile: file, now: () => 1000 });
+  client.decided({ team: 'tm', kind: 'verify', ticket: 't9', decidedBy: 'home', fallback: 'queue budget' });
+  assert.strictEqual(fs.readFileSync(`${file}.1`, 'utf8'), oldText + pad);
+  const fresh = fs.readFileSync(file, 'utf8').trim().split('\n').map((l) => JSON.parse(l));
+  assert.deepStrictEqual(fresh.map((r) => [r.ticket, r.decidedBy]), [['t9', 'home']]);
+  assert.deepStrictEqual(client.decideTally({ team: 'tm' }), { box: 1, home: 1, held: 0, bypassed: 0, fallbacks: [{ reason: 'queue budget', count: 1 }], holds: [], runners: [] });
+  client.shadowSkip({ team: 'tm', kind: 'post-merge', ticket: 't10', runner: 'laptop', skipped: 'detached' });
+  assert.strictEqual(fs.readFileSync(file, 'utf8').trim().split('\n').length, 2, 'under the cap the append does not rotate');
+  assert.deepStrictEqual(client.tally({ team: 'tm', envKey: 'k1' }), { envKey: 'k1', agree: 1, disagree: 0, outcomeAgreed: 1, sameCounts: 0, skipped: 0, oneSided: [], platforms: null });
+});
