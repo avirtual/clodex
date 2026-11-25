@@ -4877,6 +4877,26 @@ for (const [box, home] of [['green', 'red'], ['red', 'green']]) {
   });
 }
 
+test('t2412: a rerouted post-merge box pass with a late red from the abandoned attempt names both runners and adds the late line to MERGED', async () => {
+  const repo = mkRepo();
+  commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
+  const f = mkMerge({ repo, suite: 'red' });
+  const b = boxMergeClient('green', []);
+  const attempts = [{ runner: 'runner-0', jobId: 'j', outcome: 'late-fail' }, { runner: 'runner-1', jobId: 'j-2', outcome: 'pass' }];
+  const client = { ...b.client, run: async (o) => ({ ...(await b.client.run(o)), attempts, rerouted: { from: 'runner-0', to: 'runner-1' } }) };
+  f.deps.getSuiteClient = () => client;
+  f.m._runnerPeerStatus = () => ({ id: 'p1' });
+  f.team.testRunner = { peer: 'runner-1', hands: 'off', gate: 'on' };
+  f.team.dir = mkTmpRoot('clodex-box-merge-');
+  require('../team-box').writeBox(f.team.dir, b.def);
+  await f.m._autoMergeTicket(f.team, 't1', LANDED, ACCEPT);
+  assert.deepStrictEqual(f.esc(), []);
+  assert.strictEqual(f.landed().length, 1, 'ENTER: merged');
+  const body = f.landed()[0].body;
+  assert.match(body, /Suite on master after the merge: 5\/5 passing, 0 failing \(exit 0\) \(box, rerouted from runner-0 to runner-1\)\./);
+  assert.deepStrictEqual(body.split('\n').filter((l) => /reported red late/.test(l)), ['runner runner-0 reported red late for the abandoned attempt; runner-1 decided green']);
+});
+
 test('a one-line ACCEPT verdict whose MUST-FIX reads "(none)" merges', async () => {
   const repo = mkRepo();
   commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');

@@ -616,3 +616,247 @@ test('t2400: with nowhere to repick, the restarting refusal is classed as a tran
   assert.deepStrictEqual(boxVerdict({ unknown: out.record.reason }), { fallback: 'runner restart', fallbackCode: 'runner-restart', fallbackClass: 'transient' });
   assert.strictEqual(out.record.reason, 'runner refused the job: runner is restarting');
 });
+
+const { LOST_AFTER_MS } = require('../suite-client');
+const DOWN = { status: 0, body: null, error: 'socket closed' };
+const RED = 'TOTALS: 4 pass, 1 fail, 5 tests\n';
+const BOX_ENV = { isolation: 'container', box: { imageId: 'sha256:e', definitionHash: DEF.definitionHash } };
+const jobAt = (id, state, over = {}) => ({ status: 200, body: { ok: true, jobs: [{ id, state, treeHash: TREE, exit: { code: 0, signal: null }, reason: null, queueMs: 1, setupMs: 1, runMs: 1, out: {}, ...over }] } });
+
+function lostRig(script) {
+  const clock = { t: 0 };
+  const calls = [];
+  const posts = [];
+  const conn = (peer) => ({
+    suitePut: async () => (script[peer].put ? script[peer].put() : DOWN),
+    suiteAsk: async (method, p, body) => {
+      calls.push(`${peer} ${method} ${p.split('?')[0]}${p.includes('wait=0') ? ' wait=0' : ''}`);
+      const s = script[peer];
+      if (p.startsWith('/api/suite/info')) return { status: 200, body: { ok: true, limits: {}, env: { envKey: 'k' }, shares: [{ name: 'assets', version: 'v1' }], box: { state: 'ready', env: { box: { definitionHash: s.hash || DEF.definitionHash } } } } };
+      if (method === 'POST' && p.endsWith('/commit')) return s.commit ? s.commit(clock) : { status: 200, body: { ok: true } };
+      if (method === 'POST') { posts.push([peer, body.id, body.treeHash, body.box && body.box.definitionHash, JSON.stringify(body.shares), body.setup, JSON.stringify(body.env)]); return s.post ? s.post() : { status: 200, body: { ok: true, state: 'queued' } }; }
+      if (method === 'DELETE') return s.cancel ? s.cancel(clock.t) : { status: 200, body: { ok: true } };
+      if (p.includes('/output?')) {
+        const text = p.includes('stream=stdout') ? (s.stdout || GREEN) : '';
+        return { status: 200, body: { ok: true, text, offset: 0, total: Buffer.byteLength(text) } };
+      }
+      const id = decodeURIComponent(/ids=([^&]+)/.exec(p)[1]);
+      const wait = Number(/wait=(\d+)/.exec(p)[1]);
+      const r = s.poll(id, clock.t, wait);
+      if (r.body && r.body.jobs && r.body.jobs[0] && r.body.jobs[0].state !== 'done') clock.t += wait;
+      return r;
+    },
+  });
+  let n = 0;
+  const compareFile = path.join(mkTmpRoot('clodex-pool-lost-'), 'suite-compare.jsonl');
+  const records = () => (fs.existsSync(compareFile) ? fs.readFileSync(compareFile, 'utf8').trim().split('\n').filter(Boolean).map((l) => JSON.parse(l)) : []);
+  const client = createSuiteClient({
+    getPeerManager: () => ({ get: (id) => (script[id] ? conn(id) : null) }),
+    compareFile,
+    now: () => clock.t,
+    sleep: async (ms) => { clock.t += ms; },
+    randomUUID: () => `run-${(n += 1)}`,
+    snapshot: { snapshotTree: async () => ({ treeHash: TREE, head: 'b'.repeat(40), headTree: TREE }), releaseSnapshot: () => {}, buildPack: async () => { fs.writeFileSync(path.join(path.dirname(compareFile), 'pack'), 'x'); return { file: path.join(path.dirname(compareFile), 'pack'), bytes: 1, sha256: 'h' }; } },
+  });
+  const asked = [];
+  const to = (next) => async (lost) => { asked.push([lost, clock.t]); return next; };
+  const B = { peer: 'pB', wire: 'push', name: 'runner-b' };
+  const base = { peer: 'pA', name: 'runner-a', tree: '/w', kind: 'verify', team: 'tm', ticket: 't1', budgetMs: 36 * 60000, setup: { run: 'npm ci' }, env: { K: '1' } };
+  return { client, clock, calls, posts, asked, to, B, base, records };
+}
+
+test('t2412: LOST_AFTER_MS is above the runner\'s default lease, so a lost runner has already stopped the job nobody polls', () => {
+  const { DEFAULT_LIMITS } = require('../suite-runner');
+  assert.deepStrictEqual([LOST_AFTER_MS, DEFAULT_LIMITS.leaseMs], [150000, 120000]);
+  assert.ok(LOST_AFTER_MS > DEFAULT_LIMITS.leaseMs);
+});
+
+test('t2412: a runner lost after accept is cancelled once and the same snapshot goes to the second member under a new job id, which decides', async () => {
+  const r = lostRig({ pA: { poll: () => DOWN }, pB: { poll: (id) => jobAt(id, 'done', { env: BOX_ENV }) } });
+  const out = await r.client.run({ ...r.base, box: DEF, shares: SHARE_ASK, reroute: r.to(r.B) });
+  assert.deepStrictEqual(r.asked, [['runner-a', 150000]]);
+  assert.deepStrictEqual(r.calls.filter((c) => c.includes('DELETE')), ['pA DELETE /api/suite/jobs/run-1']);
+  assert.deepStrictEqual(r.posts, [
+    ['pA', 'run-1', TREE, DEF.definitionHash, '[{"share":"assets","version":"v1"}]', { run: 'npm ci' }, '{"K":"1"}'],
+    ['pB', 'run-1-2', TREE, DEF.definitionHash, '[{"share":"assets","version":"v1"}]', { run: 'npm ci' }, '{"K":"1"}'],
+  ]);
+  assert.deepStrictEqual([out.record.outcome, out.record.where, out.record.runner, out.res.jobId], ['pass', 'runner-b', 'pB', 'run-1-2']);
+  assert.deepStrictEqual(out.attempts, [{ runner: 'runner-a', jobId: 'run-1', outcome: 'lost' }, { runner: 'runner-b', jobId: 'run-1-2', outcome: 'pass' }]);
+  assert.deepStrictEqual(out.record.attempts, out.attempts);
+  assert.deepStrictEqual(out.rerouted, { from: 'runner-a', to: 'runner-b' });
+});
+
+test('t2412: the replacement waits only for what is left of the original deadline', async () => {
+  const r = lostRig({
+    pA: { poll: (id, t) => (t < 1050000 ? jobAt(id, 'running') : DOWN) },
+    pB: { poll: (id) => jobAt(id, 'running') },
+  });
+  const out = await r.client.run({ ...r.base, budgetMs: 1800000, reroute: r.to(r.B) });
+  assert.deepStrictEqual(r.asked, [['runner-a', 1200000]], 'ENTER: lost at 20 minutes');
+  assert.deepStrictEqual([out.record.outcome, out.record.reason, out.record.endedAt], ['timeout', 'no result within the 1800000ms budget (cancelled)', '1970-01-01T00:30:00.000Z']);
+  assert.deepStrictEqual(r.calls.filter((c) => c.includes('DELETE')), ['pA DELETE /api/suite/jobs/run-1', 'pB DELETE /api/suite/jobs/run-1-2']);
+});
+
+test('t2412: a runner lost while the job is queued leaves the replacement the run budget, not the 5 min queue budget', async () => {
+  const r = lostRig({
+    pA: { poll: (id, t) => (t < 60000 ? jobAt(id, 'queued') : DOWN) },
+    pB: { poll: (id, t) => (t < 300000 ? jobAt(id, 'queued') : t < 600000 ? jobAt(id, 'running') : jobAt(id, 'done')) },
+  });
+  const out = await r.client.run({ ...r.base, queueBudgetMs: 300000, reroute: r.to(r.B) });
+  assert.deepStrictEqual(r.asked, [['runner-a', 225000]], 'ENTER: lost while queued');
+  assert.deepStrictEqual([out.record.outcome, out.record.where, out.record.endedAt], ['pass', 'runner-b', '1970-01-01T00:10:00.000Z']);
+});
+
+test('t2412: a runner lost during the pack upload is rerouted, and the lost job is cancelled once', async () => {
+  const r = lostRig({
+    pA: { post: () => ({ status: 200, body: { ok: true, state: 'awaiting-pack', have: [] } }), poll: () => DOWN },
+    pB: { poll: (id) => jobAt(id, 'done') },
+  });
+  const out = await r.client.run({ ...r.base, reroute: r.to(r.B) });
+  assert.deepStrictEqual(r.asked, [['runner-a', 150000]]);
+  assert.deepStrictEqual(r.calls.filter((c) => c.includes('DELETE')), ['pA DELETE /api/suite/jobs/run-1']);
+  assert.deepStrictEqual([out.record.outcome, out.record.where, out.res.jobId], ['pass', 'runner-b', 'run-1-2']);
+});
+
+test('t2412: a runner lost at the pack commit is rerouted, and the lost job is cancelled once', async () => {
+  const r = lostRig({
+    pA: { post: () => ({ status: 200, body: { ok: true, state: 'awaiting-pack', have: [] } }), put: () => ({ status: 200, body: { ok: true, size: 1 } }), commit: () => DOWN },
+    pB: { poll: (id) => jobAt(id, 'done') },
+  });
+  const out = await r.client.run({ ...r.base, reroute: r.to(r.B) });
+  assert.deepStrictEqual(r.asked, [['runner-a', 150000]]);
+  assert.deepStrictEqual(r.calls.filter((c) => c.includes('DELETE')), ['pA DELETE /api/suite/jobs/run-1']);
+  assert.deepStrictEqual([out.record.outcome, out.record.where, out.res.jobId], ['pass', 'runner-b', 'run-1-2']);
+});
+
+test('t2412: a commit that hangs for its 120 s timeout counts from when it was sent, so it is rerouted at 255 s inside the 5 min queue budget', async () => {
+  const r = lostRig({
+    pA: { post: () => ({ status: 200, body: { ok: true, state: 'awaiting-pack', have: [] } }), put: () => ({ status: 200, body: { ok: true, size: 1 } }), commit: (clock) => { clock.t += 120000; return DOWN; } },
+    pB: { poll: (id) => jobAt(id, 'done') },
+  });
+  const out = await r.client.run({ ...r.base, queueBudgetMs: 300000, reroute: r.to(r.B) });
+  assert.deepStrictEqual(r.asked, [['runner-a', 255000]]);
+  assert.deepStrictEqual(r.calls.filter((c) => c.includes('DELETE')), ['pA DELETE /api/suite/jobs/run-1']);
+  assert.deepStrictEqual([out.record.outcome, out.record.where, out.res.jobId], ['pass', 'runner-b', 'run-1-2']);
+});
+
+test('t2412: the replacement gets its own runner-restart retry after the lost runner used one', async () => {
+  const gone = { status: 200, body: { ok: true, jobs: [] } };
+  const r = lostRig({
+    pA: { poll: (id) => (id === 'run-1' ? gone : DOWN) },
+    pB: { poll: (id) => (id === 'run-1-3' ? gone : jobAt(id, 'done')) },
+  });
+  const out = await r.client.run({ ...r.base, reroute: r.to(r.B) });
+  assert.deepStrictEqual(r.posts.map((p) => [p[0], p[1]]), [['pA', 'run-1'], ['pA', 'run-1-2'], ['pB', 'run-1-3'], ['pB', 'run-1-4']]);
+  assert.deepStrictEqual([out.record.outcome, out.record.where, out.res.jobId], ['pass', 'runner-b', 'run-1-4']);
+});
+
+test('t2412: one answered poll inside the 150 s resets the count and nothing is rerouted', async () => {
+  const r = lostRig({
+    pA: { poll: (id, t) => (t < 135000 ? DOWN : t === 135000 ? jobAt(id, 'running') : t < 300000 ? DOWN : jobAt(id, 'done')) },
+  });
+  const out = await r.client.run({ ...r.base, reroute: r.to(r.B) });
+  assert.strictEqual(r.clock.t, 310000, 'ENTER: 285 s of failed polls in all');
+  assert.deepStrictEqual(r.asked, []);
+  assert.deepStrictEqual([out.record.outcome, out.record.where, 'attempts' in out], ['pass', 'runner-a', false]);
+});
+
+test('t2412: a second loss on the replacement ends runner unreachable with no third submit', async () => {
+  const r = lostRig({ pA: { poll: () => DOWN }, pB: { poll: () => DOWN } });
+  const out = await r.client.run({ ...r.base, reroute: r.to(r.B) });
+  assert.deepStrictEqual(r.asked, [['runner-a', 150000]]);
+  assert.deepStrictEqual(r.posts.map((p) => [p[0], p[1]]), [['pA', 'run-1'], ['pB', 'run-1-2']]);
+  assert.deepStrictEqual([out.record.outcome, out.record.reason, out.record.endedAt], ['unknown', 'runner unreachable', '1970-01-01T00:05:00.000Z']);
+  assert.deepStrictEqual(out.attempts, [{ runner: 'runner-a', jobId: 'run-1', outcome: 'lost' }, { runner: 'runner-b', jobId: 'run-1-2', outcome: 'lost' }]);
+});
+
+test('t2412: with no other member the run ends runner unreachable at 150 s, transient, with no second submit', async () => {
+  const r = lostRig({ pA: { poll: () => DOWN } });
+  const out = await r.client.run({ ...r.base, reroute: r.to(null) });
+  assert.deepStrictEqual(r.asked, [['runner-a', 150000]]);
+  assert.deepStrictEqual(r.posts.map((p) => p[1]), ['run-1']);
+  assert.deepStrictEqual([out.record.outcome, out.record.reason, out.record.endedAt, 'attempts' in out], ['unknown', 'runner unreachable', '1970-01-01T00:02:30.000Z', false]);
+  assert.deepStrictEqual(boxVerdict(out), { fallback: 'runner unreachable', fallbackCode: 'runner-unreachable', fallbackClass: 'transient' });
+});
+
+const NEVER_REROUTE = [
+  ['red', { poll: (id) => jobAt(id, 'done', { exit: { code: 1, signal: null } }), stdout: RED }, {}, 'fail', null],
+  ['no-totals', { poll: (id) => jobAt(id, 'done'), stdout: 'no summary here\n' }, {}, 'no-summary', null],
+  ['tree-mismatch', { poll: (id) => jobAt(id, 'done', { treeHash: TREE2 }) }, {}, 'unknown', 'runner answered for tree cccccccc, not aaaaaaaa'],
+  ['run budget', { poll: (id) => jobAt(id, 'running') }, { runBudgetMs: 60000 }, 'timeout', 'no result within the 60000ms run budget (cancelled)'],
+  ['queue budget', { poll: (id) => jobAt(id, 'queued') }, { queueBudgetMs: 60000 }, 'timeout', 'the job did not start within the 60000ms queue budget (cancelled)'],
+  ['runner-restart', { poll: () => ({ status: 200, body: { ok: true, jobs: [] } }) }, {}, 'unknown', 'runner restarted'],
+];
+
+for (const [name, runner, extra, outcome, reason] of NEVER_REROUTE) {
+  test(`t2412: ${name} never reaches reroute`, async () => {
+    const r = lostRig({ pA: runner });
+    const out = await r.client.run({ ...r.base, ...extra, reroute: r.to(r.B) });
+    assert.deepStrictEqual(r.asked, []);
+    assert.deepStrictEqual([out.record.outcome, out.record.reason, out.record.where], [outcome, reason, 'runner-a']);
+  });
+}
+
+test('t2412: a late red from the abandoned job is recorded as late-fail and the replacement\'s pass decides', async () => {
+  let polls = 0;
+  const r = lostRig({
+    pA: { poll: (id, t, wait) => (wait === 0 ? jobAt(id, 'done', { exit: { code: 1, signal: null } }) : DOWN) },
+    pB: { poll: (id) => ((polls += 1) === 1 ? jobAt(id, 'running') : jobAt(id, 'done')) },
+  });
+  const out = await r.client.run({ ...r.base, reroute: r.to(r.B) });
+  assert.ok(r.calls.includes('pA GET /api/suite/jobs wait=0'), 'ENTER: the abandoned job was asked for');
+  assert.deepStrictEqual([out.record.outcome, out.res.jobId], ['pass', 'run-1-2']);
+  assert.deepStrictEqual(out.attempts, [{ runner: 'runner-a', jobId: 'run-1', outcome: 'late-fail' }, { runner: 'runner-b', jobId: 'run-1-2', outcome: 'pass' }]);
+});
+
+test('t2412: a cancel of the lost job that rejects does not stop the reroute', async () => {
+  const r = lostRig({ pA: { poll: () => DOWN, cancel: () => Promise.reject(new Error('socket hang up')) }, pB: { poll: (id) => jobAt(id, 'done') } });
+  const out = await r.client.run({ ...r.base, reroute: r.to(r.B) });
+  assert.ok(r.calls.includes('pA DELETE /api/suite/jobs/run-1'), 'ENTER: the cancel was tried');
+  assert.deepStrictEqual([out.record.outcome, out.record.where], ['pass', 'runner-b']);
+});
+
+const RA = { id: 'pA', label: 'runner-1', online: true, caps: ['peer', 'suite'] };
+const RB = { id: 'pB', label: 'runner-2', online: true, caps: ['peer', 'suite'] };
+const POOL_ON = { peer: 'runner-1', hands: 'off', gate: 'on', pool: [{ peer: 'runner-2' }] };
+
+function poolDecide(script) {
+  const r = lostRig(Object.fromEntries(Object.entries(script).map(([k, v]) => [k, { hash: BOX_HASH, ...v }])));
+  const runs = [];
+  const client = { ...r.client, run: (o) => { const p = r.client.run(o); runs.push(p); return p; } };
+  const f = mkFixture({ manifestExtra: { testRunner: POOL_ON }, peers: [RA, RB], client, extraDeps: { boxDecideTimers: { setTimeout: () => 1, clearTimeout: () => {} } } });
+  const team = f.tm.loadManifest('team');
+  require('../team-box').writeBox(team.dir, BOX_TEXT);
+  return { ...r, f, team, runs };
+}
+
+const BOX_DONE = (id) => jobAt(id, 'done', { env: { isolation: 'container', box: { imageId: 'sha256:e', definitionHash: BOX_HASH } } });
+
+test('t2412: a flight stop between the old cancel and the new submit prevents the submit and ends cancelled', async () => {
+  let rig;
+  rig = poolDecide({
+    pA: { poll: () => DOWN, cancel: () => { rig.f.m._boxFlights.get(`${rig.team.root}\0t1`).stop('superseded'); return { status: 200, body: { ok: true } }; } },
+    pB: { poll: BOX_DONE },
+  });
+  const got = await rig.f.m._boxDecide(rig.team, { id: 't1' }, '/w', {});
+  const out = await rig.runs[0];
+  assert.strictEqual(got.cancelled, 'superseded');
+  assert.deepStrictEqual(rig.posts.map((p) => p[0]), ['pA']);
+  assert.deepStrictEqual([out.record.reason, out.record.where], ['cancelled by the caller before submit', 'runner-2']);
+  assert.deepStrictEqual(rig.calls.filter((c) => c.includes('DELETE')), ['pA DELETE /api/suite/jobs/run-1']);
+});
+
+test('t2412: two tickets losing the same runner each reroute on their own and neither picks the lost member', async () => {
+  const rig = poolDecide({ pA: { poll: () => DOWN }, pB: { poll: BOX_DONE } });
+  const [one, two] = await Promise.all([
+    rig.f.m._boxDecide(rig.team, { id: 't1' }, '/w', {}),
+    rig.f.m._boxDecide(rig.team, { id: 't2' }, '/w', {}),
+  ]);
+  assert.deepStrictEqual(rig.posts.map((p) => [p[0], p[1]]).sort(), [['pA', 'run-1'], ['pA', 'run-2'], ['pB', 'run-1-2'], ['pB', 'run-2-2']]);
+  for (const got of [one, two]) {
+    assert.deepStrictEqual([got.decided, got.runner, got.out.rerouted], [true, 'runner-2', { from: 'runner-1', to: 'runner-2' }]);
+    assert.deepStrictEqual(got.out.attempts.map((a) => [a.runner, a.outcome]), [['runner-1', 'lost'], ['runner-2', 'pass']]);
+  }
+  rig.f.m._boxRow(rig.team, { id: 't1' }, one, null);
+  assert.deepStrictEqual(rig.records().map((x) => [x.decidedBy, x.runner, x.attempts.map((a) => a.outcome)]), [['box', 'runner-2', ['lost', 'pass']]]);
+});
