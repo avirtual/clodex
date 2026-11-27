@@ -1326,6 +1326,8 @@ test('t2349: a spec-undelivered escalation names the boot dialog when an operato
     const first = app.seen('team-hand');
     const noticed = await settled(app, 'lead', /seat team-hand is held at a boot dialog \(added-folder-trust\)/);
     assert.ok(noticed.includes(`[team team] seat team-hand is held at a boot dialog (added-folder-trust): ${BOOT_DIALOG_PATH}. Only the operator can answer it; it is in their inbox.`), noticed);
+    await writeComplete(app, 'lead');
+    await leadDrained(app);
     const beforeLead = app.seen('lead');
     fireConfirm(app, s);
     const leadSaw = await settled(app, 'lead', /ESCALATED/);

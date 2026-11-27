@@ -1821,8 +1821,9 @@ test('t2428: an exclusive box job held by the box hold does not hold the native 
   const fb = fakeBox({ reap: (job) => { if (job.id === 'b1') throw new Error('box cleanup not confirmed: c0ffee'); } });
   const f = await holdingFixture(t, { runnerOver: { box: fb.box, slots: 2 } });
   await f.upload(f.body('b1', 'hand', { isolation: 'container' }));
+  await f.spawned(['b1']);
   assert.strictEqual((await f.runner.submit(f.body('n0'))).state, 'queued');
-  await f.spawned(['b1', 'n0']);
+  await f.spawned(['n0']);
   assert.strictEqual((await f.runner.submit(f.body('bx', 'hand', { isolation: 'container', ...ALONE }))).state, 'queued');
   f.held.get('b1').finish(0);
   await waitState(f.runner, 'b1', 'done');
