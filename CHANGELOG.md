@@ -14,6 +14,7 @@ blocks a release.
 ## Unreleased
 
 - Test runners: several jobs sent at once no longer pile onto one pool member while another is free; a run's result says when a pool member was skipped and why; removing a member from a pool stops the jobs bound to it.
+- Test runs: a gate run no longer inherits suite settings from the environment of the process that started it.
 
 ## 5.205.0 — 2026-11-27
 
