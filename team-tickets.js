@@ -20,9 +20,9 @@ const { resolveAccountLabel, accountMissingError } = require('./accounts');
 const { trackedSessionIds: entrySessionIds } = require('./session-info');
 const { hostNotice } = require('./host-stamp');
 const { idleClearAfterMs, IDLE_CLEAR_MIN_MS } = require('./assistant-sleep');
-const { localHalf, failingNames, phaseEnv, localPhaseEnv } = require('./suite-client');
+const { localHalf, failingNames } = require('./suite-client');
 const { RUNNER_ENV_TOKENS } = require('./intent-registry');
-const { boxVerdict, fallbackOf, FALLBACK_CODES, pickRunner, runnerLoad, pickRecord, consideredOf, pickLine, aloneNote, BUILD_BUDGET_MS, HUNG_RE, HAND_QUEUE_MS } = require('./suite-client');
+const { phaseEnv, localPhaseEnv, boxVerdict, fallbackOf, FALLBACK_CODES, pickRunner, runnerLoad, pickRecord, consideredOf, pickLine, aloneNote, BUILD_BUDGET_MS, HUNG_RE, HAND_QUEUE_MS } = require('./suite-client');
 const {
   matchSeatRole, nameRole, defaultLeadSeat, ROLE_RE, RESERVED_ROLE_KEYS, STOCK_ROLE_DEFS,
   DEFAULT_ROLE_DISPATCH, TRUNK_HEAD, normalizeTestRoots, TEST_ROOTS_MAX, effectiveHandCap, DONE_VALUES, normalizeDone, NAME_RE: NODE_NAME_RE, TEST_RUNNER_HANDS, TEST_RUNNER_GATE, TEST_RUNNER_FALLBACK, TEST_RUNNER_WIRE_PUSH: WIRE_PUSH, TEST_RUNNER_POOL_MAX,
