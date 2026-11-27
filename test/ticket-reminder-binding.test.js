@@ -39,7 +39,7 @@ const ticketsMod = require('../tickets-store');
 const { intentEnabled } = require('../intent-catalog');
 const { createTeamManifest } = require('../team-manifest');
 const { assertTicketDepsCovered } = require('./lib/loop-fixture-deps');
-const { mkTmpRoot } = require('./lib/tmp-roots');
+const { mkTmpRoot, tmpHomeOs } = require('./lib/tmp-roots');
 
 const T0 = Date.UTC(2026, 7, 14, 9, 0, 0);
 const MIN = 60 * 1000;
@@ -200,7 +200,7 @@ function mkFixture() {
     path: pathReal,
     pathFor: require('../clodex-paths').pathFor,
     runDirFor: require('../clodex-paths').runDirFor,
-    os: osReal,
+    os: tmpHomeOs(),
     ensureDir: require('../fs-util').ensureDir,
     gitWorktree: require('../git-worktree'),
     childProcess: require('node:child_process'),

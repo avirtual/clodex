@@ -26,7 +26,7 @@ const { createSessionManager } = require('../session-manager');
 const ticketsMod = require('../tickets-store');
 const { ticketInFlight } = require('../tickets-store');
 const { intentEnabled } = require('../intent-catalog');
-const { mkTmpRoot } = require('./lib/tmp-roots');
+const { mkTmpRoot, tmpHomeOs } = require('./lib/tmp-roots');
 const { assertTicketDepsCovered } = require('./lib/loop-fixture-deps');
 // The REAL parser, used to execute the recovery an escalation prescribes rather
 // than to pattern-match it: a copy of the grammar in this file would agree with
@@ -409,7 +409,7 @@ function mkLoop({
     // nothing while passing.
     pathFor: require('../clodex-paths').pathFor,
     runDirFor: require('../clodex-paths').runDirFor,
-    os: osReal,
+    os: tmpHomeOs(),
     ensureDir: require('../fs-util').ensureDir,
     // The REAL module, deliberately: see the header. A stub here would assert
     // only that the loop calls the functions it calls.
@@ -6768,15 +6768,19 @@ for (const [label, opts, kind] of [['verify', {}, 'verify'], ['post-merge', { me
     const probe = pathReal.join(repo.dir, 'suite-env.json');
     fsReal.writeFileSync(pathReal.join(repo.dir, 'wt', 'scripts', 'run-tests.js'),
       SUITE_ENV_PROBE(probe, 'console.log("TOTALS: 5 pass, 0 fail, 5 tests");\n'));
-    const saved = process.env.CLODEX_SUITE_SEAT;
-    process.env.CLODEX_SUITE_SEAT = 'inherited-seat';
+    const stray = { CLODEX_SUITE_SEAT: 'inherited-seat', CLODEX_SUITE_TEST_ROOTS: '["x"]', CLODEX_SUITE_NAMED: '3' };
+    const saved = Object.fromEntries(Object.keys(stray).map((k) => [k, process.env[k]]));
+    Object.assign(process.env, stray);
     try {
       const r = await f.m._runTicketSuite(f.team, f.one(), null, opts);
       assert.strictEqual(r.green, true, 'ENTER: the probe runner ran to a green TOTALS');
     } finally {
-      if (saved === undefined) delete process.env.CLODEX_SUITE_SEAT; else process.env.CLODEX_SUITE_SEAT = saved;
+      for (const [k, v] of Object.entries(saved)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; }
     }
     const got = JSON.parse(fsReal.readFileSync(probe, 'utf8'));
+    assert.strictEqual(got.CLODEX_SUITE_LEDGER, pathReal.join(f.home, 'logs', 'suite-runs.jsonl'), 'ENTER: the ledger key reached the runner');
+    assert.strictEqual(got.CLODEX_SUITE_TEST_ROOTS, undefined);
+    assert.strictEqual(got.CLODEX_SUITE_NAMED, undefined);
     assert.match(got.CLODEX_SUITE_RUN_ID, /^[0-9a-f-]{36}$/, 'the caller mints the run id');
     assert.deepStrictEqual(got, {
       CLODEX_SUITE_LEDGER: pathReal.join(f.home, 'logs', 'suite-runs.jsonl'),

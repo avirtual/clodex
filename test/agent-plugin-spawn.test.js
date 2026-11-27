@@ -29,7 +29,7 @@ const { confine } = require('../path-confine');
 const { buildAgentPlugin, qualifiedAgentName, DROPPED_AGENT_FIELDS, BUILTIN_AGENTS } = require('../agents-util');
 const { buildSkillPlugin, skillMd, parseSkillFrontmatter, unresolvedSubagentRefs } = require('../skills-util');
 const { createSkillDelivery } = require('../skill-delivery');
-const { mkTmpRoot } = require('./lib/tmp-roots');
+const { mkTmpRoot, tmpHomeOs } = require('./lib/tmp-roots');
 
 // The library every arm resolves against. `meta` mirrors what stores.js hands
 // over: raw frontmatter strings, not coerced values.
@@ -73,7 +73,7 @@ function mkManager({ library = LIB, skills = [], enabledAgents = [], injectSkill
   const SessionManager = createSessionManager({
     knownSkillNames: () => [],
     REGISTRY_DIR: root,
-    fs, path, pathFor, runDirFor, os,
+    fs, path, pathFor, runDirFor, os: tmpHomeOs(),
     PENDING_DIR: path.join(root, 'pending'),
     MSG_DIR: path.join(root, 'messages'),
     ensureDir,

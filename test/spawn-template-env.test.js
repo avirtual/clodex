@@ -20,7 +20,7 @@ const path = require('node:path');
 const fs = require('node:fs');
 
 const { createSessionManager } = require('../session-manager');
-const { mkTmpRoot } = require('./lib/tmp-roots');
+const { mkTmpRoot, tmpHomeOs } = require('./lib/tmp-roots');
 
 const TPL_LIB = path.join(mkTmpRoot('clx-tpl-env-'), 'library', 'templates');
 
@@ -29,7 +29,7 @@ function harness(tpl) {
   const replies = [];
   const SessionManager = createSessionManager({
     knownSkillNames: () => [],
-    os,
+    os: tmpHomeOs(),
     fs,
     path,
     log: { warn() {}, info() {}, error() {} },

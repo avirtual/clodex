@@ -6,7 +6,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const { createTeamManifest, ROSTER_FILE } = require('../team-manifest');
-const { mkTmpRoot } = require('./lib/tmp-roots');
+const { mkTmpRoot, tmpHomeOs } = require('./lib/tmp-roots');
 const { mkPark } = require('./lib/session-fixtures');
 
 const ROLES = { lead: { brief: 'lead' }, hand: { brief: 'hand' }, scout: { brief: 'scout' } };
@@ -196,7 +196,7 @@ function mkSeats(t, { sharedRoot = false } = {}) {
     setArchived: (n, v) => h.records.set(n, { ...(h.records.get(n) || {}), archived: v }),
   };
   const { m, injected } = mkPark({
-    fs, path, os: require('node:os'), REGISTRY_DIR: h.home,
+    fs, path, os: tmpHomeOs(), REGISTRY_DIR: h.home,
     AGENT_NAME_RE: /^[a-zA-Z0-9._-]{1,64}$/, DEFAULT_WORKSPACE_ID: 'default', ensureDir: () => {},
     getPersistence: () => persistence,
     resolveTeam: h.tm.resolveTeam, teamOf: h.tm.teamOf, teamsOfCwd: h.tm.teamsOfCwd,

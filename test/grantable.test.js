@@ -8,7 +8,7 @@ const path = require('node:path');
 const { initStores } = require('../stores');
 const { createSessionManager } = require('../session-manager');
 const { withoutLocalOnly, withoutExecGrants } = require('../session-args');
-const { mkTmpRoot } = require('./lib/tmp-roots');
+const { mkTmpRoot, tmpHomeOs } = require('./lib/tmp-roots');
 
 const ROOT = path.join(__dirname, '..');
 
@@ -42,7 +42,7 @@ test('setGrantable leaves an omitted sub-list unchanged, and null clears the fie
 test('a restart re-seeds grantable onto the record', () => {
   const upserts = [];
   const SessionManager = createSessionManager({
-    knownSkillNames: () => [], os, fs, path,
+    knownSkillNames: () => [], os: tmpHomeOs(), fs, path,
     log: { warn() {}, info() {}, error() {} },
     getPersistence: () => ({ upsert: (e) => upserts.push(e), get: () => null }),
     ensureDir: () => {},

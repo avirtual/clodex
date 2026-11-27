@@ -11,7 +11,7 @@ const { parseIntent } = require('../intent-scanner');
 const { withoutLocalOnly, withoutExecGrants } = require('../session-args');
 const { createSessionManager } = require('../session-manager');
 const { registerIpcHandlers } = require('../ipc-handlers');
-const { mkTmpRoot } = require('./lib/tmp-roots');
+const { mkTmpRoot, tmpHomeOs } = require('./lib/tmp-roots');
 
 const ROOT = path.join(__dirname, '..');
 const MCP_ARG = 27;
@@ -110,7 +110,7 @@ function spawnHarness(tpl, { rec = null, where = 'library' } = {}) {
   const replies = [];
   const home = fs.realpathSync(mkTmpRoot('clx-mcp-home-'));
   const SessionManager = createSessionManager({
-    knownSkillNames: () => [], os, fs, path,
+    knownSkillNames: () => [], os: tmpHomeOs(), fs, path,
     log: { warn() {}, info() {}, error() {} },
     getPersistence: () => ({ get: (n) => (n === 'lead' ? rec : null), setStripLevel() {}, setAutoCompact() {} }),
     withoutPrivilegedIntentsFor: (x) => x,

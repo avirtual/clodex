@@ -25,7 +25,7 @@ const pathReal = require('node:path');
 const osReal = require('node:os');
 
 const { createSessionManager, ticketCloseLine, ticketTaskDirLine } = require('../session-manager');
-const { mkTmpRoot } = require('./lib/tmp-roots');
+const { mkTmpRoot, tmpHomeOs } = require('./lib/tmp-roots');
 // t353: the dispatch head carries the close verb. Imported, not copied — the
 // pins in this file are ENTER/setup assertions about WHICH delivery happened,
 // not about the verb's wording. The wording is pinned once in
@@ -127,7 +127,7 @@ function mkVerdict(extra = {}) {
     // dir through the same path _writeTicketDiff does: stubbing either turns a
     // genuine write into "the code called a function", which is the shape this
     // file's header warns about.
-    os: osReal,
+    os: tmpHomeOs(),
     ensureDir: require('../fs-util').ensureDir,
     countPending: require('../pending-store').countPending,
     isDraftOpen: require('../proxy-util').isDraftOpen,

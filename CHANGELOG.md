@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+- Test runs: a gate run no longer inherits suite settings from the environment of the process that started it.
+
 ## 5.206.0 — 2026-11-27
 
 - Security: a seat import can no longer place configuration files in a seat's messages folder, and that folder is checked before the CLI is told to trust it.

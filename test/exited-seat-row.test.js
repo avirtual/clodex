@@ -11,7 +11,7 @@ const { createSessionManager } = require('../session-manager');
 const { initStores } = require('../stores');
 const { registerIpcHandlers } = require('../ipc-handlers');
 const { restoreSessionsForWorkspace } = require('../session-restore');
-const { mkTmpRoot } = require('./lib/tmp-roots');
+const { mkTmpRoot, tmpHomeOs } = require('./lib/tmp-roots');
 
 after(() => setImmediate(() => process.exit(0)));
 
@@ -29,7 +29,7 @@ function mkProbe() {
     PENDING_DIR: pathReal.join(root, 'pending'),
     hasActivePending: require('../pending-store').hasActivePending,
     drainPending: require('../pending-store').drainPending,
-    fs: fsReal, path: pathReal, os: osReal,
+    fs: fsReal, path: pathReal, os: tmpHomeOs(),
     pathFor: pathForReal, runDirFor: runDirForReal,
     ensureDir: (d) => fsReal.mkdirSync(d, { recursive: true }),
     setupClaudeHook: (n) => {

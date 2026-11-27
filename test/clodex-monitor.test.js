@@ -21,7 +21,7 @@ const path = require('path');
 const os = require('os');
 
 const { parseAndValidate } = require('../exec-schema');
-const { mkTmpRoot } = require('./lib/tmp-roots');
+const { mkTmpRoot, tmpHomeOs } = require('./lib/tmp-roots');
 
 const SCRIPT = path.join(__dirname, '..', 'scripts', 'clodex-monitor.js');
 // The SHIPPED def, not a copy of it (t101).
@@ -325,7 +325,7 @@ function restoredManager(home, seats = ['a']) {
     isFilenameToken,
     parseAndValidate,
     resolveTeam: () => ({ name: 't', root: '/proj/alpha' }),
-    os,
+    os: tmpHomeOs(),
     fs,
     path,
     log: { warn() {}, info() {}, error() {}, debug() {} },

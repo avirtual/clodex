@@ -7,6 +7,7 @@ const os = require('node:os');
 
 const { createRemoteWiring } = require('../remote-wiring');
 const { mkPark } = require('./lib/session-fixtures');
+const { tmpHomeOs } = require('./lib/tmp-roots');
 
 const NO_REPLY = '(no reply path)';
 const OPEN_REQUESTS = { summary() {}, count() {} };
@@ -23,7 +24,7 @@ function wireDoors({ seatIntents = undefined } = {}) {
   const deps = {
     path,
     fs: require('fs'),
-    os,
+    os: tmpHomeOs(),
     log: { info() {}, warn() {}, error() {} },
     DEFAULT_WORKSPACE_ID: 'default',
     AGENT_NAME_RE: /^[a-zA-Z0-9._-]{1,64}$/,

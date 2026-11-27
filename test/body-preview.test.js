@@ -51,7 +51,7 @@ const { parseRemindSpec } = require('../remind-schedule');
 const { createSessionManager } = require('../session-manager');
 const { createMemoryStore, digestTiers } = require('../memory-store');
 const { intentEnabled } = require('../intent-catalog');
-const { mkTmpRoot } = require('./lib/tmp-roots');
+const { mkTmpRoot, tmpHomeOs } = require('./lib/tmp-roots');
 
 const T0 = Date.UTC(2026, 7, 14, 9, 0, 0);
 
@@ -123,7 +123,7 @@ function mkFixture() {
     path: pathReal,
     pathFor: require('../clodex-paths').pathFor,
     runDirFor: require('../clodex-paths').runDirFor,
-    os: osReal,
+    os: tmpHomeOs(),
     ensureDir: require('../fs-util').ensureDir,
     gitWorktree: require('../git-worktree'),
     childProcess: require('node:child_process'),

@@ -17,7 +17,7 @@ const path = require('node:path');
 
 const { createSessionManager } = require('../session-manager');
 const { isFilenameToken, parseAndValidate } = require('../exec-schema');
-const { mkTmpRoot } = require('./lib/tmp-roots');
+const { mkTmpRoot, tmpHomeOs } = require('./lib/tmp-roots');
 
 // The dispatcher spawns on setImmediate, and the spawn itself is preceded by one
 // more hop; two flushes is what the sibling clodex-home test settled on.
@@ -47,7 +47,7 @@ function harness({ resolveTeam, entry }) {
     isFilenameToken,
     parseAndValidate,
     resolveTeam,
-    os,
+    os: tmpHomeOs(),
     fs,
     path,
     log: { warn() {}, info() {}, error() {} },

@@ -22,7 +22,7 @@ const path = require('path');
 const { teamPreflight } = require('../team-preflight');
 const { teamPromptFile } = require('../team-prompt-dir');
 const { preflightByRole } = require('../renderer/lib/team-roles');
-const { mkTmpRoot } = require('./lib/tmp-roots');
+const { mkTmpRoot, tmpHomeOs } = require('./lib/tmp-roots');
 
 // A probe set where EVERYTHING resolves. Individual tests remove one thing, so
 // the finding under test is the only difference from a known-empty baseline —
@@ -819,7 +819,7 @@ const { createSessionManager } = require('../session-manager');
 // precedence under test here is the shipped one, not a second statement of it.
 function mkManager(root, team) {
   const SessionManager = createSessionManager(new Proxy({
-    REGISTRY_DIR: root, fs, path, os,
+    REGISTRY_DIR: root, fs, path, os: tmpHomeOs(),
     knownSkillNames: () => [],
     resolveTeam: () => team,
     teamOf: () => team,

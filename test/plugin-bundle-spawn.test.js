@@ -30,7 +30,7 @@ const { AGENT_NAME_RE } = require('../catalogs');
 const { buildAgentPlugin, parseAgentFrontmatter, qualifiedAgentName, DROPPED_AGENT_FIELDS, BUILTIN_AGENTS } = require('../agents-util');
 const { buildSkillPlugin, skillMd, parseSkillFrontmatter, unresolvedSubagentRefs } = require('../skills-util');
 const { createSkillDelivery } = require('../skill-delivery');
-const { mkTmpRoot } = require('./lib/tmp-roots');
+const { mkTmpRoot, tmpHomeOs } = require('./lib/tmp-roots');
 
 const SKILL_MD = '---\ndescription: Research a ticker.\n---\nGo look it up.\n';
 const AGENT_MD = '---\ndescription: Assesses.\nmodel: haiku\n---\nYou assess.\n';
@@ -119,7 +119,7 @@ function mkManager({ bundles = [STOCKS], seatPlugins = null, skills = [], inject
   const SessionManager = createSessionManager({
     knownSkillNames: () => [],
     REGISTRY_DIR: root,
-    fs, path, pathFor, runDirFor, os,
+    fs, path, pathFor, runDirFor, os: tmpHomeOs(),
     PENDING_DIR: path.join(root, 'pending'),
     MSG_DIR: path.join(root, 'messages'),
     ensureDir,

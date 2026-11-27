@@ -19,7 +19,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const { createEngine } = require('./lib/engine-isolation');
-const { mkTmpRoot } = require('./lib/tmp-roots');
+const { mkTmpRoot, tmpHomeOs } = require('./lib/tmp-roots');
 
 // The operator's live tree, which no case here may resolve to.
 const APP_ROOT = path.join(os.homedir(), '.clodex');
@@ -111,7 +111,7 @@ test('the exec child is given CLODEX_HOME=REGISTRY_DIR rather than inheriting th
         knownSkillNames: () => [],
         REGISTRY_DIR,
         isFilenameToken, parseAndValidate,
-        os, fs, path,
+        os: tmpHomeOs(), fs, path,
         log: { warn() {}, info() {}, error() {} },
         getPersistence: () => ({ list: () => [], get: () => ({ execCommands: ['clodex-team'] }) }),
         childProcess: { spawn: (cmd, args, opts) => { spawned.push({ cmd, args, opts }); return fakeChild(); } },

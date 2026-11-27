@@ -26,7 +26,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const http = require('node:http');
-const { mkTmpRoot } = require('./lib/tmp-roots');
+const { mkTmpRoot, tmpHomeOs } = require('./lib/tmp-roots');
 
 const {
   foldDraft, createHintArm, DRAFT_CAP, HINT_ID, TTL_S, HOLD_MAX_MS,
@@ -1447,7 +1447,7 @@ function mkManager({ hintArm = null, extraDeps = {} } = {}) {
       start() {} stop() {}
     },
     pty: { spawn: () => ({ onData() {}, onExit() {}, pid: 999, write: (b) => written.push(b) }) },
-    os,
+    os: tmpHomeOs(),
     notifyOS: () => {},
     log: { info: () => {}, warn: () => {}, error: () => {}, debug: () => {} },
     setupClaudeHook: () => path.join(root, 'settings.json'),

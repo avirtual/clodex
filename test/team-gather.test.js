@@ -27,7 +27,7 @@ const { parseIntent } = require('../intent-scanner');
 const { createSessionManager } = require('../session-manager');
 const { registerIpcHandlers } = require('../ipc-handlers');
 const { createEngine } = require('./lib/engine-isolation');
-const { mkTmpRoot } = require('./lib/tmp-roots');
+const { mkTmpRoot, tmpHomeOs } = require('./lib/tmp-roots');
 
 const silent = { info() {}, warn() {}, error() {} };
 
@@ -321,7 +321,7 @@ function mkTeamGatherMut({ gather = () => ({ team: 't', items: [], copied: [], k
   const team = { name: 't', root: '/proj', lead: 'lead', dir: '/teams/t', roles: {} };
   const SessionManager = createSessionManager({
     knownSkillNames: () => [],
-    os: require('node:os'),
+    os: tmpHomeOs(),
     fs,
     path,
     resolveTeam: (cwd) => (cwd && cwd.startsWith('/proj') ? team : null),

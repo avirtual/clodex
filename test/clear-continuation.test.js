@@ -13,7 +13,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { createSessionManager } = require('../session-manager');
 const { pathFor, runDirFor } = require('../clodex-paths');
-const { mkTmpRoot } = require('./lib/tmp-roots');
+const { mkTmpRoot, tmpHomeOs } = require('./lib/tmp-roots');
 
 function mkManager(overrides = {}) {
   const root = mkTmpRoot('clx-clearcont-');
@@ -66,7 +66,7 @@ function mkManager(overrides = {}) {
       start() {} stop() {}
     },
     pty: { spawn: () => ({ onData() {}, onExit() {}, pid: 999, write() {} }) },
-    os,
+    os: tmpHomeOs(),
     notifyOS: () => {},
     log: { info: () => {}, warn: (...a) => warns.push(a.join(' ')), error: () => {}, debug: () => {} },
     setupClaudeHook: () => path.join(root, 'settings.json'),

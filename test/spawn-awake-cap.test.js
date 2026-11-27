@@ -6,7 +6,7 @@ const os = require('node:os');
 const path = require('node:path');
 const fs = require('node:fs');
 const { createSessionManager } = require('../session-manager');
-const { mkTmpRoot } = require('./lib/tmp-roots');
+const { mkTmpRoot, tmpHomeOs } = require('./lib/tmp-roots');
 
 function harness(records) {
   const calls = [];
@@ -14,7 +14,7 @@ function harness(records) {
   const dir = mkTmpRoot('clx-awake-cap-');
   const SessionManager = createSessionManager({
     knownSkillNames: () => [],
-    os, fs, path,
+    os: tmpHomeOs(), fs, path,
     log: { warn() {}, info() {}, error() {} },
     getPersistence: () => ({ get: (n) => records[n] || null, list: () => Object.values(records), upsert() {}, setStripLevel() {}, setAutoCompact() {} }),
     withoutPrivilegedIntentsFor: (x) => x,

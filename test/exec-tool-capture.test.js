@@ -12,7 +12,7 @@ const { mk: mkBase } = require('./lib/session-fixtures');
 const { createSessionManager, EXEC_REPLY_WAIT_MS, EXEC_ACK_MIN_TIMEOUT_MS } = require('../session-manager');
 const { isFilenameToken, parseAndValidate, clampReplyBody } = require('../exec-schema');
 const { parkDelivery } = require('../pending-store');
-const { mkTmpRoot } = require('./lib/tmp-roots');
+const { mkTmpRoot, tmpHomeOs } = require('./lib/tmp-roots');
 const { pathFor, runDirFor } = require('../clodex-paths');
 const { mintIntentCredential, seatChannelEnv } = require('../intent-socket');
 const { seenIdent, consume: wireSaw, wire: seenWire } = require('./lib/wire-seen').wireSeenStamps();
@@ -52,7 +52,7 @@ test('exec under a reply scope: an inProcess ctl reply is captured by its own ca
   writeDef(REGISTRY_DIR, 'clodex-ctl-read', IOS_READ_DEF);
   const { calls, svc } = deferredCtl();
   const m = mkBase({
-    log: QUIET, isFilenameToken, fs, path, os, REGISTRY_DIR,
+    log: QUIET, isFilenameToken, fs, path, os: tmpHomeOs(), REGISTRY_DIR,
     getCtlService: () => svc, clampReplyBody, parseAndValidate, resolveTeam: () => null,
     getPersistence: () => ({ list: () => [], get: () => ({ name: 'a', execCommands: ['clodex-ctl-read'] }) }),
     childProcess: { spawn: () => { throw new Error('spawned'); } },
@@ -89,7 +89,7 @@ function argvHarness(entry, { grants = ['digest'] } = {}) {
     isFilenameToken,
     parseAndValidate,
     resolveTeam: () => ({ name: 't', root: '/proj/alpha' }),
-    os,
+    os: tmpHomeOs(),
     fs,
     path,
     log: QUIET,
@@ -243,7 +243,7 @@ test('_startIntentSocket waits for exec: the socket intent form returns the ctl 
     parseIntent: require('../intent-scanner').parseIntent,
     looksLikeIntent: require('../intent-scanner').looksLikeIntent,
     getPersistence: () => ({ list: () => [], get: (n) => entries[n] || null }),
-    isFilenameToken, fs, path, os, getCtlService: () => svc, clampReplyBody, parseAndValidate, resolveTeam: () => null,
+    isFilenameToken, fs, path, os: tmpHomeOs(), getCtlService: () => svc, clampReplyBody, parseAndValidate, resolveTeam: () => null,
   });
   m._injectHoldReason = () => null;
   m._injectQueueFor = (s) => ({ enqueue: (t, o) => injected.push({ to: s.name, text: o && o.produce ? o.produce() : t }) });

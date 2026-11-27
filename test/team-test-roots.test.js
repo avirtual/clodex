@@ -11,7 +11,7 @@ const { createSessionManager } = require('../session-manager');
 const { intentEnabled } = require('../intent-catalog');
 const registry = require('../intent-registry');
 const { parseAndValidate, isFilenameToken } = require('../exec-schema');
-const { mkTmpRoot } = require('./lib/tmp-roots');
+const { mkTmpRoot, tmpHomeOs } = require('./lib/tmp-roots');
 
 const RUN_TESTS_DEF = path.join(__dirname, '..', 'resources', 'library', 'exec', 'clodex-run-tests.json');
 
@@ -203,7 +203,7 @@ function execEnvFor(team) {
     return ee;
   };
   const SessionManager = createSessionManager({
-    knownSkillNames: () => [], REGISTRY_DIR, isFilenameToken, parseAndValidate, os: require('os'), fs, path,
+    knownSkillNames: () => [], REGISTRY_DIR, isFilenameToken, parseAndValidate, os: tmpHomeOs(), fs, path,
     log: { warn() {}, info() {}, error() {} },
     getPersistence: () => ({ list: () => [], get: () => ({ execCommands: ['cmd'] }) }),
     childProcess: { spawn: (cmd, args, opts) => { spawned.push(opts); return fakeChild(); } },

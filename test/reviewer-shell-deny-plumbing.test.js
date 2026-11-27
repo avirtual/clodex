@@ -24,7 +24,7 @@ const path = require('node:path');
 const { createSessionManager } = require('../session-manager');
 const { createCliHooks } = require('../cli-hooks');
 const { pathFor, runDirFor } = require('../clodex-paths');
-const { mkTmpRoot } = require('./lib/tmp-roots');
+const { mkTmpRoot, tmpHomeOs } = require('./lib/tmp-roots');
 
 const SHELL_DENY = ['Bash(rm:*)', 'Bash(touch:*)', 'Bash(git commit:*)'];
 const TOOL_DENY = ['Edit', 'Write'];
@@ -49,7 +49,7 @@ function mkManager() {
   const SessionManager = createSessionManager({
     knownSkillNames: () => [],
     REGISTRY_DIR: root,
-    fs, path, pathFor, runDirFor, os,
+    fs, path, pathFor, runDirFor, os: tmpHomeOs(),
     PENDING_DIR: path.join(root, 'pending'),
     MSG_DIR: path.join(root, 'messages'),
     ensureDir,

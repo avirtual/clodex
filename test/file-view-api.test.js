@@ -6,7 +6,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const http = require('node:http');
-const { mkTmpRoot } = require('./lib/tmp-roots');
+const { mkTmpRoot, tmpHomeOs } = require('./lib/tmp-roots');
 const { mk } = require('./lib/session-fixtures');
 const { createFiledRing, seedFiledRing, clipHead, filedEntry, spillHead, HEAD_MAX_BYTES, FILED_CAP } = require('../filed-ring');
 const { peekFile, utf8CutAt, imageMediaType, PEEK_MAX_BYTES, IMAGE_MAX_BYTES } = require('../file-peek');
@@ -430,7 +430,7 @@ function wiringFixture({ registry, cwd, session, fs: fsDep = fs, deps: extra = {
   const diffs = [];
   let srv = null;
   const deps = {
-    path, fs: fsDep, os,
+    path, fs: fsDep, os: tmpHomeOs(),
     log: { info() {}, error() {}, warn() {} },
     DEFAULT_WORKSPACE_ID: 'default',
     AGENT_NAME_RE: /^[a-zA-Z0-9._-]{1,64}$/,

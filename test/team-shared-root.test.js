@@ -7,7 +7,7 @@ const path = require('node:path');
 
 const { createTeamManifest, ROSTER_FILE } = require('../team-manifest');
 const { createTicketsStore } = require('../tickets-store');
-const { mkTmpRoot } = require('./lib/tmp-roots');
+const { mkTmpRoot, tmpHomeOs } = require('./lib/tmp-roots');
 const { mkPark } = require('./lib/session-fixtures');
 
 const ROLES = { lead: { brief: 'lead' }, hand: { brief: 'hand', dispatch: 'spawn' }, scout: { brief: 'scout' } };
@@ -41,7 +41,7 @@ function mkShared(t, { teams = ['a', 'b'] } = {}) {
     upsert: (e) => h.records.set(e.name, { ...(h.records.get(e.name) || {}), ...e }),
   };
   const { m, injected } = mkPark({
-    fs, path, os: require('node:os'), REGISTRY_DIR: h.home, teamsDir: path.join(h.home, 'teams'),
+    fs, path, os: tmpHomeOs(), REGISTRY_DIR: h.home, teamsDir: path.join(h.home, 'teams'),
     AGENT_NAME_RE: /^[a-zA-Z0-9._-]{1,64}$/, DEFAULT_WORKSPACE_ID: 'default', ensureDir: () => {},
     getPersistence: () => persistence,
     resolveTeam: h.tm.resolveTeam, teamOf: h.tm.teamOf, teamsOfCwd: h.tm.teamsOfCwd,

@@ -20,7 +20,7 @@ const { EventEmitter } = require('node:events');
 const { createSessionManager } = require('../session-manager');
 const { isFilenameToken, parseAndValidate, validateExecDef } = require('../exec-schema');
 const { parkDelivery } = require('../pending-store');
-const { mkTmpRoot } = require('./lib/tmp-roots');
+const { mkTmpRoot, tmpHomeOs } = require('./lib/tmp-roots');
 
 // The dispatcher spawns on setImmediate, and the spawn itself is preceded by one
 // more hop; two flushes is what the sibling exec tests settled on. setImmediate
@@ -46,7 +46,7 @@ function harness(entry, { cwd = '/proj/alpha' } = {}) {
     isFilenameToken,
     parseAndValidate,
     resolveTeam: () => ({ name: 't', root: '/proj/alpha' }),
-    os,
+    os: tmpHomeOs(),
     fs,
     path,
     log: { warn() {}, info() {}, error() {} },

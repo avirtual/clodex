@@ -11,7 +11,7 @@ const { createTeamManifest } = require('../team-manifest');
 const ticketsMod = require('../tickets-store');
 const { intentEnabled } = require('../intent-catalog');
 const { projectDirFor } = require('../clodex-paths');
-const { mkTmpRoot } = require('./lib/tmp-roots');
+const { mkTmpRoot, tmpHomeOs } = require('./lib/tmp-roots');
 
 function mkHome() {
   const home = mkTmpRoot('clodex-t1920-home-');
@@ -85,7 +85,7 @@ function mkFixture({ done = 'report' } = {}) {
     validIntentNames: require('../intent-registry').validIntentNames,
     fs,
     path,
-    os: require('node:os'),
+    os: tmpHomeOs(),
     ensureDir: (d) => fs.mkdirSync(d, { recursive: true }),
     countPending: require('../pending-store').countPending,
     isDraftOpen: require('../proxy-util').isDraftOpen,

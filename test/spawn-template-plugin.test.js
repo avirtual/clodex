@@ -11,6 +11,7 @@
 const test = require('node:test');
 const assert = require('node:assert');
 const os = require('node:os');
+const { tmpHomeOs } = require('./lib/tmp-roots');
 const path = require('node:path');
 const fs = require('node:fs');
 
@@ -21,7 +22,7 @@ function harness({ listAllTemplates } = {}) {
   const replies = [];
   const SessionManager = createSessionManager({
     knownSkillNames: () => [],
-    os,
+    os: tmpHomeOs(),
     fs,
     path,
     log: { warn() {}, info() {}, error() {} },

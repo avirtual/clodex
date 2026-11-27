@@ -9,7 +9,7 @@ const { createSessionManager } = require('../session-manager');
 const { pathFor, runDirFor } = require('../clodex-paths');
 const pendingStore = require('../pending-store');
 const { reviewBeginLine } = require('../ticket-review-scope');
-const { mkTmpRoot } = require('./lib/tmp-roots');
+const { mkTmpRoot, tmpHomeOs } = require('./lib/tmp-roots');
 
 const IO_ARG = 24;
 
@@ -33,7 +33,7 @@ function boot() {
   const SessionManager = createSessionManager({
     knownSkillNames: () => [],
     REGISTRY_DIR: root,
-    fs, path, pathFor, runDirFor, os,
+    fs, path, pathFor, runDirFor, os: tmpHomeOs(),
     PENDING_DIR,
     MSG_DIR: path.join(root, 'messages'),
     ensureDir: (d) => fs.mkdirSync(d, { recursive: true }),

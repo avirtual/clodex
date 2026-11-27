@@ -122,7 +122,7 @@ function captureReceiveRoster(manager) {
   const { createRemoteWiring } = require('../remote-wiring');
   let srv = null;
   const deps = {
-    path, fs: require('node:fs'), os: require('node:os'),
+    path, fs: require('node:fs'), os: tmpHomeOs(),
     log: { info() {}, warn() {}, error() {} },
     DEFAULT_WORKSPACE_ID: 'default',
     AGENT_NAME_RE: /^[a-zA-Z0-9._-]{1,64}$/,
@@ -179,7 +179,7 @@ test('receiveRoster marks via as a dm origin, putting the outbox branch ahead of
     'and that origin is still refused the relay path, so the dm cannot take the dropping route');
 });
 
-const { mkTmpRoot } = require('./lib/tmp-roots');
+const { mkTmpRoot, tmpHomeOs } = require('./lib/tmp-roots');
 const { enqueueOutbox, claimOutbox, markOutboxOrigin } = require('../peer-outbox');
 
 const NAME_RE = /^[a-zA-Z0-9._-]{1,64}$/;

@@ -7,7 +7,7 @@ const os = require('node:os');
 const path = require('node:path');
 
 const { createSessionManager } = require('../session-manager');
-const { mkTmpRoot } = require('./lib/tmp-roots');
+const { mkTmpRoot, tmpHomeOs } = require('./lib/tmp-roots');
 
 const ACCOUNTS = { work: '/acct/work', other: '/acct/other' };
 
@@ -38,7 +38,7 @@ function mkSpawn(t, { role = {}, tplType = 'clodent', tplEnv = null, spawnerOnOt
   const other = { name: 'other', root: otherRoot, lead: 'olead', roles: { lead: {}, hand: role } };
   const store = fakeStore();
   const SessionManager = createSessionManager({
-    knownSkillNames: () => [], os, fs, path,
+    knownSkillNames: () => [], os: tmpHomeOs(), fs, path,
     log: { warn() {}, info() {}, error() {} },
     getPersistence: () => store,
     getAccounts: () => ({

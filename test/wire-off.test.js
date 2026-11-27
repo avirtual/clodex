@@ -29,7 +29,7 @@ const { createSessionManager } = require('../session-manager');
 const { createCliHooks } = require('../cli-hooks');
 const { pathFor, runDirFor } = require('../clodex-paths');
 const { intentEnabled } = require('../intent-catalog');
-const { mkTmpRoot } = require('./lib/tmp-roots');
+const { mkTmpRoot, tmpHomeOs } = require('./lib/tmp-roots');
 
 // The manager under test runs the REAL cli-hooks so the settings bytes asserted
 // below are the bytes a spawn actually writes. Everything between create()'s
@@ -74,7 +74,7 @@ function mkManager({ proxyBase = null, wireShadow = true } = {}) {
     Transport: class { start() {} stop() {} },
     JsonlWatcher: class { start() {} stop() {} },
     pty: { spawn: () => ({ onData() {}, onExit() {}, pid: 999 }) },
-    os,
+    os: tmpHomeOs(),
     notifyOS: () => {},
     log: { info: () => {}, warn: () => {}, error: () => {} },
     WIRE_SHADOW: wireShadow,

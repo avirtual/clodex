@@ -12,7 +12,7 @@ const registry = require('../intent-registry');
 const grammar = require('../plugins/browser-pane/grammar');
 const subagent = require('../plugins/browser-pane/subagent');
 const { TOOL } = require('../plugins/browser-pane/mcp-tool');
-const { mkTmpRoot } = require('./lib/tmp-roots');
+const { mkTmpRoot, tmpHomeOs } = require('./lib/tmp-roots');
 
 const B4 = "This seat's browser pane is the `browser` MCP tool (verb, service, bracket, body). Refusals come back as text; a refused call will not succeed on retry — return and let the seat's main agent decide.";
 const TAIL = "Refusals come back as text; a refused call will not succeed on retry — return and let the seat's main agent decide.";
@@ -143,7 +143,7 @@ function mkManager() {
     Transport: class { start() {} stop() {} },
     JsonlWatcher: class { start() {} stop() {} },
     pty: { spawn: () => ({ onData() {}, onExit() {}, pid: 999 }) },
-    os,
+    os: tmpHomeOs(),
     notifyOS: () => {},
     log: { info: () => {}, warn: () => {}, error: () => {} },
     WIRE_SHADOW: false,

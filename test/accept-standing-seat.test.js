@@ -40,7 +40,7 @@ const { createTeamManifest } = require('../team-manifest');
 const { migrateSeatLayout } = require('../seat-layout');
 const { legacySeatPathFor, SEAT_KINDS } = require('../clodex-paths');
 const { assertTicketDepsCovered } = require('./lib/loop-fixture-deps');
-const { mkTmpRoot } = require('./lib/tmp-roots');
+const { mkTmpRoot, tmpHomeOs } = require('./lib/tmp-roots');
 
 // ONE seed dir for the whole file: initStores SEEDS the
 // shipped library into whatever registryDir it is handed, and re-seeding it per
@@ -156,7 +156,7 @@ function mkFixture(t, { gitWorktree: gwOverride = null } = {}) {
     path: pathReal,
     pathFor: require('../clodex-paths').pathFor,
     runDirFor: require('../clodex-paths').runDirFor,
-    os: osReal,
+    os: tmpHomeOs(),
     ensureDir: require('../fs-util').ensureDir,
     // Real by default — every disk assertion depends on it. An override exists
     // only for the arm whose subject is git FAILING, which cannot be staged on a

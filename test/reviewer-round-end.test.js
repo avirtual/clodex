@@ -35,7 +35,7 @@ const { intentEnabled } = require('../intent-catalog');
 const { initStores } = require('../stores');
 const { createRemindScheduler } = require('../remind-scheduler');
 const { createTeamManifest } = require('../team-manifest');
-const { mkTmpRoot } = require('./lib/tmp-roots');
+const { mkTmpRoot, tmpHomeOs } = require('./lib/tmp-roots');
 const { assertTicketDepsCovered } = require('./lib/loop-fixture-deps');
 
 // Copied, not shared, for the reason reviewer-ticket-name.test.js states: these
@@ -163,7 +163,7 @@ function mkFixture() {
     path: pathReal,
     pathFor: require('../clodex-paths').pathFor,
     runDirFor: require('../clodex-paths').runDirFor,
-    os: osReal,
+    os: tmpHomeOs(),
     ensureDir: require('../fs-util').ensureDir,
     gitWorktree: require('../git-worktree'),
     childProcess: require('node:child_process'),

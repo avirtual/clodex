@@ -129,4 +129,9 @@ after(sweep);
 // rmSync({ force: true }) over an already-removed path is a no-op.
 process.on('exit', sweep);
 
-module.exports = { mkTmpRoot, mkTmpDirIn };
+function tmpHomeOs() {
+  const home = mkTmpRoot('clx-home-');
+  return { ...os, homedir: () => home };
+}
+
+module.exports = { mkTmpRoot, mkTmpDirIn, tmpHomeOs };

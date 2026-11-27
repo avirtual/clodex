@@ -209,3 +209,47 @@ test('cwd and added dirs all trusted already: no write, false', () => {
   assert.strictEqual(preseedClaudeOnboarding({ fs, path, homeDir: home, cwd: '/tmp/p1', addDirs: [dir] }), false);
   assert.strictEqual(fs.readFileSync(p, 'utf8'), orig);
 });
+
+for (const [label, dirs] of [
+  ['the real home', { homeDir: os.userInfo().homedir }],
+  ['a config dir at the real ~/.claude', { homeDir: '/nope', configDir: path.join(os.userInfo().homedir, '.claude') }],
+  ['a config dir under the real ~/.clodex', { homeDir: '/nope', configDir: path.join(os.userInfo().homedir, '.clodex', 'accounts', 'a1') }],
+]) {
+  test(`t2442: under node --test, a seed into ${label} throws naming the os seam and touches no file`, () => {
+    assert.ok(process.env.NODE_TEST_CONTEXT, 'ENTER: this file runs under node --test');
+    const calls = [];
+    const spyFs = new Proxy({}, { get: (t, k) => () => { calls.push(k); throw new Error(`fs.${String(k)} reached`); } });
+    assert.throws(() => preseedClaudeOnboarding({ fs: spyFs, path, ...dirs, cwd: '/tmp/p1' }),
+      /refusing to write .*\.claude\.json under node --test; give createSessionManager an os whose homedir\(\) is a temp dir/);
+    assert.deepStrictEqual(calls, []);
+  });
+}
+
+test('t2442: a temp home beside the real one is not refused', () => {
+  const home = tmpHome();
+  assert.strictEqual(preseedClaudeOnboarding({ fs, path, homeDir: home, cwd: '/tmp/p1' }), true);
+});
+
+test('t2442: outside node --test the guard never asks for the passwd home, so a uid without one still seeds', () => {
+  const home = tmpHome();
+  const saved = { ctx: process.env.NODE_TEST_CONTEXT, userInfo: os.userInfo };
+  let asked = 0;
+  delete process.env.NODE_TEST_CONTEXT;
+  os.userInfo = () => { asked++; throw new Error('uv_os_get_passwd returned ENOENT'); };
+  let r;
+  try { r = preseedClaudeOnboarding({ fs, path, homeDir: home, cwd: '/tmp/p1' }); } finally {
+    process.env.NODE_TEST_CONTEXT = saved.ctx;
+    os.userInfo = saved.userInfo;
+  }
+  assert.strictEqual(r, true);
+  assert.strictEqual(asked, 0);
+});
+
+test('t2442: under node --test a uid without a passwd entry falls back to homedir() and still refuses it', () => {
+  const saved = os.userInfo;
+  os.userInfo = () => { throw new Error('uv_os_get_passwd returned ENOENT'); };
+  try {
+    assert.throws(() => preseedClaudeOnboarding({ fs: new Proxy({}, { get: () => () => { throw new Error('fs reached'); } }), path, homeDir: os.homedir(), cwd: '/tmp/p1' }),
+      /refusing to write/);
+  } finally { os.userInfo = saved; }
+});

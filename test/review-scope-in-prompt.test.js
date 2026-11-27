@@ -28,7 +28,7 @@ const { createSessionManager } = require('../session-manager');
 const { pathFor, runDirFor } = require('../clodex-paths');
 const { adapterFor } = require('../cli-adapters');
 const pendingStore = require('../pending-store');
-const { mkTmpRoot } = require('./lib/tmp-roots');
+const { mkTmpRoot, tmpHomeOs } = require('./lib/tmp-roots');
 
 const SCOPE = 'diff at /tmp/t5.diff against 2b7179c — attn: the migration ordering';
 
@@ -54,7 +54,7 @@ function boot(extraDeps = {}) {
   const SessionManager = createSessionManager({
     knownSkillNames: () => [],
     REGISTRY_DIR: root,
-    fs, path, pathFor, runDirFor, os,
+    fs, path, pathFor, runDirFor, os: tmpHomeOs(),
     PENDING_DIR: path.join(root, 'pending'),
     MSG_DIR: path.join(root, 'messages'),
     ensureDir: (d) => fs.mkdirSync(d, { recursive: true }),
