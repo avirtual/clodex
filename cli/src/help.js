@@ -316,8 +316,9 @@ const VERB_REGISTRY = [
     usage: [
       'patch session <name> [--arg X…] [--proxy URL] [--restart] [--idle-clear MS|off] [-o json|yaml]',
       'patch session <name> --subresource profile -f <file.yaml|file.json> [--replace] [-o json|yaml]',
+      'patch testjobs --slots N [-o json|yaml]',
     ],
-    args: [['resource', 'session (singular or plural spelling)'], ['name', 'session to patch']],
+    args: [['resource', 'session (singular or plural spelling), or testjobs'], ['name', 'session to patch (session form only)']],
     flags: [
       ['--arg X', 'set extraArgs — repeatable (replaces the whole list)'],
       ['--proxy URL', 'set the session proxy'],
@@ -326,10 +327,12 @@ const VERB_REGISTRY = [
       ['--subresource profile', 'patch the assistant seat\'s profile instead of its args'],
       ['-f, --filename F', 'with --subresource profile: the YAML or JSON (.json) file to send'],
       ['--replace', 'with --subresource profile: replace the whole profile (merge=0) instead of merging by key'],
+      ['--slots N', 'testjobs form: how many suite jobs the node\'s test runner runs at once (1 to 4)'],
     ],
-    examples: ['clodexctl patch session bob --arg --model --arg opus --restart', 'clodexctl patch session asst --subresource profile -f profile.yaml'],
+    examples: ['clodexctl patch session bob --arg --model --arg opus --restart', 'clodexctl patch session asst --subresource profile -f profile.yaml', 'clodexctl patch testjobs --slots 1'],
     notes: [
       'Needs at least one of --arg / --proxy / --restart / --idle-clear. Undefined keys are left untouched owner-side.',
+      'patch testjobs changes only the runner\'s slot count; it is refused when the node has no runner or the runner is off. With jobs running it prints how many it waits for; the change applies when they finish. In the ctl tab and [agent:ctl] it runs only against the node\'s own engine.',
       'To READ the same args: clodexctl get session <name> --subresource args.',
     ],
   },

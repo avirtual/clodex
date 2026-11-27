@@ -82,3 +82,6 @@ with a 400. It is written to the seat dir only after the create succeeds, so a
 refused or failed create leaves no token file for a later seat of the same name
 to inherit; a write that fails answers the create with `clientToken: false` and
 the warning `client token not stored`, never the token.
+
+## setSuiteRunnerSlots
+The second writer of the `suiteRunner` record besides `suiteRunner:set` in ipc-handlers.js, because a headless host registers no IPC. It refuses a node whose runner is neither enabled in the record nor forced by `CLODEX_SUITE_RUNNER=1`, and a node with no record at all (a forced runner with no record runs at one slot).

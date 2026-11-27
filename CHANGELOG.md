@@ -14,6 +14,7 @@ blocks a release.
 ## Unreleased
 
 - Test runners: a hand's test run can now go to a runner that dials in, so `hands:full` and `hands:all` work for those runners and for mixed pools. A newly added dial-in runner still starts with hands off.
+- Test runners: a runner's slot count can be set with `clodexctl` (and by the node's own agent), not only in Preferences. A change waits for running suites to finish.
 
 ## 5.199.0 — 2026-11-26
 

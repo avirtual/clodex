@@ -466,6 +466,7 @@ Write:
 | `delete session <name> [--force]` | `DELETE /api/sessions/:name` | **HARD DELETE — no resume.** Confirms unless `--force` (required with `-o json`). When the worktree cannot be removed the reply adds `worktreeRemoved: false, kept: true, path, error` |
 | `restart session <name> [--fresh]` | `POST /api/sessions/:name/restart` | |
 | `patch session <name> [--arg X…] [--proxy URL] [--restart]` | `PATCH /api/sessions/:name/args` | |
+| `patch testjobs --slots N` | `GET /api/resources` → `POST /api/testjobs/slots` | operator token only; sets the node's test runner slot count (1 to 4) and nothing else; refused on a node with no runner record or the runner off; prints `applied now` or how many running jobs it waits for; non-zero exit on a refusal. The ctl tab and `[agent:ctl]` run it only against the node's own engine |
 | `patch session <name> --subresource profile -f <file.yaml\|file.json> [--replace]` | `PATCH /api/sessions/:name/memory/profile?merge=1` | assistant seats; `.json` files go as JSON, anything else as `text/yaml`; `--replace` sends `merge=0` |
 | `delete session <name> --subresource profile` | `DELETE /api/sessions/:name/memory/profile` | deletes only the profile; no confirm |
 | `restart node [--force] [--wait \| --cut-jobs]` | `POST /api/restart` | relaunches the whole engine; refused (409 `runner-busy`) while the node runs suite jobs for other teams unless `--wait` (`{wait:true}`) or `--cut-jobs` (`{cutJobs:true}`) |

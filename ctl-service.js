@@ -95,6 +95,25 @@ const ALLOWED = Object.freeze({
 });
 const DEFERRED_HINT = 'not available here: attach, delete session, restart node, deploy, undeploy, upgrade, port-forward, web';
 
+const LOCAL_ONLY = Object.freeze({ patch: ['testjobs'] });
+const LOOPBACK_HOSTS = new Set(['127.0.0.1', 'localhost', '::1', '[::1]']);
+
+function isLocalOnlyLine(verb, rest, R) {
+  const words = Object.prototype.hasOwnProperty.call(LOCAL_ONLY, verb) ? LOCAL_ONLY[verb] : null;
+  if (!words || typeof rest[0] !== 'string') return false;
+  const entry = R.resolveResource(rest[0]);
+  return !!entry && words.includes(entry.singular);
+}
+
+function targetsThisEngine(ctx, localPort) {
+  const port = typeof localPort === 'function' ? localPort() : null;
+  if (!Number.isInteger(port) || !ctx || typeof ctx.url !== 'string') return false;
+  let u;
+  try { u = new URL(ctx.url); } catch { return false; }
+  const p = u.port ? Number(u.port) : (u.protocol === 'https:' ? 443 : 80);
+  return LOOPBACK_HOSTS.has(u.hostname.toLowerCase()) && p === port;
+}
+
 // The verbs whose NODE spelling runs locally off the contexts file. `use` has
 // no other resource, so it is unconditional; the rest route on the resource word.
 const NODE_LOCAL_VERBS = Object.freeze(['get', 'describe', 'create', 'delete', 'use']);
@@ -213,7 +232,7 @@ const TRUNCATION_NOTE = '\n… output truncated at 256KB — run it from the Ter
 // `openTransport` is a seam so the warm-connection invariants are testable
 // without an ssh child or a live node — the dial is the one thing a unit test
 // cannot stand up, and it is exactly where the token-identity rule lives.
-function createCtlService({ contextsFile = null, env = process.env, openTransport = null } = {}) {
+function createCtlService({ contextsFile = null, env = process.env, openTransport = null, localPort = null } = {}) {
   // NULLISH → undefined, and this is load-bearing rather than tidiness. The CLI
   // resolves the default path through a PARAMETER DEFAULT
   // (`contexts.load(file = contextsPath())`), which `undefined` triggers and
@@ -458,6 +477,12 @@ function createCtlService({ contextsFile = null, env = process.env, openTranspor
       // routing above exists to avoid.
       V.checkResourceWord(verb, rest);
       main.preflightResourceWord(verb, rest);
+      if (isLocalOnlyLine(verb, rest, R)) {
+        const ctx = loadCli().contexts.resolve(loadStore(), { ctxName: flags.ctx || null, env, flags });
+        if (!targetsThisEngine(ctx, localPort)) {
+          return done(`clodexctl: refused: "${verb} ${rest[0]}" runs here only against this node's own engine\n`, EXIT.USAGE, ctx.name || currentName());
+        }
+      }
       const w = await wireFor(flags);
       token = w.ctx.token || null;
       const handler = {

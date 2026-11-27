@@ -540,12 +540,12 @@ function warnEnvMismatch(printer, sentKeys, applied) {
 
 const CREATABLE = ['session', 'node'];
 const DELETABLE = ['session', 'node'];
-const PATCHABLE = ['session'];
+const PATCHABLE = ['session', 'testjobs'];
 const RESTARTABLE = ['session', 'node'];
 const DEPLOYABLE = ['node'];
 const USABLE = ['node'];
 
-const NAMELESS_RESOURCES = new Set(['restart node']);
+const NAMELESS_RESOURCES = new Set(['restart node', 'patch testjobs']);
 
 function takeResourceWord(args, verb, supported) {
   const word = args[0];
@@ -899,6 +899,20 @@ async function restartSession({ client, ctx, printer, flags, args }) {
 async function patch(bundle) {
   const { word, rest } = takeResourceWord(bundle.args, 'patch', PATCHABLE);
   if (word === 'session') return patchSession({ ...bundle, args: rest });
+  if (word === 'testjobs') return patchTestjobs(bundle);
+}
+
+async function patchTestjobs({ client, ctx, printer, flags }) {
+  if (flags.slots == null || flags.slots === true) throw new CliError(EXIT.USAGE, 'patch testjobs needs --slots N');
+  const raw = String(flags.slots);
+  if (!/^\d+$/.test(raw)) throw new CliError(EXIT.USAGE, `--slots must be a whole number, not "${raw}"`);
+  await R.requireResource(client, 'testjobs/slots', 'post', R.ctxLabel(ctx, flags));
+  const res = await client.post('/api/testjobs/slots', 'patch testjobs', { slots: Number(raw) });
+  if (flags.json) return printer.json(res);
+  const running = res.running || 0;
+  printer.line(res.applied === 'after-drain'
+    ? `test runner slots set to ${res.slots} — applies when ${running} running job${running === 1 ? '' : 's'} finish${running === 1 ? 'es' : ''}`
+    : `test runner slots set to ${res.slots} — applied now`);
 }
 
 async function patchProfile({ client, ctx, printer, flags, args, name }) {
