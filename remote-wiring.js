@@ -10,6 +10,7 @@ const { spillDirFor } = require('./intent-spill');
 const { durableMessageCopyOf } = require('./file-resolve');
 const { planRemoteRestart } = require('./restart-waiter');
 const { createTicketsStore } = require('./tickets-store');
+const { ledgerPicks } = require('./suite-client');
 const { sanitizeSuiteRunner } = require('./stores');
 // Exec grants are LOCAL-ONLY — this pure leaf sanitizes them off the wire in both
 // directions (require-const, like pathFor above; no injected-seam needed).
@@ -1498,7 +1499,7 @@ function createRemoteWiring(deps) {
 
   async function suiteActivity() {
     const runner = closed ? null : suiteRunner;
-    return { enabled: suiteRunnerWanted(), snapshot: runner && typeof runner.activity === 'function' ? await runner.activity() : null };
+    return { enabled: suiteRunnerWanted(), snapshot: runner && typeof runner.activity === 'function' ? await runner.activity() : null, picks: ledgerPicks(path.join(REGISTRY_DIR, 'logs', 'suite-runs.jsonl')) };
   }
 
   async function suiteOutput(id, opts = {}) {

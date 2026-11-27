@@ -224,7 +224,7 @@ function createSuiteClient({
         if (out.move || back) {
           const next = out.move || back;
           const from = { peer: ctx.peer, wire: ctx.wire, name: ctx.where };
-          ctx.moved.push({ from: ctx.where, to: next.name || next.peer, at: iso(now()) });
+          ctx.moved.push({ from: ctx.where, to: next.name || next.peer, at: iso(now()), ...(Array.isArray(next.considered) ? { considered: next.considered } : {}) });
           if (back) ctx.requeue = null;
           ctx.fallback = back ? null : from;
           repick = null;
@@ -464,6 +464,8 @@ function createSuiteClient({
       kind: ctx.kind, scope: ctx.scope, ...(ctx.named ? { named: ctx.named } : {}), team: ctx.team, ticket: ctx.ticket, seat: ctx.seat,
       tree: ctx.tree, sha: ctx.sha, treeHash: ctx.treeHash, dirty: ctx.dirty, pid: null, route: ctx.route, override: ctx.override,
       queuedAt: iso(ctx.queuedAt), startedAt: iso(ctx.startedAt), env: ctx.env,
+      ...(ctx.pick ? { pick: ctx.pick } : {}),
+      ...(ctx.moved.length ? { moved: ctx.moved.map((m) => ({ ...m })) } : {}),
     });
   }
 
@@ -1011,24 +1013,32 @@ function aloneNote(record) {
   return null;
 }
 
+function outranks(a, best) {
+  return a.rank < best.rank || (a.rank === best.rank && (a.tier < best.tier || (a.tier === best.tier && loadBeats(a.load, best.load))));
+}
+
+const EXCLUSIVE_SAYS = ['honour', 'ignore'];
+const CONSIDERED_MAX = 8;
+const WAIT_NOTE_MS = 60000;
+
 function pickRunner(members, { box = false, shares = [], exclusive = false } = {}) {
   let best = null;
   const boxed = box === true || boxDefOf(box) != null;
   const ranks = [];
   members.forEach((m, i) => {
     if (!m) return;
-    const skip = (reason) => { ranks.push({ member: m.peer, skipped: reason }); };
-    if (!m.live) return skip('not connected');
-    if (!m.info) return skip(SKIP_WHY[m.why] || 'no answer');
+    const skip = (reason, state, why = null) => { ranks.push({ member: m.peer, skipped: reason, state, ...(why ? { why } : {}) }); };
+    if (!m.live) return skip('not connected', 'not-live');
+    if (!m.info) return skip(SKIP_WHY[m.why] || 'no answer', 'no-answer', SKIP_WHY[m.why] || 'error');
     const tier = boxed ? boxTier(m.info, box) : 0;
-    if (tier == null || (boxed && missingShare(m.info, shares))) return skip('no box for this job');
+    if (tier == null) return skip('no box for this job', 'excluded', 'no-box');
+    if (boxed && missingShare(m.info, shares)) return skip('no box for this job', 'excluded', 'share-missing');
     const load = runnerLoad(m.info, m.sent);
     const rank = exclusive === true ? exclusiveRank(m.info, load) : 0;
     const unknown = boxed && m.info.box && m.info.box.state === 'probing';
-    ranks.push({ member: m.peer, load, tier, rank, ...(unknown ? { boxUnknown: true } : {}) });
-    const better = !best || rank < best.rank
-      || (rank === best.rank && (tier < best.tier || (tier === best.tier && loadBeats(load, best.load))));
-    if (better) best = { m, i, load, tier, rank };
+    const said = EXCLUSIVE_SAYS.includes(m.info.exclusive) ? m.info.exclusive : null;
+    ranks.push({ member: m.peer, load, tier, rank, exclusive: said, ...(unknown ? { boxUnknown: true } : {}) });
+    if (!best || outranks({ load, tier, rank }, best)) best = { m, i, load, tier, rank };
   });
   return best ? { member: best.m, index: best.i, load: best.load, chosen: true, ranks } : { member: members[0] || null, index: 0, load: null, chosen: false, ranks };
 }
@@ -1037,6 +1047,57 @@ function pickRecord(pick) {
   const skipped = pick.ranks.filter((r) => r.skipped).map((r) => ({ member: r.member, reason: r.skipped }));
   const boxUnknown = pick.ranks.filter((r) => r.boxUnknown).map((r) => r.member);
   return { chosen: pick.chosen ? pick.member.peer : null, ...(skipped.length ? { skipped } : {}), ...(boxUnknown.length ? { boxUnknown } : {}) };
+}
+
+function consideredOf(pick, excluded = []) {
+  const chosen = pick.chosen ? pick.member.peer : null;
+  const ranked = pick.ranks.filter((r) => !r.skipped);
+  const order = [...ranked.filter((r) => r.member === chosen), ...ranked.filter((r) => r.member !== chosen).sort((a, b) => (outranks(a, b) ? -1 : outranks(b, a) ? 1 : 0))];
+  const state = (r) => (r.member === chosen ? 'chosen' : r.boxUnknown ? 'probing' : 'ranked-lower');
+  return [
+    ...order.map((r) => ({ member: r.member, state: state(r), load: r.load, tier: r.tier, rank: r.rank, exclusive: r.exclusive })),
+    ...pick.ranks.filter((r) => r.skipped).map((r) => ({ member: r.member, state: r.state, ...(r.why ? { why: r.why } : {}) })),
+    ...excluded.map((member) => ({ member, state: 'excluded', why: 'failed' })),
+  ].slice(0, CONSIDERED_MAX);
+}
+
+const STATE_TEXT = { 'ranked-lower': 'ranked lower', 'no-answer': 'no answer', probing: 'box probing', 'not-live': 'not connected', excluded: 'excluded', chosen: 'chosen' };
+
+function waitNote(record) {
+  const waited = record && Number.isInteger(record.queueMs) ? record.queueMs : null;
+  if (waited == null || waited <= WAIT_NOTE_MS) return null;
+  const lists = [record.pick && record.pick.considered, ...(Array.isArray(record.moved) ? record.moved.map((m) => m.considered) : [])].filter(Array.isArray);
+  const other = lists.length ? lists[lists.length - 1].find((c) => c && c.member !== record.where) : null;
+  const ago = waited < 120000 ? `${Math.round(waited / 1000)}s` : `${Math.round(waited / 60000)}m`;
+  const why = other ? `; ${other.member} ${STATE_TEXT[other.state] || other.state}${other.why ? ` (${other.why})` : ''}` : '';
+  return `(waited ${ago} on ${record.where}${why})`;
+}
+
+function ledgerPicks(file, { fsImpl = fs, maxBytes = 512 * 1024, limit = 20 } = {}) {
+  let text = '';
+  try {
+    const size = fsImpl.statSync(file).size;
+    const fd = fsImpl.openSync(file, 'r');
+    try {
+      const len = Math.min(size, maxBytes);
+      const buf = Buffer.alloc(len);
+      fsImpl.readSync(fd, buf, 0, len, size - len);
+      text = buf.toString('utf8');
+    } finally { fsImpl.closeSync(fd); }
+  } catch { return []; }
+  const jobs = new Map();
+  for (const line of text.split('\n')) {
+    let row;
+    try { row = JSON.parse(line); } catch { continue; }
+    if (!row || typeof row !== 'object' || !row.id || !row.pick) continue;
+    jobs.delete(row.id);
+    jobs.set(row.id, {
+      id: row.id, phase: row.phase, team: row.team, ticket: row.ticket, seat: row.seat, kind: row.kind, where: row.where,
+      queuedAt: row.queuedAt, ...(row.startedAt ? { startedAt: row.startedAt } : {}), ...(row.endedAt ? { endedAt: row.endedAt, outcome: row.outcome } : {}),
+      ...(Number.isInteger(row.queueMs) ? { queueMs: row.queueMs } : {}), pick: row.pick, ...(row.moved ? { moved: row.moved } : {}),
+    });
+  }
+  return [...jobs.values()].slice(-limit);
 }
 
 function pickLine(id, pick) {
@@ -1205,7 +1266,7 @@ function createChannelHost({
       ...(picked && picked.pick ? { pick: picked.pick } : {}),
     });
     finished = true;
-    const pooled = poolNote(picked && picked.pick);
+    const pooled = [poolNote(picked && picked.pick), waitNote(out.record)].filter(Boolean).join(' ') || null;
     if (out.unknown || !out.res) return say({ run: 'remote', runner: inflight.name, unknown: out.unknown || 'no result', ...(pooled ? { note: pooled } : {}) });
     const r = out.res;
     const note = await treeNote(tree, r.treeHash);
@@ -1235,4 +1296,4 @@ function createChannelHost({
   };
 }
 
-module.exports = { createSuiteClient, createChannelHost, route, lastTotals, localHalf, failingNames, agreement, boxVerdict, fallbackOf, FALLBACK_CODES, pickRunner, runnerLoad, pickRecord, pickLine, poolNote, aloneNote, HAND_QUEUE_MS, HAND_RUN_MS, handSlackMs, handExecSlackMs, HUNG_RE, BUILD_BUDGET_MS, LOST_AFTER_MS };
+module.exports = { createSuiteClient, createChannelHost, route, lastTotals, localHalf, failingNames, agreement, boxVerdict, fallbackOf, FALLBACK_CODES, pickRunner, runnerLoad, pickRecord, consideredOf, waitNote, ledgerPicks, CONSIDERED_MAX, pickLine, poolNote, aloneNote, HAND_QUEUE_MS, HAND_RUN_MS, handSlackMs, handExecSlackMs, HUNG_RE, BUILD_BUDGET_MS, LOST_AFTER_MS };

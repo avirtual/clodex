@@ -1671,8 +1671,8 @@ class RemoteServer {
       return Promise.resolve()
         .then(() => this._listTestjobs())
         .then((got) => {
-          const { enabled = false, snapshot = null } = got || {};
-          return this._json(res, 200, { ok: true, enabled: !!enabled, snapshot });
+          const { enabled = false, snapshot = null, picks } = got || {};
+          return this._json(res, 200, { ok: true, enabled: !!enabled, snapshot, ...(Array.isArray(picks) ? { picks } : {}) });
         })
         .catch((e) => this._json(res, 500, { ok: false, error: e.message }));
     }
