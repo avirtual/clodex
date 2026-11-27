@@ -225,8 +225,35 @@ function downloadFinished(d) {
   return `download finished → ${showPath(file)} (${bytesLabel(d.bytes || 0)}, ${typeOf(d.mime, file)})${d.fromServer ? ' · name from server' : ''}`;
 }
 
-function armedTail(dir, ms) {
-  return ` · download destination armed: ${showPath(String(dir || ''))} for ${Math.round(Number(ms) / 1000)} s`;
+const DOWNLOAD_ARM_MS = 120000;
+const ARM_RULE = `until your next action here, at most ${DOWNLOAD_ARM_MS / 1000} s`;
+const DISARM_REASONS = {
+  expired: `no download started within ${DOWNLOAD_ARM_MS / 1000} s of your click; destination disarmed`,
+  next: 'no download started after your click; destination disarmed by your next action',
+  other: 'no download started after your click; destination disarmed by another seat\'s action on this service',
+};
+const NAV_BLOCK_REASONS = {
+  scheme: 'not allowed as a navigation',
+  policy: 'refused by URL policy',
+};
+
+function armedTail(dir) {
+  return ` · download destination armed: ${showPath(String(dir || ''))} ${ARM_RULE}`;
+}
+
+function downloadDisarmed(reason) {
+  return Object.hasOwn(DISARM_REASONS, reason) ? DISARM_REASONS[reason] : DISARM_REASONS.expired;
+}
+
+function navBlocked(scheme, host, reason) {
+  const s = safeName(scheme).toLowerCase().replace(/[^a-z0-9+.-]/g, '') || 'unknown';
+  const h = safeName(host);
+  const why = Object.hasOwn(NAV_BLOCK_REASONS, reason) ? NAV_BLOCK_REASONS[reason] : NAV_BLOCK_REASONS.scheme;
+  return `navigation blocked after your action: ${h ? `${s}://${h}` : `${s}:`} — ${why}`;
+}
+
+function downloadNotStarted(n, service) {
+  return `nothing downloaded within 30s after clicking [${n}]; the destination stays armed ${ARM_RULE} — read ${service} to see what happened, or download its URL`;
 }
 
 function downloadReply(service, cmd, r) {
@@ -722,7 +749,7 @@ module.exports = {
   closedReply,
   classifyReply,
   oneLine, reply, errorReply, openReply, readReply, servicesReply, writeReplyFile, snapshotId, SNAP_RE, SNAP_MAX_AGE_MS, SNAP_TMP_MAX_AGE_MS, replyDir, snapshotDir, pruneSnapshots, pruneAllSnapshots, loginState, stamp,
-  downloadReply, screenshotReply, inspectReply, downloadLost, downloadFinished, downloadReason, armedTail, safeName, typeOf, DOWNLOAD_REASONS,
+  downloadReply, screenshotReply, inspectReply, downloadLost, downloadFinished, downloadReason, armedTail, downloadDisarmed, navBlocked, downloadNotStarted, DOWNLOAD_ARM_MS, safeName, typeOf, DOWNLOAD_REASONS,
   PREFIX, REPLY_MAX, SEAT_RE, TEXT, ago, signinReply, signinNotice, dropSuffix, droppedReply, actReply, scrollReply, navReply, waitReply, handbackReply, heldTimeout, isGoogle,
   handover, INSTRUCTION_MAX, operatorNav,
 };
