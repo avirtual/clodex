@@ -865,7 +865,7 @@ function collect(main) {
     const flags = (disabled ? ' [disabled]' : '') + (sorted === 'ascending' ? ' [sorted ↑]' : sorted === 'descending' ? ' [sorted ↓]' : '')
       + (/^(page|true)$/i.test(el.getAttribute('aria-current') || '') ? ' [current]' : '') + (unread ? ' [unread]' : '');
     const cq = cqOf(el);
-    items.push({ el, full, cq, flags, line: [kind, cq ? '⚠' : '', line].filter(Boolean).join(' ') + flags, sig: sig == null ? null : kind + ' ' + sig + flags });
+    items.push({ el, full, cq, line: [kind, cq ? '⚠' : '', line].filter(Boolean).join(' ') + flags, sig: sig == null ? null : kind + ' ' + sig + flags, flags });
   }
 `;
 }
