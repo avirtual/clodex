@@ -222,7 +222,7 @@ test('t2362: bare [agent:team runner] on a pool prints one line per member with 
     peers: [R1, R2], desk: ATTACHED, client,
   });
   assert.deepStrictEqual(await f.verb('[agent:team runner]'), [[
-    '[agent:team] test runner of team: 3 runners, hands full (hand runs use the pool), gate on, run 21 min (default), queue 15 min hands, 20 min gate (default)',
+    '[agent:team] test runner of team: 3 runners, hands full (hand runs use the pool), gate on, run 21 min (default), queue 15 min hands, 5 min gate (default)',
     'runner-1, wire push — reachable, suite capability, queue 2, env box linux/arm64 node v22 key k, slots 1/2 in use',
     'laptop, wire pull — attached, queue 0, env box linux/arm64 node v22 key k, slots 0/1 in use',
     'runner-2, wire push — online with the suite capability, but its info route failed: status 0',
@@ -572,9 +572,47 @@ test('t2378: every exported code is produced by a row, and every class is one of
   assert.ok(Object.keys(FALLBACK_CODES).length > 0, 'ENTER: the table has codes');
   for (const [code, row] of Object.entries(FALLBACK_CODES)) {
     assert.ok(['transient', 'deterministic', 'budget', 'unknown'].includes(row.class), code);
-    assert.deepStrictEqual(Object.keys(row).sort(), ['class', 'reason'], code);
+    assert.deepStrictEqual(Object.keys(row).sort(), ['class', 'reason', 'retry'], code);
   }
-  for (const [name, , reason, code, cls] of FALLBACK_ROWS) assert.deepStrictEqual(FALLBACK_CODES[code], { reason, class: cls }, name);
+  for (const [name, , reason, code, cls] of FALLBACK_ROWS) assert.deepStrictEqual(FALLBACK_CODES[code], { reason, class: cls, retry: FALLBACK_RETRY[code] }, name);
+});
+
+const FALLBACK_RETRY = {
+  'runner-unreachable': true,
+  'runner-restart': true,
+  'no-box-definition': false,
+  'definition-mismatch': false,
+  'tree-mismatch': false,
+  'no-share': false,
+  'no-totals': false,
+  'queue-budget': true,
+  'run-budget': false,
+  'box-build-budget': false,
+  'box-build-failed': false,
+  'box-build-interrupted': true,
+  'outcome-unknown': false,
+};
+
+test('t2453: the retry flag of each of the 13 fallback codes is the literal one', () => {
+  assert.deepStrictEqual(Object.keys(FALLBACK_RETRY).sort(), Object.keys(FALLBACK_CODES).sort());
+  assert.strictEqual(Object.keys(FALLBACK_CODES).length, 13);
+  for (const [code, retry] of Object.entries(FALLBACK_RETRY)) assert.strictEqual(FALLBACK_CODES[code].retry, retry, code);
+});
+
+test('t2453: the deciding guard grows by twice the queue minutes past the 5 min default, once for the queue before a build and once for the run, so a long queue is not read as an overrun', async () => {
+  const seen = [];
+  for (const extra of [{}, { queueMs: 2700000 }]) {
+    const timers = { setTimeout: (fn, ms) => { seen.push(ms); fn(); return 1; }, clearTimeout: () => {} };
+    const f = mkFixture({
+      manifestExtra: { testRunner: { ...PUSH_ON, ...extra } }, peers: [R1], client: { run: () => new Promise(() => {}) },
+      extraDeps: { boxDecideTimers: timers },
+    });
+    const team = f.tm.loadManifest('team');
+    require('../team-box').writeBox(team.dir, BOX_TEXT);
+    await f.m._boxDecide(team, { id: 't1' }, '/w', {});
+  }
+  assert.strictEqual(seen.length, 2, 'ENTER: both decides armed the guard');
+  assert.strictEqual(seen[1] - seen[0], 4800000);
 });
 
 test('t2378: a box-decided _boxDecide result carries no fallback code or class, and its compare row has no fallbackCode', async () => {

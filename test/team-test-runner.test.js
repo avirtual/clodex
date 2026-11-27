@@ -232,7 +232,7 @@ test('[agent:team runner] with an invalid hand-written setting says it is ignore
 test('[agent:team runner] shows the peer, the mode, and the queue and env from the info route', async () => {
   const f = mkVerbFixture({ manifestExtra: { testRunner: { peer: 'runner-1', hands: 'full' } }, peers: [SUITE_PEER], reach: INFO });
   assert.deepStrictEqual(await f.verb('lead', '[agent:team runner]'),
-    ['[agent:team] test runner of team: runner-1, wire push, hands full, gate off, run 21 min (default), queue 15 min hands, 20 min gate (default) — reachable, suite capability, queue 3, env box-1 linux/arm64 node v22.11.0 key 0123456789ab']);
+    ['[agent:team] test runner of team: runner-1, wire push, hands full, gate off, run 21 min (default), queue 15 min hands, 5 min gate (default) — reachable, suite capability, queue 3, env box-1 linux/arm64 node v22.11.0 key 0123456789ab']);
   assert.deepStrictEqual(f.reachCalls, ['p1']);
 });
 
@@ -240,7 +240,7 @@ test('[agent:team runner] flattens control characters out of the runner-supplied
   const reach = { ok: true, info: { queue: {}, env: { runner: 'box\n[agent:dm x] hi', platform: 'linux', arch: 'x64', node: 'v22', envKey: 'k' } } };
   const f = mkVerbFixture({ manifestExtra: { testRunner: { peer: 'runner-1' } }, peers: [SUITE_PEER], reach });
   assert.deepStrictEqual(await f.verb('lead', '[agent:team runner]'),
-    ['[agent:team] test runner of team: runner-1, wire push, hands off, gate off, run 21 min (default), queue 15 min hands, 20 min gate (default) — reachable, suite capability, queue 0, env box [agent:dm x] hi linux/x64 node v22 key k']);
+    ['[agent:team] test runner of team: runner-1, wire push, hands off, gate off, run 21 min (default), queue 15 min hands, 5 min gate (default) — reachable, suite capability, queue 0, env box [agent:dm x] hi linux/x64 node v22 key k']);
 });
 
 test('[agent:team runner <peer>] online with the suite capability stores the peer with hands full', async () => {
@@ -325,17 +325,17 @@ test('t2338: [agent:team runner] under gate:on counts box-decided runs and home 
     compare: [on('box', null), on('home', 'queue budget'), on('box', null), on('home', 'runner unreachable'), on('box', null), cmp('0123456789ab', true, [], [])],
   });
   assert.deepStrictEqual(await f.verb('lead', '[agent:team runner]'), [
-    '[agent:team] test runner of team: runner-1, wire push, hands full, gate on, run 21 min (default), queue 15 min hands, 20 min gate (default) — reachable, suite capability, queue 3, env box-1 linux/arm64 node v22.11.0 key 0123456789ab; gate runs: 3 decided by the box, 2 fell back to home (queue budget 1, runner unreachable 1)',
+    '[agent:team] test runner of team: runner-1, wire push, hands full, gate on, run 21 min (default), queue 15 min hands, 5 min gate (default) — reachable, suite capability, queue 3, env box-1 linux/arm64 node v22.11.0 key 0123456789ab; gate runs: 3 decided by the box, 2 fell back to home (queue budget 1, runner unreachable 1)',
   ]);
 });
 
 const HELD_TALLY_ROWS = [
   ['no holds', [],
-    '[agent:team] test runner of team: runner-1, wire push, hands full, gate on, run 21 min (default), queue 15 min hands, 20 min gate (default) — reachable, suite capability, queue 3, env box-1 linux/arm64 node v22.11.0 key 0123456789ab; gate runs: 3 decided by the box, 2 fell back to home (queue budget 1, runner unreachable 1)'],
+    '[agent:team] test runner of team: runner-1, wire push, hands full, gate on, run 21 min (default), queue 15 min hands, 5 min gate (default) — reachable, suite capability, queue 3, env box-1 linux/arm64 node v22.11.0 key 0123456789ab; gate runs: 3 decided by the box, 2 fell back to home (queue budget 1, runner unreachable 1)'],
   ['2 holds of one reason', ['no share', 'no share'],
-    '[agent:team] test runner of team: runner-1, wire push, hands full, gate on, run 21 min (default), queue 15 min hands, 20 min gate (default) — reachable, suite capability, queue 3, env box-1 linux/arm64 node v22.11.0 key 0123456789ab; gate runs: 3 decided by the box, 2 fell back to home (queue budget 1, runner unreachable 1), 2 held (no share 2)'],
+    '[agent:team] test runner of team: runner-1, wire push, hands full, gate on, run 21 min (default), queue 15 min hands, 5 min gate (default) — reachable, suite capability, queue 3, env box-1 linux/arm64 node v22.11.0 key 0123456789ab; gate runs: 3 decided by the box, 2 fell back to home (queue budget 1, runner unreachable 1), 2 held (no share 2)'],
   ['3 holds across two reasons', ['runner unreachable', 'no share', 'runner unreachable'],
-    '[agent:team] test runner of team: runner-1, wire push, hands full, gate on, run 21 min (default), queue 15 min hands, 20 min gate (default) — reachable, suite capability, queue 3, env box-1 linux/arm64 node v22.11.0 key 0123456789ab; gate runs: 3 decided by the box, 2 fell back to home (queue budget 1, runner unreachable 1), 3 held (runner unreachable 2, no share 1)'],
+    '[agent:team] test runner of team: runner-1, wire push, hands full, gate on, run 21 min (default), queue 15 min hands, 5 min gate (default) — reachable, suite capability, queue 3, env box-1 linux/arm64 node v22.11.0 key 0123456789ab; gate runs: 3 decided by the box, 2 fell back to home (queue budget 1, runner unreachable 1), 3 held (runner unreachable 2, no share 1)'],
 ];
 
 for (const [label, holds, line] of HELD_TALLY_ROWS) {
@@ -438,6 +438,9 @@ const BOX_RETRY_LOAD_ROWS = [
   ['non-boolean inFlight', { attempts: 0, nextAt: 5, lastEndedAt: 4, inFlight: 1 }, undefined],
   ['an array', [], undefined],
   ['null', null, undefined],
+  ['since and an unconfirmed job', { attempts: 1, nextAt: 5, lastEndedAt: 4, inFlight: false, since: 3, unconfirmed: { jobId: 'j1', peer: 'p1', wire: 'pull' } }, { attempts: 1, nextAt: 5, lastEndedAt: 4, inFlight: false, since: 3, unconfirmed: { jobId: 'j1', peer: 'p1', wire: 'pull' } }],
+  ['a non-number since', { attempts: 1, nextAt: 5, lastEndedAt: 4, inFlight: false, since: '3' }, { attempts: 1, nextAt: 5, lastEndedAt: 4, inFlight: false }],
+  ['a malformed unconfirmed job', { attempts: 1, nextAt: 5, lastEndedAt: 4, inFlight: false, unconfirmed: { jobId: 7 } }, undefined],
 ];
 
 const BYPASS = { by: 'lead', reason: 'runner gone for a day', at: '2026-11-23T10:00:00.000Z', sha: 'a'.repeat(40) };
@@ -485,9 +488,9 @@ test('t2384: homeBypass is removed by a task done that re-enters a non-box hold'
 
 const BYPASS_TALLY_ROWS = [
   ['0 bypassed', 0,
-    '[agent:team] test runner of team: runner-1, wire push, hands full, gate on, run 21 min (default), queue 15 min hands, 20 min gate (default) — reachable, suite capability, queue 3, env box-1 linux/arm64 node v22.11.0 key 0123456789ab; gate runs: 3 decided by the box, 2 fell back to home (queue budget 1, runner unreachable 1)'],
+    '[agent:team] test runner of team: runner-1, wire push, hands full, gate on, run 21 min (default), queue 15 min hands, 5 min gate (default) — reachable, suite capability, queue 3, env box-1 linux/arm64 node v22.11.0 key 0123456789ab; gate runs: 3 decided by the box, 2 fell back to home (queue budget 1, runner unreachable 1)'],
   ['2 bypassed', 2,
-    '[agent:team] test runner of team: runner-1, wire push, hands full, gate on, run 21 min (default), queue 15 min hands, 20 min gate (default) — reachable, suite capability, queue 3, env box-1 linux/arm64 node v22.11.0 key 0123456789ab; gate runs: 3 decided by the box, 2 fell back to home (queue budget 1, runner unreachable 1), 2 bypassed'],
+    '[agent:team] test runner of team: runner-1, wire push, hands full, gate on, run 21 min (default), queue 15 min hands, 5 min gate (default) — reachable, suite capability, queue 3, env box-1 linux/arm64 node v22.11.0 key 0123456789ab; gate runs: 3 decided by the box, 2 fell back to home (queue budget 1, runner unreachable 1), 2 bypassed'],
 ];
 
 for (const [label, n, line] of BYPASS_TALLY_ROWS) {
@@ -959,9 +962,9 @@ test('t2380: the bare runner line names fallback hold only when it is set', asyn
   const held = mkVerbFixture({ manifestExtra: { testRunner: { peer: 'runner-1', hands: 'full', gate: 'on', fallback: 'hold' } }, peers: [SUITE_PEER], reach: INFO });
   const [a] = await plain.verb('lead', '[agent:team runner]');
   const [b] = await held.verb('lead', '[agent:team runner]');
-  assert.ok(a.startsWith('[agent:team] test runner of team: runner-1, wire push, hands full, gate on, run 21 min (default), queue 15 min hands, 20 min gate (default) — '), `ENTER: ${a}`);
+  assert.ok(a.startsWith('[agent:team] test runner of team: runner-1, wire push, hands full, gate on, run 21 min (default), queue 15 min hands, 5 min gate (default) — '), `ENTER: ${a}`);
   assert.doesNotMatch(a, /fallback/);
-  assert.strictEqual(b, a.replace('gate on, run 21 min (default), queue 15 min hands, 20 min gate (default) — ', 'gate on, fallback hold, run 21 min (default), queue 15 min hands, 20 min gate (default) — '));
+  assert.strictEqual(b, a.replace('gate on, run 21 min (default), queue 15 min hands, 5 min gate (default) — ', 'gate on, fallback hold, run 21 min (default), queue 15 min hands, 5 min gate (default) — '));
 });
 
 test('t2380: _reverifyBoxHeld — setting fallback:home re-enters verify for every ticket held at verify: box, and leaves other holds alone', async () => {
@@ -1024,10 +1027,10 @@ for (const [name, input, want] of HAND_ENV_ROWS) {
 
 test('t2418: run:<minutes> stores runMs, the bare line shows it, run:off removes it; out of range is refused naming the range', async () => {
   const f = mkVerbFixture({ manifestExtra: { testRunner: { peer: 'runner-1', hands: 'full' } }, peers: [SUITE_PEER], reach: INFO });
-  assert.deepStrictEqual(await f.verb('lead', '[agent:team runner run:30]'), ['[agent:team] test runner of team: run 30 min, queue 15 min hands, 20 min gate (default)']);
+  assert.deepStrictEqual(await f.verb('lead', '[agent:team runner run:30]'), ['[agent:team] test runner of team: run 30 min, queue 15 min hands, 5 min gate (default)']);
   assert.deepStrictEqual(disk(f.file).testRunner, { peer: 'runner-1', hands: 'full', runMs: 1800000 });
   assert.deepStrictEqual(await f.verb('lead', '[agent:team runner]'),
-    ['[agent:team] test runner of team: runner-1, wire push, hands full, gate off, run 30 min, queue 15 min hands, 20 min gate (default) — reachable, suite capability, queue 3, env box-1 linux/arm64 node v22.11.0 key 0123456789ab']);
+    ['[agent:team] test runner of team: runner-1, wire push, hands full, gate off, run 30 min, queue 15 min hands, 5 min gate (default) — reachable, suite capability, queue 3, env box-1 linux/arm64 node v22.11.0 key 0123456789ab']);
   const before = fs.readFileSync(f.file, 'utf8');
   for (const bad of ['0', '37', '1.5', 'abc', '']) {
     assert.deepStrictEqual(await f.verb('lead', `[agent:team runner run:${bad}]`),
@@ -1037,17 +1040,17 @@ test('t2418: run:<minutes> stores runMs, the bare line shows it, run:off removes
     ['[agent:team] error: set run:, queue:, exclusive: and hand-env: in their own [agent:team runner] intent, apart from the peer, hands, gate and fallback']);
   assert.deepStrictEqual(await f.verb('lead', '[agent:team runner run:30 run:20]'), ['[agent:team] error: name run: once per [agent:team runner] intent']);
   assert.strictEqual(fs.readFileSync(f.file, 'utf8'), before, 'refusals write nothing');
-  assert.deepStrictEqual(await f.verb('lead', '[agent:team runner run:off]'), ['[agent:team] test runner of team: run 21 min (default), queue 15 min hands, 20 min gate (default)']);
+  assert.deepStrictEqual(await f.verb('lead', '[agent:team runner run:off]'), ['[agent:team] test runner of team: run 21 min (default), queue 15 min hands, 5 min gate (default)']);
   assert.deepStrictEqual(disk(f.file).testRunner, { peer: 'runner-1', hands: 'full' });
 });
 
 test('t2418: hand-env: merges, KEY= removes one, off clears all, and the bare line lists them; a bad name or too many is refused', async () => {
   const f = mkVerbFixture({ manifestExtra: { testRunner: { peer: 'runner-1', hands: 'full', env: envOf(30) } }, peers: [SUITE_PEER], reach: INFO });
   assert.deepStrictEqual(await f.verb('lead', '[agent:team runner hand-env:BROWSER=1 hand-env:URL=http://x/?a=b]'),
-    ['[agent:team] test runner of team: run 21 min (default), queue 15 min hands, 20 min gate (default), hand-env BROWSER=1 URL=http://x/?a=b']);
+    ['[agent:team] test runner of team: run 21 min (default), queue 15 min hands, 5 min gate (default), hand-env BROWSER=1 URL=http://x/?a=b']);
   assert.deepStrictEqual(disk(f.file).testRunner.handEnv, { BROWSER: '1', URL: 'http://x/?a=b' });
   const [bare] = await f.verb('lead', '[agent:team runner]');
-  assert.ok(bare.startsWith('[agent:team] test runner of team: runner-1, wire push, hands full, gate off, run 21 min (default), queue 15 min hands, 20 min gate (default), hand-env BROWSER=1 URL=http://x/?a=b — '), bare);
+  assert.ok(bare.startsWith('[agent:team] test runner of team: runner-1, wire push, hands full, gate off, run 21 min (default), queue 15 min hands, 5 min gate (default), hand-env BROWSER=1 URL=http://x/?a=b — '), bare);
   const before = fs.readFileSync(f.file, 'utf8');
   assert.deepStrictEqual(await f.verb('lead', '[agent:team runner hand-env:lower=1]'),
     ['[agent:team] error: hand-env takes KEY=VALUE, KEY= or off, with KEY matching ^[A-Z_][A-Z0-9_]*$ — not "lower=1"']);
@@ -1057,8 +1060,8 @@ test('t2418: hand-env: merges, KEY= removes one, off clears all, and the bare li
     ['[agent:team] error: env and hand-env together would name 33 variables; the most is 32']);
   assert.strictEqual(fs.readFileSync(f.file, 'utf8'), before, 'refusals write nothing');
   assert.deepStrictEqual(await f.verb('lead', '[agent:team runner hand-env:BROWSER=]'),
-    ['[agent:team] test runner of team: run 21 min (default), queue 15 min hands, 20 min gate (default), hand-env URL=http://x/?a=b']);
-  assert.deepStrictEqual(await f.verb('lead', '[agent:team runner hand-env:off]'), ['[agent:team] test runner of team: run 21 min (default), queue 15 min hands, 20 min gate (default)']);
+    ['[agent:team] test runner of team: run 21 min (default), queue 15 min hands, 5 min gate (default), hand-env URL=http://x/?a=b']);
+  assert.deepStrictEqual(await f.verb('lead', '[agent:team runner hand-env:off]'), ['[agent:team] test runner of team: run 21 min (default), queue 15 min hands, 5 min gate (default)']);
   assert.strictEqual('handEnv' in disk(f.file).testRunner, false);
 });
 
@@ -1108,11 +1111,11 @@ for (const [name, queueMs, want] of QUEUE_MS_ROWS) {
 test('t2425: queue:<minutes> stores queueMs, the bare line shows it, queue:off removes it; out of range or repeated is refused', async () => {
   const f = mkVerbFixture({ manifestExtra: { testRunner: { peer: 'runner-1', hands: 'full' } }, peers: [SUITE_PEER], reach: INFO });
   assert.deepStrictEqual(await f.verb('lead', '[agent:team runner]'),
-    ['[agent:team] test runner of team: runner-1, wire push, hands full, gate off, run 21 min (default), queue 15 min hands, 20 min gate (default) — reachable, suite capability, queue 3, env box-1 linux/arm64 node v22.11.0 key 0123456789ab']);
-  assert.deepStrictEqual(await f.verb('lead', '[agent:team runner queue:45]'), ['[agent:team] test runner of team: run 21 min (default), queue 45 min']);
+    ['[agent:team] test runner of team: runner-1, wire push, hands full, gate off, run 21 min (default), queue 15 min hands, 5 min gate (default) — reachable, suite capability, queue 3, env box-1 linux/arm64 node v22.11.0 key 0123456789ab']);
+  assert.deepStrictEqual(await f.verb('lead', '[agent:team runner queue:45]'), ['[agent:team] test runner of team: run 21 min (default), queue 45 min hands, 45 min gate']);
   assert.deepStrictEqual(disk(f.file).testRunner, { peer: 'runner-1', hands: 'full', queueMs: 2700000 });
   assert.deepStrictEqual(await f.verb('lead', '[agent:team runner]'),
-    ['[agent:team] test runner of team: runner-1, wire push, hands full, gate off, run 21 min (default), queue 45 min — reachable, suite capability, queue 3, env box-1 linux/arm64 node v22.11.0 key 0123456789ab']);
+    ['[agent:team] test runner of team: runner-1, wire push, hands full, gate off, run 21 min (default), queue 45 min hands, 45 min gate — reachable, suite capability, queue 3, env box-1 linux/arm64 node v22.11.0 key 0123456789ab']);
   const before = fs.readFileSync(f.file, 'utf8');
   for (const bad of ['4', '121', '1.5', 'abc', '']) {
     assert.deepStrictEqual(await f.verb('lead', `[agent:team runner queue:${bad}]`),
@@ -1122,7 +1125,7 @@ test('t2425: queue:<minutes> stores queueMs, the bare line shows it, queue:off r
   assert.deepStrictEqual(await f.verb('lead', '[agent:team runner queue:30 gate:shadow]'),
     ['[agent:team] error: set run:, queue:, exclusive: and hand-env: in their own [agent:team runner] intent, apart from the peer, hands, gate and fallback']);
   assert.strictEqual(fs.readFileSync(f.file, 'utf8'), before, 'refusals write nothing');
-  assert.deepStrictEqual(await f.verb('lead', '[agent:team runner queue:off run:30]'), ['[agent:team] test runner of team: run 30 min, queue 15 min hands, 20 min gate (default)']);
+  assert.deepStrictEqual(await f.verb('lead', '[agent:team runner queue:off run:30]'), ['[agent:team] test runner of team: run 30 min, queue 15 min hands, 5 min gate (default)']);
   assert.deepStrictEqual(disk(f.file).testRunner, { peer: 'runner-1', hands: 'full', runMs: 1800000 });
 });
 
@@ -1149,16 +1152,25 @@ for (const [name, extra, want] of SHADOW_QUEUE_ROWS) {
   });
 }
 
-test('t2425: a gate:on box decide keeps its 5 min queue budget whatever queueMs says', async () => {
-  const seen = [];
-  const run = async (o) => { seen.push([o.queueBudgetMs, o.budgetMs]); return { unknown: 'stub', res: null, record: null }; };
-  for (const extra of [{}, { queueMs: 2700000 }]) {
-    const f = mkVerbFixture({ manifestExtra: { testRunner: { peer: 'runner-1', gate: 'on', box: true, ...extra } }, peers: [SUITE_PEER], run });
+const GATE_QUEUE_ROWS = [
+  ['no queueMs', {}, [300000, 2460000], 'queue 15 min hands, 5 min gate (default)'],
+  ['queue:10', { queueMs: 600000 }, [600000, 2760000], 'queue 10 min hands, 10 min gate'],
+  ['queue:45', { queueMs: 2700000 }, [2700000, 4860000], 'queue 45 min hands, 45 min gate'],
+  ['queue:120', { queueMs: 7200000 }, [7200000, 9360000], 'queue 120 min hands, 120 min gate'],
+];
+
+for (const [name, extra, want, line] of GATE_QUEUE_ROWS) {
+  test(`t2453: a gate:on box decide with ${name} waits [queue, whole budget] ${JSON.stringify(want)} and the bare line says "${line}"`, async () => {
+    const seen = [];
+    const run = async (o) => { seen.push([o.queueBudgetMs, o.budgetMs]); return { unknown: 'stub', res: null, record: null }; };
+    const f = mkVerbFixture({ manifestExtra: { testRunner: { peer: 'runner-1', gate: 'on', box: true, ...extra } }, peers: [SUITE_PEER], run, reach: INFO });
     require('../team-box').writeBox(path.dirname(f.file), 'FROM node:25-bookworm\nRUN true\n');
     await f.m._boxDecide(f.tm.loadManifest('team'), { id: 't1' }, '/w', {});
-  }
-  assert.deepStrictEqual(seen, [[300000, 2460000], [300000, 2460000]]);
-});
+    assert.deepStrictEqual(seen, [want]);
+    const [bare] = await f.verb('lead', '[agent:team runner]');
+    assert.ok(bare.includes(`run 21 min (default), ${line} — reachable`), bare);
+  });
+}
 
 for (const [name, exclusive, want] of [
   ['true', true, true],
@@ -1175,10 +1187,10 @@ for (const [name, exclusive, want] of [
 
 test('t2428: exclusive:on stores the key, the bare line shows it, exclusive:off removes it; another value or a repeat is refused', async () => {
   const f = mkVerbFixture({ manifestExtra: { testRunner: { peer: 'runner-1', hands: 'full' } }, peers: [SUITE_PEER], reach: INFO });
-  assert.deepStrictEqual(await f.verb('lead', '[agent:team runner exclusive:on]'), ['[agent:team] test runner of team: run 21 min (default), queue 15 min hands, 20 min gate (default), exclusive on']);
+  assert.deepStrictEqual(await f.verb('lead', '[agent:team runner exclusive:on]'), ['[agent:team] test runner of team: run 21 min (default), queue 15 min hands, 5 min gate (default), exclusive on']);
   assert.deepStrictEqual(disk(f.file).testRunner, { peer: 'runner-1', hands: 'full', exclusive: true });
   assert.deepStrictEqual(await f.verb('lead', '[agent:team runner]'),
-    ['[agent:team] test runner of team: runner-1, wire push, hands full, gate off, run 21 min (default), queue 15 min hands, 20 min gate (default), exclusive on — reachable, suite capability, queue 3, env box-1 linux/arm64 node v22.11.0 key 0123456789ab']);
+    ['[agent:team] test runner of team: runner-1, wire push, hands full, gate off, run 21 min (default), queue 15 min hands, 5 min gate (default), exclusive on — reachable, suite capability, queue 3, env box-1 linux/arm64 node v22.11.0 key 0123456789ab']);
   const before = fs.readFileSync(f.file, 'utf8');
   for (const bad of ['yes', 'true', '']) {
     assert.deepStrictEqual(await f.verb('lead', `[agent:team runner exclusive:${bad}]`), [`[agent:team] error: exclusive must be on or off — not "${bad}"`], bad);
@@ -1187,7 +1199,7 @@ test('t2428: exclusive:on stores the key, the bare line shows it, exclusive:off 
   assert.deepStrictEqual(await f.verb('lead', '[agent:team runner exclusive:on gate:shadow]'),
     ['[agent:team] error: set run:, queue:, exclusive: and hand-env: in their own [agent:team runner] intent, apart from the peer, hands, gate and fallback']);
   assert.strictEqual(fs.readFileSync(f.file, 'utf8'), before, 'refusals write nothing');
-  assert.deepStrictEqual(await f.verb('lead', '[agent:team runner exclusive:off]'), ['[agent:team] test runner of team: run 21 min (default), queue 15 min hands, 20 min gate (default)']);
+  assert.deepStrictEqual(await f.verb('lead', '[agent:team runner exclusive:off]'), ['[agent:team] test runner of team: run 21 min (default), queue 15 min hands, 5 min gate (default)']);
   assert.deepStrictEqual(disk(f.file).testRunner, { peer: 'runner-1', hands: 'full' });
 });
 
