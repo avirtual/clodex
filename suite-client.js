@@ -17,6 +17,7 @@ const DEFAULT_RUN_MS = 21 * 60 * 1000;
 const BUILD_BUDGET_MS = 25 * 60 * 1000;
 const SNAPSHOT_WAIT_MS = 2000;
 const LOST_AFTER_MS = 150000;
+const CLAIM_TTL_MS = 60000;
 const COMPARE_MAX_BYTES = 5 * 1024 ** 2;
 const UNREACHABLE = new Set([0, 429, 502, 503, 504]);
 const REFUSED = new Set([401, 403]);
@@ -110,6 +111,53 @@ function createSuiteClient({
     return r.body && r.body.ok ? { ok: true } : { ok: false, error: r.error || (r.body && r.body.error) || `status ${r.status}` };
   }
 
+  const runs = new Map();
+
+  function claim(where) {
+    const id = randomUUID();
+    runs.set(id, { where, at: now() });
+    return id;
+  }
+
+  function sentTo(where, info) {
+    const q = (info && info.queue) || {};
+    const seen = new Set([...(Array.isArray(q.queued) ? q.queued : []), ...(q.running != null ? [q.running] : [])]);
+    const counted = info && Number.isInteger(info.pending);
+    let n = 0;
+    for (const [id, e] of runs) {
+      if (!e.ctx) {
+        if (now() - e.at > CLAIM_TTL_MS) runs.delete(id);
+        else if (e.where === where) n += 1;
+        continue;
+      }
+      const c = e.ctx;
+      if (c.ended || c.where !== where || c.started || (counted && c.submitted) || seen.has(c.jobId)) continue;
+      n += 1;
+    }
+    return n;
+  }
+
+  function stopOn({ team, runner, why }) {
+    let stopped = 0;
+    let left = 0;
+    for (const { ctx: c } of runs.values()) {
+      if (!c || c.ended || c.team !== team || c.where !== runner || c.stopWhy) continue;
+      if (c.kind === 'post-merge') { left += 1; continue; }
+      if (c.kind !== 'hand') continue;
+      c.stopWhy = why;
+      stopped += 1;
+      if (c.submitted && c.jobId) Promise.resolve().then(() => cancel(c.peer, c.jobId, c.wire)).catch(() => {});
+    }
+    for (const [key, me] of shadows) {
+      const [t, , kind] = JSON.parse(key);
+      if (t !== team || kind !== 'verify' || me.name !== runner || me.superseded || me.remote) continue;
+      me.superseded = true;
+      stopped += 1;
+      if (me.jobId) Promise.resolve().then(() => cancel(me.peer, me.jobId, me.wire)).catch(() => {});
+    }
+    return { stopped, left };
+  }
+
   async function run(opts) {
     const {
       peer, tree, kind = 'hand', scope = 'full', team = null, ticket = null, seat = null,
@@ -121,11 +169,14 @@ function createSuiteClient({
       id: opts.runId || randomUUID(), peer, box: box === true || boxDefOf(box) != null, boxDef: boxDefOf(box), wire: opts.wire === 'pull' ? 'pull' : 'push', where: opts.name || peer, route: opts.route || null, override: opts.override || null,
       tree: typeof tree === 'string' && tree ? path.resolve(tree) : null, kind, scope, named: Number.isInteger(opts.named) && opts.named > 0 ? opts.named : null, team, ticket, seat,
       jobId: null, attempt: 0, treeHash: null, sha: null, dirty: null, queuedAt: null, startedAt: null, env: null, started: false,
-      t0: now(), budgetMs, queueBudgetMs, runBudgetMs, buildBudgetMs, buildSince: null, timeoutMs, onSubmitted, onDetach, onState, shouldStop,
+      t0: now(), budgetMs, queueBudgetMs, runBudgetMs, buildBudgetMs, buildSince: null, timeoutMs, onSubmitted, onDetach, onState,
+      shouldStop: () => ctx.stopWhy != null || shouldStop(), stopWhy: null,
       failFast: typeof opts.repick === 'function', submitted: false, exclusive: opts.exclusive === true,
       shares: box && Array.isArray(shares) ? shares.map(({ share, version }) => ({ share, version })) : [],
       lostAfterMs: typeof opts.reroute === 'function' ? LOST_AFTER_MS : Infinity, cap: null, attempts: [], abandoned: null, ended: false,
+      pick: opts.pick && typeof opts.pick === 'object' ? opts.pick : null,
     };
+    runs.set(ctx.id, { ctx });
     let repick = typeof opts.repick === 'function' ? opts.repick : null;
     let reroute = typeof opts.reroute === 'function' ? opts.reroute : null;
     const progress = (line) => {
@@ -156,11 +207,12 @@ function createSuiteClient({
           if (ctx.jobId) await cancel(ctx.peer, ctx.jobId, ctx.wire);
           out = { unknown: e.refused ? 'runner refused the token' : `client error: ${e.message}`, thrown: true };
         }
+        if (ctx.stopWhy) return conclude(ctx, { unknown: ctx.stopWhy });
         if (repick && !ctx.submitted && REPICKABLE.test(out.unknown || '')) {
           const pick = repick;
           repick = null;
           ctx.failFast = false;
-          const next = await Promise.resolve().then(() => pick(ctx.where)).catch(() => null);
+          const next = await Promise.resolve().then(() => pick(ctx.where, ctx.id)).catch(() => null);
           if (next && next.peer) {
             progress(`runner ${ctx.where}: ${out.unknown}; submitting to ${next.name || next.peer}`);
             ctx.peer = next.peer;
@@ -175,7 +227,7 @@ function createSuiteClient({
           const pick = reroute;
           repick = null;
           reroute = null;
-          const next = pick ? await Promise.resolve().then(() => pick(ctx.where)).catch(() => null) : null;
+          const next = pick ? await Promise.resolve().then(() => pick(ctx.where, ctx.id)).catch(() => null) : null;
           if (!next || !next.peer || (next.name || next.peer) === ctx.where) return conclude(ctx, { unknown: 'runner unreachable', lost: true });
           const old = { runner: ctx.where, peer: ctx.peer, wire: ctx.wire, jobId: ctx.jobId };
           const row = { runner: old.runner, jobId: old.jobId, outcome: 'lost' };
@@ -297,6 +349,10 @@ function createSuiteClient({
     ctx.submitted = true;
     ctx.failFast = false;
     try { ctx.onSubmitted({ jobId, attempt }); } catch {}
+    if (ctx.stopWhy) {
+      await cancel(ctx.peer, jobId, ctx.wire);
+      return { unknown: ctx.stopWhy };
+    }
     if (sub.body.state === 'awaiting-pack') {
       const sent = await upload(ctx, snap, jobPath, sub.body.have || [], limits, progress);
       if (sent) {
@@ -417,6 +473,7 @@ function createSuiteClient({
       const wait = Math.min(pollWaitMs, left);
       askAbandoned(ctx, jobId);
       const r = await ask(ctx, (c) => c.suiteAsk('GET', `/api/suite/jobs?ids=${encodeURIComponent(jobId)}&wait=${wait}`, null, wait + POLL_SLACK_MS), progress, Infinity, ctx.lostAfterMs);
+      if (ctx.stopWhy) return { unknown: ctx.stopWhy };
       if (r.lost) return { lost: true };
       if (r.unreachable) {
         await cancel(ctx.peer, jobId, ctx.wire);
@@ -474,7 +531,9 @@ function createSuiteClient({
     return { unknown: `${job.reason} on runner` };
   }
 
-  function conclude(ctx, out) {
+  function conclude(ctx, given) {
+    const out = ctx.stopWhy ? { unknown: ctx.stopWhy } : given;
+    runs.delete(ctx.id);
     const job = out.job || null;
     const res = out.stdout != null ? {
       status: job.exit ? job.exit.code : null, signal: job.exit ? job.exit.signal : null,
@@ -494,6 +553,7 @@ function createSuiteClient({
       queueMs: job ? job.queueMs : null, setupMs: job ? job.setupMs : null, runMs: job ? job.runMs : null,
       env: ctx.env,
       ...(ctx.exclusive && job ? { exclusive: EXCLUSIVE_ANSWERS.includes(job.exclusive) ? job.exclusive : 'unsupported' } : {}),
+      ...(ctx.pick ? { pick: ctx.pick } : {}),
     };
     ctx.ended = true;
     const attempts = ctx.attempts.length
@@ -685,7 +745,7 @@ function createSuiteClient({
     return out;
   }
 
-  return { reachable, run, cancel, shadow, shadowSkip, tally, decided, decideTally };
+  return { reachable, run, cancel, shadow, shadowSkip, tally, decided, decideTally, claim, sentTo, stopOn };
 }
 
 const MEASURED = new Set(['pass', 'fail']);
@@ -829,12 +889,16 @@ function missingShare(info, asked) {
   return (Array.isArray(asked) ? asked : []).find((s) => !held.has(`${s.share}@${s.version}`)) || null;
 }
 
-function runnerLoad(info) {
+function runnerLoad(info, sent = 0) {
   const s = (info && info.slots) || {};
   const q = (info && info.queue) || {};
   const total = Number.isInteger(s.total) && s.total > 0 ? s.total : 1;
-  const inUse = Number.isInteger(s.inUse) && s.inUse >= 0 ? s.inUse : q.running ? 1 : 0;
-  return { total, inUse, free: total - inUse, queue: Array.isArray(q.queued) ? q.queued.length : 0 };
+  const used = Number.isInteger(s.inUse) && s.inUse >= 0 ? s.inUse : q.running ? 1 : 0;
+  const count = (n) => (Number.isInteger(n) && n > 0 ? n : 0);
+  const pending = count(info && info.pending) + count(sent);
+  const inUse = Math.max(used, Math.min(total, used + pending));
+  const queue = (Array.isArray(q.queued) ? q.queued.length : 0) + (used + pending - inUse);
+  return { total, inUse, free: total - inUse, queue, pending };
 }
 
 function boxReadyFor(info, box) {
@@ -880,17 +944,40 @@ function aloneNote(record) {
 function pickRunner(members, { box = false, shares = [], exclusive = false } = {}) {
   let best = null;
   const boxed = box === true || boxDefOf(box) != null;
+  const ranks = [];
   members.forEach((m, i) => {
-    if (!m || !m.live || !m.info) return;
+    if (!m) return;
+    const skip = (reason) => { ranks.push({ member: m.peer, skipped: reason }); };
+    if (!m.live) return skip('not connected');
+    if (!m.info) return skip(m.why === 'refused' ? 'refused' : 'no answer');
     const tier = boxed ? boxTier(m.info, box) : 0;
-    if (tier == null || (boxed && missingShare(m.info, shares))) return;
-    const load = runnerLoad(m.info);
+    if (tier == null || (boxed && missingShare(m.info, shares))) return skip('no box for this job');
+    const load = runnerLoad(m.info, m.sent);
     const rank = exclusive === true ? exclusiveRank(m.info, load) : 0;
+    ranks.push({ member: m.peer, load, tier, rank });
     const better = !best || rank < best.rank
       || (rank === best.rank && (tier < best.tier || (tier === best.tier && loadBeats(load, best.load))));
     if (better) best = { m, i, load, tier, rank };
   });
-  return best ? { member: best.m, index: best.i, load: best.load, chosen: true } : { member: members[0] || null, index: 0, load: null, chosen: false };
+  return best ? { member: best.m, index: best.i, load: best.load, chosen: true, ranks } : { member: members[0] || null, index: 0, load: null, chosen: false, ranks };
+}
+
+function pickRecord(pick) {
+  const skipped = pick.ranks.filter((r) => r.skipped).map((r) => ({ member: r.member, reason: r.skipped }));
+  return { chosen: pick.chosen ? pick.member.peer : null, ...(skipped.length ? { skipped } : {}) };
+}
+
+function pickLine(id, pick) {
+  const rows = pick.ranks.map((r) => (r.skipped ? `${r.member} skipped: ${r.skipped}`
+    : `${r.member} slots ${r.load.inUse}/${r.load.total}, pending ${r.load.pending}, queue ${r.load.queue}, box tier ${r.tier}, exclusive rank ${r.rank}`));
+  return `pool pick for job ${String(id || 'none').slice(0, 8)}: chosen ${pick.chosen ? pick.member.peer : 'none'}; ${rows.join('; ')}`;
+}
+
+function poolNote(record) {
+  const skipped = record && Array.isArray(record.skipped) ? record.skipped : [];
+  if (!skipped.length) return null;
+  const named = skipped.slice(0, 2).map((s) => `${s.member}: ${s.reason}`).join(', ');
+  return `(pool: skipped ${named}${skipped.length > 2 ? ` +${skipped.length - 2}` : ''})`;
 }
 
 function halvesAgree(a, b) {
@@ -1041,16 +1128,19 @@ function createChannelHost({
       onProgress: (line) => say({ progress: line }),
       ...(picked && picked.repick ? { repick: picked.repick, onRepick: moved } : {}),
       ...(picked && picked.reroute ? { reroute: picked.reroute, onReroute: moved } : {}),
+      ...(picked && picked.runId ? { runId: picked.runId } : {}),
+      ...(picked && picked.pick ? { pick: picked.pick } : {}),
     });
     finished = true;
-    if (out.unknown || !out.res) return say({ run: 'remote', runner: inflight.name, unknown: out.unknown || 'no result' });
+    const pooled = poolNote(picked && picked.pick);
+    if (out.unknown || !out.res) return say({ run: 'remote', runner: inflight.name, unknown: out.unknown || 'no result', ...(pooled ? { note: pooled } : {}) });
     const r = out.res;
     const note = await treeNote(tree, r.treeHash);
     const ran = (out.record && out.record.env) || {};
     return say({
       ...(box ? { box: { isolation: ran.isolation || null, imageId: (ran.box && ran.box.imageId) || null } } : {}),
       run: 'remote', runner: inflight.name, status: r.status, signal: r.signal, stdout: r.stdout, stderr: r.stderr,
-      error: null, unknown: null, treeHash: r.treeHash, note: [note, aloneNote(out.record)].filter(Boolean).join(' ') || note, ...(out.rerouted ? { rerouted: out.rerouted } : {}),
+      error: null, unknown: null, treeHash: r.treeHash, note: [note, aloneNote(out.record), pooled].filter(Boolean).join(' ') || note, ...(out.rerouted ? { rerouted: out.rerouted } : {}),
     });
   }
 
@@ -1071,4 +1161,4 @@ function createChannelHost({
   };
 }
 
-module.exports = { createSuiteClient, createChannelHost, route, lastTotals, localHalf, failingNames, agreement, boxVerdict, fallbackOf, FALLBACK_CODES, pickRunner, runnerLoad, aloneNote, HAND_QUEUE_MS, HAND_RUN_MS, handSlackMs, handExecSlackMs, HUNG_RE, BUILD_BUDGET_MS, LOST_AFTER_MS };
+module.exports = { createSuiteClient, createChannelHost, route, lastTotals, localHalf, failingNames, agreement, boxVerdict, fallbackOf, FALLBACK_CODES, pickRunner, runnerLoad, pickRecord, pickLine, poolNote, aloneNote, HAND_QUEUE_MS, HAND_RUN_MS, handSlackMs, handExecSlackMs, HUNG_RE, BUILD_BUDGET_MS, LOST_AFTER_MS };

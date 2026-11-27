@@ -20,7 +20,7 @@ const { trackedSessionIds: entrySessionIds } = require('./session-info');
 const { hostNotice } = require('./host-stamp');
 const { idleClearAfterMs, IDLE_CLEAR_MIN_MS } = require('./assistant-sleep');
 const { localHalf, failingNames } = require('./suite-client');
-const { boxVerdict, fallbackOf, FALLBACK_CODES, pickRunner, runnerLoad, aloneNote, BUILD_BUDGET_MS, HUNG_RE, HAND_QUEUE_MS } = require('./suite-client');
+const { boxVerdict, fallbackOf, FALLBACK_CODES, pickRunner, runnerLoad, pickRecord, pickLine, aloneNote, BUILD_BUDGET_MS, HUNG_RE, HAND_QUEUE_MS } = require('./suite-client');
 const {
   matchSeatRole, nameRole, defaultLeadSeat, ROLE_RE, RESERVED_ROLE_KEYS, STOCK_ROLE_DEFS,
   DEFAULT_ROLE_DISPATCH, TRUNK_HEAD, normalizeTestRoots, TEST_ROOTS_MAX, effectiveHandCap, DONE_VALUES, normalizeDone, NAME_RE: NODE_NAME_RE, TEST_RUNNER_HANDS, TEST_RUNNER_GATE, TEST_RUNNER_FALLBACK, TEST_RUNNER_WIRE_PUSH: WIRE_PUSH, TEST_RUNNER_POOL_MAX,
@@ -3261,7 +3261,7 @@ function createTicketMethods(deps, shared) {
       return { live, via: peer ? { peer: peer.id, wire: WIRE_PUSH, name: member.peer } : null };
     },
 
-    async _pickGateRunner(tr, box, exclude = []) {
+    async _pickPool(tr, box, exclude = [], { claim = true, id = null, record = true } = {}) {
       const members = this._runnerMembers(tr).filter((m) => !exclude.includes(m.peer));
       const client = typeof deps.getSuiteClient === 'function' ? deps.getSuiteClient() : null;
       if (!members.length || !client || typeof client.reachable !== 'function') return null;
@@ -3270,15 +3270,23 @@ function createTicketMethods(deps, shared) {
         const { live, via } = this._runnerVia(m);
         if (!live || !via) return { ...m, live: false, info: null };
         const r = await Promise.resolve().then(() => client.reachable(via.peer, via.wire, want)).catch(() => null);
-        return { ...m, live: true, info: r && r.ok ? r.info : null };
+        return { ...m, live: true, info: r && r.ok ? r.info : null, ...(r && !r.ok && /refused/.test(r.why || '') ? { why: 'refused' } : {}) };
       }));
-      const pick = pickRunner(rows, { box, shares: tr.shares || [], ...(tr.exclusive === true ? { exclusive: true } : {}) });
-      return pick.chosen ? { peer: pick.member.peer, wire: pick.member.wire } : null;
+      const counted = typeof client.sentTo === 'function' ? rows.map((m) => (m.info ? { ...m, sent: client.sentTo(m.peer, m.info) } : m)) : rows;
+      const pick = pickRunner(counted, { box, shares: tr.shares || [], ...(tr.exclusive === true ? { exclusive: true } : {}) });
+      const runId = pick.chosen && claim && typeof client.claim === 'function' ? client.claim(pick.member.peer) : null;
+      if (record) log.info('suite-client', pickLine(id || runId, pick));
+      return { chosen: pick.chosen ? { peer: pick.member.peer, wire: pick.member.wire } : null, runId, pick: pickRecord(pick) };
+    },
+
+    async _pickGateRunner(tr, box, exclude = [], opts = {}) {
+      const p = await this._pickPool(tr, box, exclude, opts);
+      return p && p.chosen ? { ...p.chosen, ...(p.runId ? { runId: p.runId } : {}), pick: p.pick } : null;
     },
 
     _runnerRepick(tr, box) {
-      return async (failed) => {
-        const next = (await this._pickGateRunner(tr, box, [failed])) || this._runnerMembers(tr)[0];
+      return async (failed, id = null) => {
+        const next = (await this._pickGateRunner(tr, box, [failed], { claim: false, id })) || this._runnerMembers(tr)[0];
         const { via } = this._runnerVia(next);
         return via;
       };
@@ -3297,8 +3305,8 @@ function createTicketMethods(deps, shared) {
     },
 
     _runnerReroute(tr, box) {
-      return async (lost) => {
-        const next = await this._pickGateRunner(tr, box, [lost]);
+      return async (lost, id = null) => {
+        const next = await this._pickGateRunner(tr, box, [lost], { claim: false, id });
         if (!next || next.peer === lost) return null;
         return this._runnerVia(next).via;
       };
@@ -3310,8 +3318,12 @@ function createTicketMethods(deps, shared) {
     },
 
     async _handRunners(tr, box = false) {
-      const chosen = this._runnerMembers(tr).length > 1 ? await this._pickGateRunner(tr, box) : null;
-      return { chosen: chosen ? chosen.peer : null, repick: chosen ? this._runnerRepick(tr, box) : null, reroute: this._runnerReroute(tr, box) };
+      const p = this._runnerMembers(tr).length > 1 ? await this._pickPool(tr, box) : null;
+      const chosen = p && p.chosen;
+      return {
+        chosen: chosen ? chosen.peer : null, repick: chosen ? this._runnerRepick(tr, box) : null, reroute: this._runnerReroute(tr, box),
+        ...(p && p.runId ? { runId: p.runId } : {}), ...(p ? { pick: p.pick } : {}),
+      };
     },
 
     _runnerInvalid(team) {
@@ -3417,12 +3429,21 @@ function createTicketMethods(deps, shared) {
     async _runnerPoolText(team, cur) {
       const want = this._runnerWant(team, cur);
       const probes = await this._runnerPoolLines(cur, want);
-      const lines = [`test runner of ${team.name}: ${probes.length} runners, hands ${cur.hands} (hand runs use ${cur.peer} only), gate ${cur.gate || 'off'}${cur.fallback === 'hold' ? ', fallback hold' : ''}${this._runnerLimitsText(cur)}`];
+      const lines = [`test runner of ${team.name}: ${probes.length} runners, hands ${cur.hands} (hand runs use the pool), gate ${cur.gate || 'off'}${cur.fallback === 'hold' ? ', fallback hold' : ''}${this._runnerLimitsText(cur)}`];
       for (const p of probes) lines.push(p.line);
       const seen = probes[0].seen;
       const tally = cur.box === true && seen.reachable === true && (want || !seen.box) ? this._runnerLabelTally(team, cur) : this._runnerTally(team, cur, cur.box === true ? seen.boxEnvKey : seen.envKey);
       if (tally) lines.push(tally.replace(/^; /, ''));
       return lines.join('\n');
+    },
+
+    _stopMemberRuns(team, name, next) {
+      const client = typeof deps.getSuiteClient === 'function' ? deps.getSuiteClient() : null;
+      const held = client && typeof client.stopOn === 'function'
+        ? client.stopOn({ team: team.name, runner: name, why: 'runner removed from the pool: resubmit' }) : { stopped: 0, left: 0 };
+      const stopped = held.stopped + this._cancelBoxRuns(team, 'superseded', next, name);
+      const left = held.left ? `; ${held.left} post-merge run${held.left === 1 ? '' : 's'} on it left to finish` : '';
+      return `; stopped ${stopped} job${stopped === 1 ? '' : 's'} bound to it${left}`;
     },
 
     async _handleRunnerPool(team, cur, op, name, reply) {
@@ -3448,7 +3469,7 @@ function createTicketMethods(deps, shared) {
           const [next, ...rest] = pool;
           const wire = next.wire || WIRE_PUSH;
           const m = deps.setTeamTestRunner(team.name, { peer: next.peer, wire, pool: rest.length ? rest : null });
-          reply(`test runner ${name} removed from ${team.name}; ${m.testRunner.peer} is now the first runner, wire ${wire}, hands ${m.testRunner.hands} — ${this._runnerMembers(m.testRunner).length} left`);
+          reply(`test runner ${name} removed from ${team.name}; ${m.testRunner.peer} is now the first runner, wire ${wire}, hands ${m.testRunner.hands} — ${this._runnerMembers(m.testRunner).length} left${this._stopMemberRuns(team, name, m)}`);
           return;
         }
         if (!pool.some((p) => p.peer === name)) {
@@ -3457,7 +3478,7 @@ function createTicketMethods(deps, shared) {
         }
         const rest = pool.filter((p) => p.peer !== name);
         const m = deps.setTeamTestRunner(team.name, { pool: rest.length ? rest : null });
-        reply(`test runner ${name} removed from ${team.name} — ${this._runnerMembers(m.testRunner).length} left`);
+        reply(`test runner ${name} removed from ${team.name} — ${this._runnerMembers(m.testRunner).length} left${this._stopMemberRuns(team, name, m)}`);
         return;
       }
       if (name === cur.peer) {
@@ -6874,7 +6895,8 @@ function createTicketMethods(deps, shared) {
         if (!client || typeof client.shadow !== 'function') throw new Error('no suite client on this node');
         const box = tr.box === true ? this._shadowBox(team) : false;
         const pooled = this._runnerMembers(tr).length > 1;
-        const chosen = pooled ? await this._pickGateRunner(tr, box) : null;
+        const picked = pooled ? await this._pickPool(tr, box) : null;
+        const chosen = picked && picked.chosen;
         const member = chosen || this._runnerMembers(tr)[0];
         let via;
         if (member.wire === 'pull') {
@@ -6895,6 +6917,7 @@ function createTicketMethods(deps, shared) {
           setup: tr.setup || null, env: tr.env || {}, route: 'gate:shadow', box, ...(tr.shares ? { shares: tr.shares } : {}), ...(tr.exclusive === true ? { exclusive: true } : {}),
           queueBudgetMs: TICKET_SUITE_LOCK_WAIT_MS + this._runnerQueueExtra(tr), budgetMs: TICKET_SUITE_TIMEOUT + this._runnerRunExtra(tr) + this._runnerQueueExtra(tr), ...this._runnerTimeout(tr),
           ...(pooled ? { pool: true } : {}),
+          ...(picked && picked.runId ? { runId: picked.runId } : {}), ...(picked ? { pick: picked.pick } : {}),
           ...(chosen ? { repick: this._runnerRepick(tr, box) } : {}),
           reroute: this._runnerReroute(tr, box),
         });
@@ -6920,7 +6943,8 @@ function createTicketMethods(deps, shared) {
       const def = this._shadowBox(team);
       if (def === true) return fall('no-box-definition', 'the team has no box definition');
       const pooled = this._runnerMembers(tr).length > 1;
-      const chosen = pooled ? await this._pickGateRunner(tr, def) : null;
+      const picked = pooled ? await this._pickPool(tr, def) : null;
+      const chosen = picked && picked.chosen;
       const member = chosen || this._runnerMembers(tr)[0];
       ret.wire = member.wire === 'pull' ? 'pull' : WIRE_PUSH;
       if (pooled) ret.runner = member.peer;
@@ -6954,7 +6978,7 @@ function createTicketMethods(deps, shared) {
       };
       const flightKey = kind === 'verify' ? `${team.root}\0${ticket.id}` : null;
       const flight = flightKey ? {
-        root: team.root, team: team.name, id: ticket.id, round: Number(ticket.reworkRound) || 0,
+        root: team.root, team: team.name, id: ticket.id, round: Number(ticket.reworkRound) || 0, runnerOf: () => ret.runner || member.peer,
         stop: (cause) => { if (stopCause) return; stopCause = cause; stopNow(); },
       } : null;
       if (flight) {
@@ -6968,6 +6992,7 @@ function createTicketMethods(deps, shared) {
           ...via, name: member.peer, tree: cwd, kind, team: team.name, ticket: String(ticket.id), scope: 'full',
           setup: tr.setup || null, env: tr.env || {}, route: 'gate:on', box: def, ...(tr.shares ? { shares: tr.shares } : {}), ...(tr.exclusive === true ? { exclusive: true } : {}),
           queueBudgetMs: BOX_DECIDE_QUEUE_MS, budgetMs: TICKET_SUITE_TIMEOUT + this._runnerRunExtra(tr), ...this._runnerTimeout(tr),
+          ...(picked && picked.runId ? { runId: picked.runId } : {}), ...(picked ? { pick: picked.pick } : {}),
           onJob: (j) => { if (j && j.jobId) jobId = j.jobId; },
           onSubmitted: (j) => { if (j && j.jobId) submittedId = j.jobId; if (stopCause) sendCancel(); },
           shouldStop: () => !!stopCause,
@@ -7666,13 +7691,14 @@ function createTicketMethods(deps, shared) {
       return ids.length;
     },
 
-    _cancelBoxRuns(team, cause = null, next = null) {
+    _cancelBoxRuns(team, cause = null, next = null, runner = null) {
       if (!team || !this._boxFlights || !this._boxFlights.size) return 0;
       let tickets = null;
       const reenter = [];
       let n = 0;
       for (const flight of [...this._boxFlights.values()]) {
         if (flight.root !== team.root || flight.team !== team.name) continue;
+        if (runner && (typeof flight.runnerOf !== 'function' || flight.runnerOf() !== runner)) continue;
         if (!tickets) { try { tickets = ticketsStore.load(team.root); } catch { return n; } }
         const current = verifyIsCurrent(tickets.find((t) => t && t.id === flight.id), flight.round);
         if (!cause && current) continue;
@@ -7817,7 +7843,7 @@ function createTicketMethods(deps, shared) {
       let runner = null;
       try {
         const def = this._shadowBox(team);
-        if (def !== true) runner = await this._pickGateRunner(tr, def);
+        if (def !== true) runner = await this._pickGateRunner(tr, def, [], { claim: false, record: false });
       } catch (e) {
         log.warn('ticket', `box retry readiness for ${team.name} failed: ${e && e.message ? e.message : e}`);
       } finally {

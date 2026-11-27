@@ -1336,6 +1336,7 @@ function createSuiteRunner({
       limits: { packMaxBytes: lim.packMaxBytes, chunkMax: lim.chunkMax, queueMax: lim.queueMax },
       queue: { running: active.size ? active.keys().next().value : null, queued: queue().map((j) => j.id) },
       slots: { total: slotTotal, inUse: onDrained || fenced || aloneActive() ? slotTotal : active.size },
+      pending: [...jobs.values()].filter((j) => j.state === 'awaiting-pack' || (j.state === 'build' && !active.has(j.id))).length,
       exclusive: exclusiveMode,
     };
   }

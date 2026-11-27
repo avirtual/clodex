@@ -568,6 +568,7 @@ function askHost() {
       return;
     }
     if (m.run !== 'remote' || m.unknown) {
+      if (typeof m.note === 'string' && m.note) headSuffix += ` ${m.note}`;
       emit(`[${LEAF}] ${TAG}result unknown — the suite did not complete on runner ${m.runner || '?'}: ${m.unknown || `unexpected reply ${JSON.stringify(m.run)}`}`, 1, UNKNOWN_DIGEST_MAX);
     }
     const via = m.rerouted && m.rerouted.from ? `(rerouted from ${m.rerouted.from} to ${m.rerouted.to})` : m.runner ? `(runner ${m.runner})` : null;

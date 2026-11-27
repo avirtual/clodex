@@ -186,9 +186,9 @@ test('t2362: runner rm drops a pool row, promotes the next on rm of the first ke
   });
   assert.deepStrictEqual(await f.verb('[agent:team runner rm runner-9]'), ['[agent:team] error: runner-9 is not a test runner of team']);
   assert.deepStrictEqual(await f.verb('[agent:team runner rm runner-1]'),
-    ['[agent:team] test runner runner-1 removed from team; laptop is now the first runner, wire pull, hands full — 2 left']);
+    ['[agent:team] test runner runner-1 removed from team; laptop is now the first runner, wire pull, hands full — 2 left; stopped 0 jobs bound to it']);
   assert.deepStrictEqual(disk(f.file).testRunner, { peer: 'laptop', hands: 'full', wire: 'pull', pool: [{ peer: 'runner-2', wire: 'push' }] });
-  assert.deepStrictEqual(await f.verb('[agent:team runner rm runner-2]'), ['[agent:team] test runner runner-2 removed from team — 1 left']);
+  assert.deepStrictEqual(await f.verb('[agent:team runner rm runner-2]'), ['[agent:team] test runner runner-2 removed from team — 1 left; stopped 0 jobs bound to it']);
   assert.deepStrictEqual(disk(f.file).testRunner, { peer: 'laptop', hands: 'full', wire: 'pull' });
   const before = fs.readFileSync(f.file, 'utf8');
   assert.deepStrictEqual(await f.verb('[agent:team runner rm laptop]'),
@@ -222,7 +222,7 @@ test('t2362: bare [agent:team runner] on a pool prints one line per member with 
     peers: [R1, R2], desk: ATTACHED, client,
   });
   assert.deepStrictEqual(await f.verb('[agent:team runner]'), [[
-    '[agent:team] test runner of team: 3 runners, hands full (hand runs use runner-1 only), gate on, run 21 min (default), queue 15 min hands, 20 min gate (default)',
+    '[agent:team] test runner of team: 3 runners, hands full (hand runs use the pool), gate on, run 21 min (default), queue 15 min hands, 20 min gate (default)',
     'runner-1, wire push — reachable, suite capability, queue 2, env box linux/arm64 node v22 key k, slots 1/2 in use',
     'laptop, wire pull — attached, queue 0, env box linux/arm64 node v22 key k, slots 0/1 in use',
     'runner-2, wire push — online with the suite capability, but its info route failed: status 0',

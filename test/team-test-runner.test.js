@@ -885,7 +885,7 @@ test('t2364: a pooled box:true team keeps the box-definition tally and shows eac
   require('../team-box').writeBox(path.dirname(f.file), LABEL_DEF);
   const member = (name) => `${name}, wire push — reachable, suite capability, queue 3, env box-1 linux/arm64 node v22.11.0 key 0123456789ab, box ready linux/arm64 image eeeeeeeeeeee key b0b0b0b0b0b0, slots 1/1 in use`;
   assert.deepStrictEqual(await f.verb('lead', '[agent:team runner]'), [[
-    '[agent:team] test runner of team: 2 runners, hands full (hand runs use runner-1 only), gate shadow, run 21 min (default), queue 15 min hands, 20 min gate (default)',
+    '[agent:team] test runner of team: 2 runners, hands full (hand runs use the pool), gate shadow, run 21 min (default), queue 15 min hands, 20 min gate (default)',
     member('runner-1'),
     member('runner-3'),
     'comparisons under box definition fa502f955d13: 2 runs, outcome agreed 2, same counts 0 (local darwin/arm64, runner linux/arm64 box)',
