@@ -6952,7 +6952,7 @@ function createTicketMethods(deps, shared) {
         }
         return await client.shadow({
           ...via, name: member.peer, tree: cwd, kind, team: team.name, ticket: String(ticket.id),
-          setup: tr.setup || null, env: phaseEnv(tr, kind), route: 'gate:shadow', box, ...(tr.shares ? { shares: tr.shares } : {}), ...(tr.exclusive === true ? { exclusive: true } : {}),
+          setup: tr.setup || null, env: phaseEnv(tr, kind), route: 'gate:shadow', shadow: true, box, ...(tr.shares ? { shares: tr.shares } : {}), ...(tr.exclusive === true ? { exclusive: true } : {}),
           queueBudgetMs: TICKET_SUITE_LOCK_WAIT_MS + this._runnerQueueExtra(tr), budgetMs: TICKET_SUITE_TIMEOUT + this._runnerRunExtra(tr) + this._runnerQueueExtra(tr), ...this._runnerTimeout(tr),
           ...(pooled ? { pool: true } : {}),
           ...(picked && picked.runId ? { runId: picked.runId } : {}), ...(picked ? { pick: picked.pick } : {}),

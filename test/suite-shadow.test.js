@@ -121,6 +121,17 @@ for (const [name, local, remote, want] of AGREEMENT_ROWS) {
   });
 }
 
+test('t2461: the job body of a shadow run carries shadow: true and that of a plain run does not', async () => {
+  const shadowConn = remoteConn();
+  const h = await shadowClient(shadowConn.conn).client.shadow(OPTS);
+  await turns();
+  h.local(localHalf({ code: 0, stdout: GREEN, stderr: '', durationMs: 70 }));
+  const plainConn = remoteConn();
+  await shadowClient(plainConn.conn).client.run(OPTS);
+  assert.deepStrictEqual([shadowConn.bodies.length, plainConn.bodies.length], [1, 1], 'ENTER: both jobs were submitted');
+  assert.deepStrictEqual([shadowConn.bodies[0].shadow, 'shadow' in plainConn.bodies[0]], [true, false]);
+});
+
 test('shadow: a runner that runs more tests than home writes outcomeAgree true and countsAgree false beside agree false', async () => {
   const { conn } = remoteConn({ stdout: 'TOTALS: 452 pass, 0 fail, 452 tests\n' });
   const f = shadowClient(conn);

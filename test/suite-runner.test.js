@@ -118,6 +118,40 @@ test('the queue runs post-merge, then verify, then hand, whatever the submit ord
   assert.deepStrictEqual(order, ['blocker', 'c-post', 'b-verify', 'a-hand']);
 });
 
+test('t2461: a shadow job waits behind every deciding and hand job whatever its kind, shadow jobs keep kind order, and the listing marks them', async (t) => {
+  const order = [];
+  let blocker = null;
+  const f = await fixture(t, {
+    onSpawn: (c) => {
+      order.push(c.job);
+      if (c.job === 'blocker') blocker = c.child;
+      else c.child.finish(0);
+    },
+  });
+  assert.strictEqual((await f.upload(f.body('blocker', 'hand'))).state, 'queued');
+  await waitState(f.runner, 'blocker', 'running');
+  for (const [id, kind, extra] of [['s-post', 'post-merge', { shadow: true }], ['a-hand', 'hand', {}], ['b-verify', 'verify', {}], ['s-verify', 'verify', { shadow: true }]]) {
+    assert.strictEqual((await f.runner.submit(f.body(id, kind, extra))).state, 'queued');
+  }
+  const waiting = (await f.runner.activity()).waiting.map((j) => [j.id, j.kind, j.shadow === true]);
+  assert.deepStrictEqual(waiting, [['b-verify', 'verify', false], ['a-hand', 'hand', false], ['s-post', 'post-merge', true], ['s-verify', 'verify', true]]);
+  blocker.finish(0);
+  for (const id of ['b-verify', 'a-hand', 's-post', 's-verify']) await waitState(f.runner, id, 'done');
+  assert.deepStrictEqual(order, ['blocker', 'b-verify', 'a-hand', 's-post', 's-verify']);
+});
+
+test('t2461: a submit whose shadow is not a boolean is refused', async (t) => {
+  const f = await fixture(t);
+  const res = await f.runner.submit(f.body('bad-shadow', 'verify', { shadow: 'yes' }));
+  assert.deepStrictEqual(res, { ok: false, status: 400, error: 'bad shadow' });
+});
+
+test('t2461: a submit carrying a field this runner does not know is accepted, so a client may send shadow to a runner older than it', async (t) => {
+  const f = await fixture(t);
+  const res = await f.runner.submit(f.body('future', 'verify', { notYetKnown: true }));
+  assert.strictEqual(res.state, 'awaiting-pack');
+});
+
 test('submit is idempotent on id and refuses the same id with another treeHash', async (t) => {
   const f = await fixture(t);
   const first = await f.runner.submit(f.body('j1'));
@@ -1793,6 +1827,24 @@ test('t2428: a later post-merge still sorts ahead of a queued exclusive hand job
   await f.spawned(['p-hand']);
   f.held.get('p-hand').finish(0);
   await waitState(f.runner, 'p-hand', 'done');
+});
+
+test('t2461: a later shadow post-merge sorts behind a queued exclusive hand job, so it does not start beside the running job', async (t) => {
+  const f = await holdingFixture(t, { runnerOver: { slots: 3 } });
+  await f.upload(f.body('p1'));
+  await f.spawned(['p1']);
+  await f.upload(f.body('p-alone', 'hand', ALONE));
+  await f.upload(f.body('s-post', 'post-merge', { shadow: true }));
+  await drain();
+  assert.deepStrictEqual([await slotsOf(f.runner), f.calls.map((c) => c.job)], [{ slots: { total: 3, inUse: 1 }, running: ['p1'], waiting: ['p-alone', 's-post'] }, ['p1']]);
+  f.held.get('p1').finish(0);
+  await f.spawned(['p-alone']);
+  await drain();
+  assert.deepStrictEqual(f.calls.map((c) => c.job), ['p1', 'p-alone']);
+  f.held.get('p-alone').finish(0);
+  await f.spawned(['s-post']);
+  f.held.get('s-post').finish(0);
+  await waitState(f.runner, 's-post', 'done');
 });
 
 test('t2428: a queue head blocked by the serial-native rule lets a later job start, but never an exclusive one beside a running job', async (t) => {
