@@ -218,7 +218,7 @@ for (const [label, dirs] of [
   test(`t2442: under node --test, a seed into ${label} throws naming the os seam and touches no file`, () => {
     assert.ok(process.env.NODE_TEST_CONTEXT, 'ENTER: this file runs under node --test');
     const calls = [];
-    const spyFs = new Proxy(fs, { get: (t, k) => (typeof t[k] === 'function' ? (...a) => { calls.push(k); return t[k](...a); } : t[k]) });
+    const spyFs = new Proxy({}, { get: (t, k) => () => { calls.push(k); throw new Error(`fs.${String(k)} reached`); } });
     assert.throws(() => preseedClaudeOnboarding({ fs: spyFs, path, ...dirs, cwd: '/tmp/p1' }),
       /refusing to write .*\.claude\.json under node --test; give createSessionManager an os whose homedir\(\) is a temp dir/);
     assert.deepStrictEqual(calls, []);
