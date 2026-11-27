@@ -513,7 +513,7 @@ test('version against an unreachable node prints the client line, then node: unr
   const lines = stdout.trim().split('\n');
   assert.strictEqual(lines.length, 2);
   assert.match(lines[0], /^clodexctl \d/);
-  assert.match(lines[1], /^node: unreachable \(.*ECONNREFUSED.*\)$/);
+  assert.match(lines[1], /^node: unreachable \(cannot reach the engine: .+\)$/);
 });
 
 test('version -o json against an unreachable node carries the client and the reason', async () => {
@@ -522,7 +522,7 @@ test('version -o json against an unreachable node carries the client and the rea
   const j = JSON.parse(stdout);
   assert.match(j.client, /^clodexctl \d/);
   assert.strictEqual(j.server, null);
-  assert.match(j.error, /ECONNREFUSED/);
+  assert.match(j.error, /^cannot reach the engine: /);
 });
 
 test('-V still prints the client version alone and opens no wire', async () => {
