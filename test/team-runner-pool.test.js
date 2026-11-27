@@ -1198,18 +1198,20 @@ const EXCLUSIVE_POOL = { testRunner: { ...POOL_OF_TWO.testRunner, exclusive: tru
 const MOVE_ROWS = [
   ['the other member idle', {}, false, () => IDLE_ONE(), true],
   ['the other member busy', {}, false, () => BUSY_WITH([]), false],
-  ['the other member idle with a job pending', {}, false, () => IDLE_ONE({ pending: 1 }), false],
+  ['the other member with a free slot and a job pending', {}, false, () => IDLE_ONE({ slots: { total: 2, inUse: 0 }, pending: 1 }), false],
   ['the other member idle but with no box ready (would build)', {}, true, () => IDLE_ONE({ box: { state: 'can-build', definitionHash: DEF.definitionHash } }), false],
+  ['an exclusive job, the other member honours exclusive but has no box ready (would build)', EXCLUSIVE_POOL, true, () => IDLE_ONE({ exclusive: 'honour', box: { state: 'can-build', definitionHash: DEF.definitionHash } }), false],
   ['the other member idle with the box ready', {}, true, () => IDLE_ONE(READY_BOX), true],
   ['an exclusive job, the other member ignores exclusive', EXCLUSIVE_POOL, false, () => IDLE_ONE({ exclusive: 'ignore' }), false],
+  ['an exclusive job, runner-1 too old to say, the other member ignores exclusive', EXCLUSIVE_POOL, false, () => IDLE_ONE({ exclusive: 'ignore' }), false, {}],
   ['an exclusive job, the other member honours exclusive', EXCLUSIVE_POOL, false, () => IDLE_ONE({ exclusive: 'honour' }), true],
 ];
 
-for (const [name, manifestExtra, boxed, other, moves] of MOVE_ROWS) {
+for (const [name, manifestExtra, boxed, other, moves, mine = { exclusive: 'honour' }] of MOVE_ROWS) {
   test(`t2440: a hand job queued behind a long job on runner-1, ${name}: ${moves ? 'moved at the first 60 s check' : 'not moved'}`, async () => {
     const r = moveRig({
       manifestExtra: Object.keys(manifestExtra).length ? manifestExtra : POOL_OF_TWO,
-      info: { p1: () => BUSY_WITH(['run-1'], { exclusive: 'honour', ...(boxed ? READY_BOX : {}) }), p2: other },
+      info: { p1: () => BUSY_WITH(['run-1'], { ...mine, ...(boxed ? READY_BOX : {}) }), p2: other },
       poll: { p1: QUEUED_ON_1, p2: boxed ? BOX_RAN_ON_2 : RAN_ON_2 },
     });
     const out = await r.client.run({ ...r.base, ...(boxed ? { box: DEF } : {}), requeue: r.requeue(boxed ? DEF : false) });
