@@ -200,6 +200,7 @@
 | `_pickGateRunner` | `_pickPool` reduced to the chosen member (with its run id and pick record), or null when none qualifies | none | _pickPool | unpinned |
 | `_runnerRepick` | The one-shot repick a gate submit hands the suite client: the best member other than the failed one, else the first member | none | _pickGateRunner, _runnerVia | unpinned |
 | `_runnerReroute` | The one-shot reroute a gate run hands the suite client for a runner lost after accept: the best member other than the lost one, else null (no fall back to the first member) | none | _pickGateRunner, _runnerVia | unpinned |
+| `_runnerMove` | The periodic re-pick a pooled hand, verify or shadow job hands the suite client while it waits queued: the pick (no claim, no pick line) when it names another member that is idle, ready for the box and, for an exclusive job, honouring exclusive with nothing running, else null | none | _pickPool, _runnerVia | team-runner-pool.test.js |
 | `_handBox` | The box a routed hand run asks for: `_shadowBox` under `box: true`, else false | none | _shadowBox | unpinned |
 | `_handRunners` | What a routed hand run gets from the pool, over every member, push or pull: the gate pick with the hand run's box (box readiness and shares, as a boxed gate pick) when pooled, the repick when it chose, and the reroute | none | _runnerMembers, _pickGateRunner, _runnerRepick, _runnerReroute | unpinned |
 | `_runnerPoolLines` | One line per runner member: name, wire, reach text and slots in use of total | none | _runnerReachFor, runnerLoad | unpinned |
