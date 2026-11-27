@@ -925,7 +925,13 @@ or run) or `run` (see **Run scope**). remote-wiring injects `offerFor`,
   carries `offers: { own }`; otherwise the key is absent. `own` is exactly
   `{scope:'discovery', boxes, open, kinds:['container'], facts:{os, arch, cpus,
   memMb, runtime}}`; `runtime` is `null` when no container runtime answers (or
-  the node has no sandbox manager), else `{platforms:[…]}`. Facts are probed
+  the node has no sandbox manager), else `{platforms:[…], cpus?, memMb?}`.
+  `cpus` and `memMb` at the top are the host's; the ones in `runtime` are what
+  the container runtime reports (`docker info` `.NCPU`, `.MemTotal`), absent
+  when it did not answer. On receipt `sanitizeWireOffers` keeps the runtime
+  pair only as bounded non-negative integers and drops any other runtime key or
+  value without refusing the entry; a node older than this refuses an entry
+  whose `runtime` carries them. Facts are probed
   when the entry is built, never stored; no host name, version or schedule
   times cross the wire.
 - **Dialers.** Every operator hello (not a suite-scoped one) whose `origin` is a
@@ -989,7 +995,12 @@ or run) or `run` (see **Run scope**). remote-wiring injects `offerFor`,
   machine" (`run`). Under `run` a line states the test runner's isolation in
   force, or why nothing runs yet (runner off, or waiting for phone access), and Apply on an enabled `run` offer
   first asks for confirmation listing every ticked peer. A read-only line shows the facts this machine
-  would announce. It saves through IPC `offer:set(record, confirm)`, which runs
+  would announce (`ownFactsLine`): with the runtime's figures known it reads
+  `darwin/arm64 · linux/arm64 boxes · 8 cores · 21 GB (host: 14 cores, 48 GB)`,
+  the parenthesis left out when the host's figures match; without them, host
+  cores and memory and the runtime platforms. The peers popover's
+  `peerOfferLine` and `clodex get offers` show the runtime's figures the same
+  way when a peer sends them. It saves through IPC `offer:set(record, confirm)`, which runs
   `sanitizeBoxOffer` and refuses an invalid record (the stored one is kept),
   refuses an enabled `run` record unless `confirm.peers` names exactly the record's peers
   (`runConfirmed`), and

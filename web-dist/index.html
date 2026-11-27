@@ -30990,7 +30990,6 @@ ${text}` : text;
       var PEER_KEYS = ["name"];
       var WIRE_KEYS = ["scope", "boxes", "open", "kinds", "facts"];
       var FACT_KEYS = ["os", "arch", "cpus", "memMb", "runtime"];
-      var RUNTIME_KEYS = ["platforms"];
       var KINDS = ["container", "native"];
       var PRODUCED_KINDS = ["container"];
       var TOKEN_RE = /^[a-z0-9_]{1,32}$/;
@@ -31092,6 +31091,13 @@ ${text}` : text;
       var tokenOrNull = (s) => typeof s === "string" && TOKEN_RE.test(s) ? s : null;
       var validInt = (n, max) => n === null || intOrNull(n, max) !== null;
       var validToken = (s) => s === null || tokenOrNull(s) !== null;
+      var boundedCount = (n, max) => Number.isInteger(n) && n >= 0 && n <= max;
+      function runtimeCapacity(raw) {
+        const out = {};
+        if (boundedCount(raw.cpus, MAX_CPUS)) out.cpus = raw.cpus;
+        if (boundedCount(raw.memMb, MAX_MEM_MB)) out.memMb = raw.memMb;
+        return out;
+      }
       function produceFacts(raw) {
         const f = isPlainObject(raw) ? raw : {};
         const platforms = isPlainObject(f.runtime) ? sanitizePlatforms(f.runtime.platforms) : [];
@@ -31100,7 +31106,7 @@ ${text}` : text;
           arch: tokenOrNull(f.arch),
           cpus: intOrNull(f.cpus, MAX_CPUS),
           memMb: intOrNull(f.memMb, MAX_MEM_MB),
-          runtime: platforms.length ? { platforms } : null
+          runtime: platforms.length ? { platforms, ...runtimeCapacity(f.runtime) } : null
         };
       }
       function runGrant(offer, peerName, now = /* @__PURE__ */ new Date()) {
@@ -31134,11 +31140,11 @@ ${text}` : text;
       }
       function sanitizeWireRuntime(raw) {
         if (raw === null) return null;
-        if (!isPlainObject(raw) || !onlyKeys(raw, RUNTIME_KEYS) || !Array.isArray(raw.platforms)) return void 0;
+        if (!isPlainObject(raw) || !Array.isArray(raw.platforms)) return void 0;
         const platforms = Array.from(raw.platforms);
         if (platforms.length === 0 || platforms.length > MAX_PLATFORMS) return void 0;
         if (!platforms.every((p) => typeof p === "string" && PLATFORM_RE.test(p))) return void 0;
-        return { platforms: [...new Set(platforms)] };
+        return { platforms: [...new Set(platforms)], ...runtimeCapacity(raw) };
       }
       function sanitizeWireFacts(raw) {
         if (!isPlainObject(raw) || !onlyKeys(raw, FACT_KEYS) || !FACT_KEYS.every((k) => k in raw)) return null;
@@ -31226,10 +31232,26 @@ ${text}` : text;
         const platforms = runtime && Array.isArray(runtime.platforms) ? runtime.platforms : [];
         return platforms.length ? `container runtime ${platforms.join(", ")}` : "container runtime: none found";
       }
+      var coresText = (cpus) => Number.isInteger(cpus) ? `${cpus} cores` : "? cores";
+      function sizeText(memMb) {
+        if (!Number.isInteger(memMb)) return "? memory";
+        return memMb < 1024 ? `${memMb} MB` : `${Math.round(memMb / 1024)} GB`;
+      }
+      function boxCapacityText(facts) {
+        const f = facts || {};
+        const r = f.runtime;
+        const platforms = r && Array.isArray(r.platforms) ? r.platforms : [];
+        if (!platforms.length || !Number.isInteger(r.cpus)) return null;
+        const box = `${coresText(r.cpus)} \xB7 ${sizeText(r.memMb)}`;
+        const host = `${coresText(f.cpus)}, ${sizeText(f.memMb)}`;
+        const same = coresText(r.cpus) === coresText(f.cpus) && sizeText(r.memMb) === sizeText(f.memMb);
+        return `${platforms.join(", ")} boxes \xB7 ${box}${same ? "" : ` (host: ${host})`}`;
+      }
       function ownFactsLine(facts) {
         const f = facts || {};
-        const cpus = Number.isInteger(f.cpus) ? `${f.cpus} cores` : "? cores";
-        return `${osArch(f)} \xB7 ${cpus} \xB7 ${memoryText(f.memMb)} \xB7 ${runtimeText(f.runtime)}`;
+        const capacity = boxCapacityText(f);
+        if (capacity) return `${osArch(f)} \xB7 ${capacity}`;
+        return `${osArch(f)} \xB7 ${coresText(f.cpus)} \xB7 ${memoryText(f.memMb)} \xB7 ${runtimeText(f.runtime)}`;
       }
       function peerOfferLine(rows, peerLabel) {
         if (!Array.isArray(rows) || typeof peerLabel !== "string" || !peerLabel) return null;
@@ -31237,7 +31259,8 @@ ${text}` : text;
         if (!row) return null;
         const { boxes, open, facts } = row.offer;
         const count = `${boxes} box${boxes === 1 ? "" : "es"}`;
-        const runtime = facts && facts.runtime && Array.isArray(facts.runtime.platforms) && facts.runtime.platforms.length ? `runtime ${facts.runtime.platforms.join(", ")}` : "no container runtime";
+        const capacity = boxCapacityText(facts);
+        const runtime = capacity || (facts && facts.runtime && Array.isArray(facts.runtime.platforms) && facts.runtime.platforms.length ? `runtime ${facts.runtime.platforms.join(", ")}` : "no container runtime");
         return `${count} \xB7 ${open ? "open now" : "closed now"} \xB7 ${osArch(facts)} \xB7 ${runtime}`;
       }
       function agoText(ms) {

@@ -106,11 +106,12 @@ function offerCells(source, peer, offer) {
   const o = offer || {};
   const f = o.facts || {};
   const platforms = f.runtime && Array.isArray(f.runtime.platforms) ? f.runtime.platforms : [];
+  const box = platforms.length && Number.isInteger(f.runtime.cpus) ? f.runtime : f;
   let memory = '';
-  if (Number.isInteger(f.memMb)) memory = f.memMb >= 1024 ? `${Math.round(f.memMb / 1024)}G` : `${f.memMb}M`;
+  if (Number.isInteger(box.memMb)) memory = box.memMb >= 1024 ? `${Math.round(box.memMb / 1024)}G` : `${box.memMb}M`;
   return [
     source, peer, o.boxes == null ? '' : String(o.boxes), o.open ? 'yes' : 'no',
-    `${f.os || '?'}/${f.arch || '?'}`, f.cpus == null ? '' : String(f.cpus), memory,
+    `${f.os || '?'}/${f.arch || '?'}`, box.cpus == null ? '' : String(box.cpus), memory,
     platforms.length ? platforms.join(',') : 'none',
   ];
 }

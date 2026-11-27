@@ -95,8 +95,19 @@ function parsePlatforms(text) {
   return out;
 }
 
+function parseCapacity(text) {
+  const m = /^\s*(\d+)\s+(\d+)\s*$/.exec(String(text || ''));
+  if (!m) return {};
+  const out = {};
+  const cpus = Number(m[1]);
+  const memMb = Math.round(Number(m[2]) / 1048576);
+  if (Number.isSafeInteger(cpus) && cpus > 0) out.cpus = cpus;
+  if (Number.isSafeInteger(memMb) && memMb > 0) out.memMb = memMb;
+  return out;
+}
+
 function createRuntimeProbe({
-  run, enabled = true, now = Date.now, ttlMs = RUNTIME_TTL_MS, timeoutMs = RUNTIME_TIMEOUT_MS,
+  run, info, enabled = true, now = Date.now, ttlMs = RUNTIME_TTL_MS, timeoutMs = RUNTIME_TIMEOUT_MS,
   setTimer = unrefTimer, clearTimer = clearTimeout,
 } = {}) {
   let value = null;
@@ -116,12 +127,15 @@ function createRuntimeProbe({
         resolve(v);
       };
       timer = setTimer(() => finish(null), timeoutMs);
+      const capacity = typeof info === 'function'
+        ? Promise.resolve().then(() => info(timeoutMs)).then(parseCapacity, () => ({}))
+        : Promise.resolve({});
       Promise.resolve()
         .then(() => run(timeoutMs))
-        .then((out) => {
+        .then((out) => capacity.then((cap) => {
           const platforms = parsePlatforms(out);
-          finish(platforms.length ? { platforms } : null);
-        }, () => finish(null));
+          finish(platforms.length ? { platforms, ...cap } : null);
+        }), () => finish(null));
     }).then((v) => {
       value = v;
       at = now();
@@ -156,6 +170,7 @@ module.exports = {
   createDialerLog,
   createRuntimeProbe,
   parsePlatforms,
+  parseCapacity,
   setNotifying,
   hostFacts,
 };

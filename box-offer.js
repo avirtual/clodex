@@ -17,7 +17,6 @@ const WINDOW_KEYS = ['days', 'from', 'to'];
 const PEER_KEYS = ['name'];
 const WIRE_KEYS = ['scope', 'boxes', 'open', 'kinds', 'facts'];
 const FACT_KEYS = ['os', 'arch', 'cpus', 'memMb', 'runtime'];
-const RUNTIME_KEYS = ['platforms'];
 const KINDS = ['container', 'native'];
 const PRODUCED_KINDS = ['container'];
 const TOKEN_RE = /^[a-z0-9_]{1,32}$/;
@@ -128,6 +127,14 @@ const intOrNull = (n, max) => (Number.isInteger(n) && n >= 1 && n <= max ? n : n
 const tokenOrNull = (s) => (typeof s === 'string' && TOKEN_RE.test(s) ? s : null);
 const validInt = (n, max) => n === null || intOrNull(n, max) !== null;
 const validToken = (s) => s === null || tokenOrNull(s) !== null;
+const boundedCount = (n, max) => Number.isInteger(n) && n >= 0 && n <= max;
+
+function runtimeCapacity(raw) {
+  const out = {};
+  if (boundedCount(raw.cpus, MAX_CPUS)) out.cpus = raw.cpus;
+  if (boundedCount(raw.memMb, MAX_MEM_MB)) out.memMb = raw.memMb;
+  return out;
+}
 
 function produceFacts(raw) {
   const f = isPlainObject(raw) ? raw : {};
@@ -137,7 +144,7 @@ function produceFacts(raw) {
     arch: tokenOrNull(f.arch),
     cpus: intOrNull(f.cpus, MAX_CPUS),
     memMb: intOrNull(f.memMb, MAX_MEM_MB),
-    runtime: platforms.length ? { platforms } : null,
+    runtime: platforms.length ? { platforms, ...runtimeCapacity(f.runtime) } : null,
   };
 }
 
@@ -177,11 +184,11 @@ function wireEntry(offer, facts, peerName, now, opts) {
 
 function sanitizeWireRuntime(raw) {
   if (raw === null) return null;
-  if (!isPlainObject(raw) || !onlyKeys(raw, RUNTIME_KEYS) || !Array.isArray(raw.platforms)) return undefined;
+  if (!isPlainObject(raw) || !Array.isArray(raw.platforms)) return undefined;
   const platforms = Array.from(raw.platforms);
   if (platforms.length === 0 || platforms.length > MAX_PLATFORMS) return undefined;
   if (!platforms.every((p) => typeof p === 'string' && PLATFORM_RE.test(p))) return undefined;
-  return { platforms: [...new Set(platforms)] };
+  return { platforms: [...new Set(platforms)], ...runtimeCapacity(raw) };
 }
 
 function sanitizeWireFacts(raw) {

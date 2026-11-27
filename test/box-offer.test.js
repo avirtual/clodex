@@ -138,6 +138,29 @@ const WIRE_REFUSALS = [
   ['runtime: true', { ...WIRE_OWN, facts: { ...WIRE_OWN.facts, runtime: true } }],
 ];
 
+test('sanitizeWireOffers keeps runtime cpus and memMb as bounded counts and drops anything else without refusing', () => {
+  const withRuntime = (runtime) => ({ ...WIRE_OWN, facts: { ...WIRE_OWN.facts, runtime } });
+  assert.deepStrictEqual(
+    sanitizeWireOffers({ own: withRuntime({ platforms: ['linux/amd64'], cpus: 8, memMb: 21094 }) }),
+    { own: withRuntime({ platforms: ['linux/amd64'], cpus: 8, memMb: 21094 }) },
+  );
+  assert.deepStrictEqual(
+    sanitizeWireOffers({ own: withRuntime({ platforms: ['linux/amd64'], cpus: -1, memMb: 1.5, gpu: 'x' }) }),
+    { own: withRuntime({ platforms: ['linux/amd64'] }) },
+  );
+  assert.deepStrictEqual(
+    sanitizeWireOffers({ own: withRuntime({ platforms: ['linux/amd64'], cpus: 4097, memMb: '20000' }) }),
+    { own: withRuntime({ platforms: ['linux/amd64'] }) },
+  );
+});
+
+test('offerEntry carries the runtime cpus and memMb the probe reported', () => {
+  const facts = { os: 'darwin', arch: 'arm64', cpus: 14, memMb: 49152, runtime: { platforms: ['linux/arm64'], cpus: 8, memMb: 21094, extra: 1 } };
+  assert.deepStrictEqual(offerEntry(ALWAYS, facts).facts, {
+    os: 'darwin', arch: 'arm64', cpus: 14, memMb: 49152, runtime: { platforms: ['linux/arm64'], cpus: 8, memMb: 21094 },
+  });
+});
+
 for (const [label, own] of WIRE_REFUSALS) {
   test(`sanitizeWireOffers refuses an own with ${label} whole`, () => {
     assert.strictEqual(sanitizeWireOffers({ own }), null);

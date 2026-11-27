@@ -15,7 +15,7 @@ const OWN = {
 };
 const HELLO_ROW = {
   route: 'r1', provenance: 'hello', name: 'murmur', at: 1,
-  offer: { scope: 'discovery', boxes: 4, open: false, kinds: ['container'], facts: { os: 'linux', arch: 'x64', cpus: 16, memMb: 65536, runtime: { platforms: ['linux/amd64'] } } },
+  offer: { scope: 'discovery', boxes: 4, open: false, kinds: ['container'], facts: { os: 'linux', arch: 'x64', cpus: 16, memMb: 65536, runtime: { platforms: ['linux/amd64'], cpus: 8, memMb: 21094 } } },
 };
 const ANNOUNCE_ROW = {
   route: 'r2', provenance: 'announce', name: 'laptop', at: 2,
@@ -69,7 +69,7 @@ test('get offers prints the own offer, a hello row and an announce row', async (
     assert.strictEqual(stdout, [
       'SOURCE    PEER    BOXES  OPEN  OS/ARCH       CPUS  MEMORY  RUNTIME',
       'self      -       2      yes   darwin/arm64  10    32G     linux/arm64',
-      'hello     murmur  4      no    linux/x64     16    64G     linux/amd64',
+      'hello     murmur  4      no    linux/x64     8     21G     linux/amd64',
       'announce  laptop  1      yes   win32/x64     8     512M    none',
       '',
     ].join('\n'));
