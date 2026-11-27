@@ -2340,7 +2340,7 @@ function createTicketMethods(deps, shared) {
         const mergedTip = await gitWorktree.revParse(team.root, `${merged.sha}^2`).catch(() => null);
         const branchTip = await gitWorktree.revParse(team.root, branch).catch(() => null);
         this._notifyMergeLanded(team, ticketId, {
-          branch, target, sha: merged.sha, rounds, summary: `${suite.summary}${this._suiteWhere(suite)}`, changelog, unioned: merged.unioned, closeOut, mergedTip, branchTip,
+          branch, target, sha: merged.sha, rounds, summary: `${suite.summary}${this._suiteWhere(suite)}`, changelog, unioned: merged.unioned, rehomed: merged.rehomed, rehomeFailed: merged.rehomeFailed, closeOut, mergedTip, branchTip,
           slow: slowPass ? suite.slow.filter((n) => !mergeSlowOwned.includes(n)) : null,
           slowOwned: slowPass ? mergeSlowOwned : null, late: this._suiteLateRed(suite),
         });
@@ -2381,7 +2381,7 @@ function createTicketMethods(deps, shared) {
       }
     },
 
-    _notifyMergeLanded(team, ticketId, { branch, target = null, sha, rounds, summary, changelog, unioned, closeOut = null, slow = null, slowOwned = null, mergedTip = null, branchTip = null, late = null }) {
+    _notifyMergeLanded(team, ticketId, { branch, target = null, sha, rounds, summary, changelog, unioned, rehomed = null, rehomeFailed = null, closeOut = null, slow = null, slowOwned = null, mergedTip = null, branchTip = null, late = null }) {
       try {
         const into = target || gitWorktree.mergeTargetForSync(team, this._loadTicket(team, ticketId));
         const collapse = (v, max) => String(v == null ? '' : v).replace(/\s+/g, ' ').trim().slice(0, max);
@@ -2415,7 +2415,7 @@ function createTicketMethods(deps, shared) {
               + `The loop could not close it out: ${wideLine(closeOutDetail(ticketId, (closeOut && closeOut.text) || 'it did not run'))}`;
         const quiet = closedOutOk && !closeOut.already
           && !(mergedTip && branchTip && mergedTip !== branchTip)
-          && !(slow && slow.length) && !(slowOwned && slowOwned.length) && !unioned && !stamp && !bypassed && !late
+          && !(slow && slow.length) && !(slowOwned && slowOwned.length) && !unioned && !rehomed && !rehomeFailed && !stamp && !bypassed && !late
           && measured && (changelog.touched === true || changelog.present === false);
         const body = quiet
           ? `[ticket ${ticketId} MERGED] ${branch} → ${into} as ${sha} — closed out (${closeOut.remote ? 'standing remote seat not retired' : 'seat retired'}, tree removed, branch deleted); ${rounds} review round(s); suite ${defuseSenderLines(oneLine(summary))}.`
@@ -2433,6 +2433,8 @@ function createTicketMethods(deps, shared) {
           ...(slowOwned && slowOwned.length ? [`slow gate tripped by tests this diff touched (load-only, 0 failing; merge kept): ${defuseSenderLines(wideLine(slowOwned.join('; ')))}`] : []),
           ...(slow && slow.length ? [`slow gate tripped by tests outside this diff: ${defuseSenderLines(wideLine(slow.join('; ')))}`] : []),
           ...(unioned ? [`${unioned} conflicted with a bullet another ticket merged first; the loop kept BOTH (the earlier one above this ticket's). Read ## Unreleased once before the next release.`] : []),
+          ...(rehomed ? [`${rehomed.file}: a release stamped the section this branch wrote into, so the loop moved its ${rehomed.lines} added line(s) under the current ## Unreleased, after the bullets already there.`] : []),
+          ...(rehomeFailed ? [`CHANGELOG.md: this branch's added line(s) are still under a release heading stamped after it was cut — the loop could not move them under ## Unreleased (${defuseSenderLines(oneLine(rehomeFailed))}). Move them by hand before the next release.`] : []),
           ...(stamp ? [`Verify suite was re-measured. First run: ${defuseSenderLines(oneLine(stamp.first)) || 'unrecorded'} (${defuseSenderLines(wideLine(stamp.firstFailing)) || 'no names recorded'}).`] : []),
           changelogLine,
           ...(closedOutOk || (closeOut && (closeOut.reopened || closeOut.tornDown)) ? [] : [`Nothing was torn down: the worktree, the branch and the seat are still there. [agent:task accept ${ticketId}] retires them when you are ready.`]),

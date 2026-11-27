@@ -515,8 +515,20 @@ path is the root `CHANGELOG.md` and both sides did nothing but insert lines
 (nothing deleted or rewritten, no `## ` heading added on either side), the loop
 keeps both — the trunk's bullet above the branch's — completes the merge commit and
 says so in the `[ticket MERGED]` notice, so you read `## Unreleased` once before
-a release. Any other conflict, in that file or any other, still escalates on the
+a release. Any other conflict except the release-stamp case below, in that file or any other, still escalates on the
 first try.
+
+**A branch cut before a release keeps its CHANGELOG line in Unreleased.** When
+the trunk stamped a release after the branch was cut (a `## ` heading the merge
+base lacks), the lines the branch added inside the base's `## Unreleased` would
+land under the released version. The loop keeps the trunk's text exactly and
+moves those lines under the current `## Unreleased`, after the bullets already
+there, in branch order, skipping a line already present there. On a conflict it
+resolves the merge that way; on a clean merge it amends the merge commit before
+the post-merge suite runs, so the notice's sha is the one on the trunk and one
+`revert -m 1` still undoes the whole merge. The notice names the file and the
+line count. A branch that also edited released text or added a heading still
+escalates on a conflict, with that reason.
 
 **A green merge closes the ticket out by itself.** Once the post-merge suite
 comes back green the loop runs the same teardown `[agent:task accept <id>]`

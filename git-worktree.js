@@ -706,6 +706,119 @@ async function currentBranch(cwd) {
   return { ok: true, branch: name, head: h.ok ? h.stdout.trim() : null, repo };
 }
 
+const UNRELEASED_RE = /^## +\[?Unreleased\]?/;
+
+function unreleasedBounds(lines) {
+  const h = lines.findIndex((l) => UNRELEASED_RE.test(l));
+  if (h < 0) return null;
+  const n = lines.findIndex((l, i) => i > h && /^## /.test(l));
+  return { h, n: n < 0 ? lines.length : n };
+}
+
+function headingsAdded(baseText, oursText) {
+  const had = new Set(baseText.split('\n').filter((l) => /^## /.test(l)));
+  return oursText.split('\n').filter((l) => /^## /.test(l) && !had.has(l));
+}
+
+function unreleasedInsertions(diffU0, baseText) {
+  const bounds = unreleasedBounds(baseText.split('\n'));
+  if (!bounds) return { ok: false, reason: 'the merge base has no `## Unreleased` section' };
+  const added = [];
+  let inHunk = false;
+  for (const l of diffU0.split('\n')) {
+    const m = /^@@ -(\d+)(?:,(\d+))? \+\d+(?:,\d+)? @@/.exec(l);
+    if (m) {
+      const at = Number(m[1]);
+      const removed = m[2] === undefined ? 1 : Number(m[2]);
+      if (removed !== 0) return { ok: false, reason: `deleted or rewrote ${removed} line(s) of CHANGELOG.md` };
+      if (at < bounds.h + 1 || at > bounds.n) return { ok: false, reason: 'added lines outside the merge base\'s `## Unreleased` section' };
+      inHunk = true;
+      continue;
+    }
+    if (!inHunk || !l.startsWith('+')) continue;
+    const line = l.slice(1);
+    if (/^## /.test(line)) return { ok: false, reason: 'added a `## ` heading' };
+    added.push(line);
+  }
+  return { ok: true, added: added.filter((l) => l.trim()) };
+}
+
+function placeUnderUnreleased(oursText, added) {
+  const lines = oursText.split('\n');
+  const b = unreleasedBounds(lines);
+  if (!b) return { ok: false, reason: 'master\'s CHANGELOG.md has no `## Unreleased` heading to move the lines under' };
+  const existing = lines.slice(b.h + 1, b.n);
+  const have = new Set(existing);
+  const fresh = added.filter((l) => !have.has(l));
+  if (!fresh.length) return { ok: true, text: oursText, count: 0 };
+  let s = 0;
+  let e = existing.length;
+  while (s < e && !existing[s].trim()) s++;
+  while (e > s && !existing[e - 1].trim()) e--;
+  const out = [...lines.slice(0, b.h + 1), '', ...existing.slice(s, e), ...fresh, '', ...lines.slice(b.n)];
+  return { ok: true, text: out.join('\n'), count: fresh.length };
+}
+
+async function showText(repo, spec) {
+  const r = await git(repo, ['show', spec], { maxBuffer: 32 * 1024 * 1024 });
+  return r.ok ? r.stdout : null;
+}
+
+async function blobInsertions(repo, baseBlob, theirsBlob, baseText) {
+  const d = await git(repo, ['diff', '--no-color', '--no-ext-diff', '--text', '-U0', baseBlob, theirsBlob]);
+  if (!d.ok) return { ok: false, reason: `could not diff the base against theirs: ${(d.stderr || '').trim() || `exit ${d.code}`}` };
+  return unreleasedInsertions(d.stdout || '', baseText);
+}
+
+async function rehomeAfterCleanMerge(repo, headBefore, sha) {
+  const touched = await git(repo, ['diff', '--name-only', headBefore, sha, '--', 'CHANGELOG.md']);
+  if (!touched.ok || !(touched.stdout || '').trim()) return null;
+  const mb = await git(repo, ['merge-base', headBefore, `${sha}^2`]);
+  const base = mb.ok ? mb.stdout.trim() : '';
+  if (!base) return null;
+  const [baseText, oursText, mergedText] = await Promise.all(
+    [base, headBefore, sha].map((ref) => showText(repo, `${ref}:CHANGELOG.md`)));
+  if (baseText == null || oursText == null || mergedText == null) return null;
+  if (!headingsAdded(baseText, oursText).length) return null;
+  const ins = await blobInsertions(repo, `${base}:CHANGELOG.md`, `${sha}^2:CHANGELOG.md`, baseText);
+  if (!ins.ok || !ins.added.length) return null;
+  const released = (t) => {
+    const L = t.split('\n');
+    const b = unreleasedBounds(L);
+    return b ? L.slice(b.n).join('\n') : t;
+  };
+  if (released(mergedText) === released(oursText)) return null;
+  const placed = placeUnderUnreleased(oursText, ins.added);
+  if (!placed.ok) return { sha, rehomeFailed: placed.reason };
+  if (placed.text === mergedText) return null;
+  fs.writeFileSync(path.join(repo, 'CHANGELOG.md'), placed.text);
+  const add = await git(repo, ['add', 'CHANGELOG.md']);
+  const ci = add.ok ? await git(repo, ['commit', '--amend', '--no-edit']) : add;
+  if (!ci.ok) {
+    await git(repo, ['checkout', 'HEAD', '--', 'CHANGELOG.md']);
+    return { sha, rehomeFailed: `amending the merge commit failed: ${(ci.stderr || ci.stdout || '').trim() || `exit ${ci.code}`}` };
+  }
+  const after = await git(repo, ['rev-parse', 'HEAD']);
+  const newSha = after.ok ? after.stdout.trim() : null;
+  if (!newSha) return { sha, rehomeFailed: 'HEAD could not be read after the amend' };
+  return placed.count ? { sha: newSha, rehomed: { file: 'CHANGELOG.md', lines: placed.count } } : { sha: newSha };
+}
+
+async function commitResolvedMerge(repo, messageFile, headBefore, no) {
+  const add = await git(repo, ['add', 'CHANGELOG.md']);
+  if (!add.ok) return no(`\`git add CHANGELOG.md\` failed: ${(add.stderr || add.stdout || '').trim() || `exit ${add.code}`}`);
+  const ci = await git(repo, ['commit', '--no-edit', '-F', String(messageFile)]);
+  if (!ci.ok) return no(`the merge commit failed: ${(ci.stderr || ci.stdout || '').trim() || `exit ${ci.code}`}`);
+  const after = await git(repo, ['rev-parse', 'HEAD']);
+  const sha = after.ok ? after.stdout.trim() : null;
+  if (!sha || sha === headBefore) return no('HEAD did not move after the union commit');
+  const second = await git(repo, ['rev-parse', `${sha}^2`]);
+  if (!second.ok) return no('the union commit has no second parent, so it is not a merge commit');
+  const mh = await git(repo, ['rev-parse', '--verify', '--quiet', 'MERGE_HEAD']);
+  if (mh.ok && mh.stdout.trim()) return no('MERGE_HEAD survived the union commit, so the merge is still in progress');
+  return { ok: true, sha, moved: true, headBefore };
+}
+
 async function unionChangelogConflict(repo, messageFile, headBefore) {
   const conflicted = await git(repo, ['diff', '--name-only', '--diff-filter=U']);
   if (!conflicted.ok) return { ok: false, reason: `could not list the conflicted paths: ${(conflicted.stderr || '').trim() || `exit ${conflicted.code}`}` };
@@ -721,6 +834,12 @@ async function unionChangelogConflict(repo, messageFile, headBefore) {
     const blob = s.ok ? s.stdout.trim() : '';
     if (!blob) return no(`CHANGELOG.md has no stage-${n} blob, so this is an add/delete conflict rather than an adjacent insert`);
     stages[n] = blob;
+  }
+  const baseText = await showText(repo, stages[1]);
+  const oursText = await showText(repo, stages[2]);
+  if (baseText == null || oursText == null) return no('could not read the base or ours stage of CHANGELOG.md');
+  if (headingsAdded(baseText, oursText).length) {
+    return rehomeChangelogConflict(repo, messageFile, headBefore, stages, baseText, oursText, no);
   }
   for (const [n, side] of [[2, 'ours'], [3, 'theirs']]) {
     const ns = await git(repo, ['diff', '--numstat', stages[1], stages[n]]);
@@ -758,18 +877,21 @@ async function unionChangelogConflict(repo, messageFile, headBefore) {
   } finally {
     for (const p of tmp) { try { fs.unlinkSync(p); } catch {} }
   }
-  const add = await git(repo, ['add', 'CHANGELOG.md']);
-  if (!add.ok) return no(`\`git add CHANGELOG.md\` failed: ${(add.stderr || add.stdout || '').trim() || `exit ${add.code}`}`);
-  const ci = await git(repo, ['commit', '--no-edit', '-F', String(messageFile)]);
-  if (!ci.ok) return no(`the merge commit failed: ${(ci.stderr || ci.stdout || '').trim() || `exit ${ci.code}`}`);
-  const after = await git(repo, ['rev-parse', 'HEAD']);
-  const sha = after.ok ? after.stdout.trim() : null;
-  if (!sha || sha === headBefore) return no('HEAD did not move after the union commit');
-  const second = await git(repo, ['rev-parse', `${sha}^2`]);
-  if (!second.ok) return no('the union commit has no second parent, so it is not a merge commit');
-  const mh = await git(repo, ['rev-parse', '--verify', '--quiet', 'MERGE_HEAD']);
-  if (mh.ok && mh.stdout.trim()) return no('MERGE_HEAD survived the union commit, so the merge is still in progress');
-  return { ok: true, sha, moved: true, headBefore, unioned: 'CHANGELOG.md' };
+  const done = await commitResolvedMerge(repo, messageFile, headBefore, no);
+  return done.ok ? { ...done, unioned: 'CHANGELOG.md' } : done;
+}
+
+async function rehomeChangelogConflict(repo, messageFile, headBefore, stages, baseText, oursText, no) {
+  const ins = await blobInsertions(repo, stages[1], stages[3], baseText);
+  if (!ins.ok) {
+    return no(`ours inserted a \`## \` heading (a release stamp) and theirs ${ins.reason}, so its CHANGELOG.md change is not only lines added inside the merge base's \`## Unreleased\` and cannot be moved under the current one`);
+  }
+  const placed = placeUnderUnreleased(oursText, ins.added);
+  if (!placed.ok) return no(placed.reason);
+  fs.writeFileSync(path.join(repo, 'CHANGELOG.md'), placed.text);
+  const done = await commitResolvedMerge(repo, messageFile, headBefore, no);
+  if (!done.ok || !placed.count) return done;
+  return { ...done, rehomed: { file: 'CHANGELOG.md', lines: placed.count } };
 }
 
 // Merge `branch` into whatever the checkout at `cwd` has checked out, always
@@ -825,10 +947,14 @@ async function mergeNoFf(cwd, branch, messageFile) {
     };
   }
   const after = await git(repo, ['rev-parse', 'HEAD']);
-  const sha = after.ok ? after.stdout.trim() : null;
+  const merged = after.ok ? after.stdout.trim() : null;
+  const moved = !!(merged && headBefore && merged !== headBefore);
+  const re = moved ? await rehomeAfterCleanMerge(repo, headBefore, merged).catch(() => null) : null;
   return {
-    ok: true, sha, headBefore, moved: !!(sha && headBefore && sha !== headBefore),
+    ok: true, sha: re ? re.sha : merged, headBefore, moved,
     output: `${r.stdout || ''}${r.stderr || ''}`.trim(),
+    ...(re && re.rehomed ? { rehomed: re.rehomed } : {}),
+    ...(re && re.rehomeFailed ? { rehomeFailed: re.rehomeFailed } : {}),
   };
 }
 
