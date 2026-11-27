@@ -906,7 +906,7 @@ async function patchTestjobs({ client, ctx, printer, flags }) {
   if (flags.slots == null || flags.slots === true) throw new CliError(EXIT.USAGE, 'patch testjobs needs --slots N');
   const raw = String(flags.slots);
   if (!/^\d+$/.test(raw)) throw new CliError(EXIT.USAGE, `--slots must be a whole number, not "${raw}"`);
-  await R.requireResource(client, 'testjobs', 'post', R.ctxLabel(ctx, flags), 'slots');
+  await R.requireResource(client, 'testjobs/slots', 'post', R.ctxLabel(ctx, flags));
   const res = await client.post('/api/testjobs/slots', 'patch testjobs', { slots: Number(raw) });
   if (flags.json) return printer.json(res);
   const running = res.running || 0;

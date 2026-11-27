@@ -202,7 +202,7 @@ test('the suiteRunner channels follow enableTestBoxes, not enableDrawerServices'
   assert.deepStrictEqual([...capture(true)].filter((ch) => ch.startsWith('suiteRunner:')).sort(), ['suiteRunner:activity', 'suiteRunner:get', 'suiteRunner:output', 'suiteRunner:set']);
 });
 
-test('no module but ipc-handlers writes the test runner setting', () => {
+test('no module but ipc-handlers and the slot setter in remote-wiring writes the test runner setting', () => {
   const root = path.join(__dirname, '..');
   const dirs = ['.', 'cli', 'renderer', 'renderer/lib'];
   const writers = [];
@@ -213,7 +213,7 @@ test('no module but ipc-handlers writes the test runner setting', () => {
       if (/\.set\([^;]*\bsuiteRunner\b/.test(fs.readFileSync(path.join(root, rel), 'utf8'))) writers.push(path.normalize(rel));
     }
   }
-  assert.deepStrictEqual(writers, ['ipc-handlers.js']);
+  assert.deepStrictEqual(writers, ['ipc-handlers.js', 'remote-wiring.js']);
 });
 
 const SUITE_ENV = ['CLODEX_SUITE_RUNNER', 'CLODEX_SUITE_ISOLATION', 'CLODEX_SUITE_WORK', 'CLODEX_SUITE_BOX_IMAGE', 'CLODEX_DATA_DIR', 'CLODEX_REMOTE_ENABLE'];

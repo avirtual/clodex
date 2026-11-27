@@ -1273,7 +1273,7 @@ test('t2417: patch testjobs runs against this node\'s own engine and is refused,
       seen.push(`${req.method} ${req.url} ${raw}`);
       res.writeHead(200, { 'Content-Type': 'application/json' });
       if (req.url === '/api/resources') {
-        return res.end(JSON.stringify({ ok: true, version: 7, resources: [{ name: 'testjobs', singular: 'testjobs', scope: 'node', verbs: ['list'], subresources: { slots: ['post'] } }] }));
+        return res.end(JSON.stringify({ ok: true, version: 7, resources: [{ name: 'testjobs/slots', singular: 'testjobs/slots', scope: 'node', verbs: ['post'] }] }));
       }
       res.end(JSON.stringify({ ok: true, slots: 1, applied: 'now', running: 0 }));
     });

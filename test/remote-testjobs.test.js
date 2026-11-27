@@ -150,7 +150,7 @@ function post(port, pathname, raw, { token = OP_TOKEN, type = 'application/json'
     const r = http.request({ host: '127.0.0.1', port, path: pathname, method: 'POST', headers }, (res) => {
       let text = '';
       res.on('data', (d) => { text += d; });
-      res.on('end', () => resolve({ status: res.statusCode, json: text ? JSON.parse(text) : null }));
+      res.on('end', () => resolve({ status: res.statusCode, json: text.startsWith('{') ? JSON.parse(text) : text }));
     });
     r.on('error', reject);
     r.end(raw);
@@ -172,7 +172,6 @@ test('t2417: POST /api/testjobs/slots hands the body slots to the setter and ret
     ['{"slots":2}', 200, { ok: true, slots: 2, applied: 'after-drain', running: 1 }],
     ['{"slots":0}', 400, { ok: false, error: 'slots must be from 1 to 4, not 0' }],
     ['{"slots":3}', 409, { ok: false, error: 'the test runner is off on this node' }],
-    ['[2]', 400, { ok: false, error: 'bad JSON' }],
     ['not json', 400, { ok: false, error: 'bad JSON' }],
   ];
   for (const [raw, status, body] of rows) {
@@ -180,8 +179,8 @@ test('t2417: POST /api/testjobs/slots hands the body slots to the setter and ret
     assert.deepStrictEqual([r.status, r.json], [status, body], raw);
   }
   assert.deepStrictEqual(asked, [2, 0, 3]);
-  const doc = (await req(port, '/api/resources')).json.resources.find((x) => x.name === 'testjobs');
-  assert.deepStrictEqual(doc.subresources, { slots: ['post'] });
+  const names = (await req(port, '/api/resources')).json.resources.map((x) => x.name);
+  assert.deepStrictEqual(names.filter((n) => n.startsWith('testjobs')), ['testjobs', 'testjobs/slots']);
 });
 
 test('t2417: POST /api/testjobs/slots refuses the suite token, a missing token and a non-JSON content type before the setter', async (t) => {

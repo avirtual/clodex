@@ -8,9 +8,9 @@ const { mkTmpRoot } = require('../../test/lib/tmp-roots');
 
 const TOKEN = 'sekret';
 const NO_CTX_ROOT = mkTmpRoot('testjobs-slots-noctx-');
-const TESTJOBS_ROW = { name: 'testjobs', singular: 'testjobs', scope: 'node', verbs: ['list'], subresources: { output: ['get'], slots: ['post'] } };
+const SLOTS_ROW = { name: 'testjobs/slots', singular: 'testjobs/slots', scope: 'node', verbs: ['post'] };
 
-function node(answer, { row = TESTJOBS_ROW } = {}) {
+function node(answer, { rows = [SLOTS_ROW] } = {}) {
   const seen = [];
   const server = http.createServer((req, res) => {
     let raw = '';
@@ -21,7 +21,7 @@ function node(answer, { row = TESTJOBS_ROW } = {}) {
         res.writeHead(status, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify(obj));
       };
-      if (req.url === '/api/resources') return send(200, { ok: true, version: 7, resources: [row] });
+      if (req.url === '/api/resources') return send(200, { ok: true, version: 7, resources: rows });
       if (req.url === '/api/peer/hello') return send(200, { ok: true, host: 'runner', version: '1.0.0' });
       if (req.method === 'POST' && req.url === '/api/testjobs/slots') return send(answer.status, answer.body);
       return send(404, { ok: false, error: 'not found' });
@@ -91,11 +91,11 @@ test('patch testjobs refuses a missing or non-numeric --slots before the wire', 
 });
 
 test('a node that does not serve testjobs/slots is told to upgrade, and nothing is posted', async () => {
-  const row = { ...TESTJOBS_ROW, subresources: { output: ['get'] } };
+  const rows = [{ name: 'testjobs', singular: 'testjobs', scope: 'node', verbs: ['list'] }];
   await withNode({ status: 200, body: { ok: true } }, async (port, seen) => {
     const { code, stderr } = await cli(['patch', 'testjobs', '--slots', '1'], port);
     assert.notStrictEqual(code, 0);
     assert.match(stderr, /does not serve testjobs\/slots post/);
     assert.deepStrictEqual(seen.filter(([m]) => m === 'POST'), []);
-  }, { row });
+  }, { rows });
 });

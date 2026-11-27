@@ -86,7 +86,8 @@ const RESOURCES = [
   { name: 'catalogs', singular: 'catalogs', scope: 'node', verbs: ['get'] },
   { name: 'node/logs', singular: 'node/logs', scope: 'node', verbs: ['get'] },
   { name: 'offers', singular: 'offers', scope: 'node', verbs: ['list'] },
-  { name: 'testjobs', singular: 'testjobs', scope: 'node', verbs: ['list'], subresources: { output: ['get'], slots: ['post'] } },
+  { name: 'testjobs', singular: 'testjobs', scope: 'node', verbs: ['list'], subresources: { output: ['get'] } },
+  { name: 'testjobs/slots', singular: 'testjobs/slots', scope: 'node', verbs: ['post'] },
 ];
 
 const RESOURCES_VERSION = 7;
@@ -104,10 +105,11 @@ const RESOURCE_CALLBACK = {
   catalogs: '_getCatalogs',
   offers: '_listOffers',
   testjobs: '_listTestjobs',
+  'testjobs/slots': '_setTestjobSlots',
 };
 
 const SUBRESOURCE_CALLBACK = {
-  testjobs: { output: '_readTestjobOutput', slots: '_setTestjobSlots' },
+  testjobs: { output: '_readTestjobOutput' },
   sessions: {
     attach: '_getAttachInfo',
     control: '_sendInput',

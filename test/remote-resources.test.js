@@ -277,6 +277,7 @@ function subresourceFixture() {
         return name === 'ghost' ? { ok: false, error: 'Session not found' } : TRANSCRIPT_OUT;
       },
       readTestjobOutput: (id) => ({ ok: true, id, text: '' }),
+      setTestjobSlots: (slots) => ({ ok: true, slots, applied: 'now', running: 0 }),
       getAttachInfo: (name) => {
         calls.push({ route: 'attach', name });
         return name === 'ghost' ? { ok: false } : { ok: true, scrollback: Buffer.from('hi'), cols: 100, rows: 30 };
@@ -383,7 +384,8 @@ const SUB_WALK = {
   output: { get: { method: 'GET' } },
 };
 
-const VERB_WALK = { list: 'GET', get: 'GET', delete: 'DELETE' };
+const VERB_WALK = { list: 'GET', get: 'GET', delete: 'DELETE', post: 'POST' };
+const VERB_BODY = { post: JSON.stringify({ slots: 1 }) };
 
 test('RESOURCES: every (resource, verb) answers on a fully-injected node, and every name is a literal path in remote.js', async () => {
   const seen = [];
@@ -403,7 +405,7 @@ test('RESOURCES: every (resource, verb) answers on a fully-injected node, and ev
         const p = single ? `/api/${r.name}/${WALK_ID[r.name]}` : `/api/${r.name}${WALK_QUERY[r.name] || ''}`;
         const method = VERB_WALK[verb];
         assert.ok(method, `no walk method seeded for the ${verb} verb — the walk cannot exercise it`);
-        const res = await req(port, p, { method });
+        const res = await req(port, p, VERB_BODY[verb] ? { method, body: VERB_BODY[verb], headers: { 'content-type': 'application/json' } } : { method });
         assert.strictEqual(res.status, 200, `${r.name}.${verb} → ${method} ${p} answered ${res.status}: ${res.body}`);
         seen.push(`${r.name}.${verb}`);
       }
@@ -438,10 +440,10 @@ test('RESOURCES: every (resource, verb) answers on a fully-injected node, and ev
     'peers.list', 'peers.get', 'teams.list', 'teams.get', 'tickets.list', 'tickets.get',
     'sandboxes.list', 'sandboxes.get', 'agents.list', 'agents.get',
     'docs.list', 'docs.get', 'worktrees.list', 'catalogs.get',
-    'node/logs.get', 'offers.list', 'testjobs.list', 'testjobs/output.get',
+    'node/logs.get', 'offers.list', 'testjobs.list', 'testjobs/output.get', 'testjobs/slots.post',
   ], 'the walk must visit every shipped row — an empty or shortened walk passes vacuously');
-  assert.strictEqual(seen.length, 43, 'the walk entered 20 resource verbs, the sessions delete, the 21 session subresource verbs and testjobs output');
-  assert.strictEqual(RESOURCES.length, 13, 'the walk covered fewer than the 13 shipped resources');
+  assert.strictEqual(seen.length, 44, 'the walk entered 21 resource verbs, the sessions delete, the 21 session subresource verbs and testjobs output');
+  assert.strictEqual(RESOURCES.length, 14, 'the walk covered fewer than the 14 shipped resources');
 });
 
 test('GET /api/sessions/:name/transcript: the status and body the deleted /api/transcript/ served, limit and since threaded', async () => {
