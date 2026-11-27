@@ -888,19 +888,19 @@ function remoteHalf(out) {
 }
 
 const FALLBACK_CODES = Object.freeze({
-  'runner-unreachable': Object.freeze({ reason: 'runner unreachable', class: 'transient' }),
-  'runner-restart': Object.freeze({ reason: 'runner restart', class: 'transient' }),
-  'no-box-definition': Object.freeze({ reason: 'no box definition', class: 'deterministic' }),
-  'definition-mismatch': Object.freeze({ reason: 'definition mismatch', class: 'deterministic' }),
-  'tree-mismatch': Object.freeze({ reason: 'tree mismatch', class: 'deterministic' }),
-  'no-share': Object.freeze({ reason: 'no share', class: 'deterministic' }),
-  'no-totals': Object.freeze({ reason: 'no totals', class: 'deterministic' }),
-  'queue-budget': Object.freeze({ reason: 'queue budget', class: 'budget' }),
-  'run-budget': Object.freeze({ reason: 'run budget', class: 'budget' }),
-  'box-build-budget': Object.freeze({ reason: 'box build', class: 'budget' }),
-  'box-build-failed': Object.freeze({ reason: 'box build', class: 'deterministic' }),
-  'box-build-interrupted': Object.freeze({ reason: 'box build', class: 'transient' }),
-  'outcome-unknown': Object.freeze({ reason: 'outcome unknown', class: 'unknown' }),
+  'runner-unreachable': Object.freeze({ reason: 'runner unreachable', class: 'transient', retry: true }),
+  'runner-restart': Object.freeze({ reason: 'runner restart', class: 'transient', retry: true }),
+  'no-box-definition': Object.freeze({ reason: 'no box definition', class: 'deterministic', retry: false }),
+  'definition-mismatch': Object.freeze({ reason: 'definition mismatch', class: 'deterministic', retry: false }),
+  'tree-mismatch': Object.freeze({ reason: 'tree mismatch', class: 'deterministic', retry: false }),
+  'no-share': Object.freeze({ reason: 'no share', class: 'deterministic', retry: false }),
+  'no-totals': Object.freeze({ reason: 'no totals', class: 'deterministic', retry: false }),
+  'queue-budget': Object.freeze({ reason: 'queue budget', class: 'budget', retry: true }),
+  'run-budget': Object.freeze({ reason: 'run budget', class: 'budget', retry: false }),
+  'box-build-budget': Object.freeze({ reason: 'box build', class: 'budget', retry: false }),
+  'box-build-failed': Object.freeze({ reason: 'box build', class: 'deterministic', retry: false }),
+  'box-build-interrupted': Object.freeze({ reason: 'box build', class: 'transient', retry: true }),
+  'outcome-unknown': Object.freeze({ reason: 'outcome unknown', class: 'unknown', retry: false }),
 });
 
 function fallbackOf(code) {
