@@ -5,3 +5,6 @@ The runner's setup phase (tree materialize plus the team's setup command, killed
 
 ## handExecSlackMs
 The exec ceiling counts from spawn, before the client's own start, so it sits 2 min past the client's slack.
+
+## BOX_TIER
+`probing` (a runner whose named box probe has not finished) ranks with `can-build`, the worst tier a pick accepts; a 5.208 source has no `probing` row and skips that member as `no box for this job`, which is how it treated the timeout the answer replaces.

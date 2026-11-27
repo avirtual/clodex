@@ -85,3 +85,12 @@ With `box` null, or a `labelsOnly` box and no named want, `info.box` is null and
 
 ## MAX_SLOTS
 A runner's `slots` is written by the Preferences Apply (`suiteRunner:set`) and by `setSuiteRunnerSlots` in remote-wiring.js (`POST /api/testjobs/slots`, `clodexctl patch testjobs --slots N`), which validates against this constant. Either write applies through `applySuiteRunner`: at once on an idle runner, else after the running jobs drain.
+
+## NAMED_BOX_WAIT_MS
+A source asks `info` with the peer client's 5 s request timeout, and a named probe makes up to three Docker calls of `PROBE_MS` (5 s) in sequence; 2.5 s leaves half the source's timeout for the wire and `ensureIdentity`. Past it `info` answers `probing` and the probe keeps filling `namedBoxes`.
+
+## NAMED_BOX_TTL_MS
+Every box change the runner makes itself (a build ending, an image it prunes) drops its entry through `forgetBox`, and disabling or re-enabling the runner builds a new `createSuiteRunner` with an empty map, so the TTL only bounds changes made outside the runner (a manual `docker rmi`); 30 s matches the unnamed probe's `PROBE_TTL_MS`. A stale `ready` costs nothing worse than a refused submit, because `submit` and `buildBox` probe through `boxState`, uncached.
+
+## NAMED_BOX_MAX
+`namedBoxes` is keyed by definition hash and rev and evicts in insertion order; the bound caps it against a source that asks for many hashes.
