@@ -480,6 +480,39 @@ const selected = named || (scope === 'own' ? selectSet(measure, hostTestRoots(pr
 const TAG = named ? `named: ${named.files.length} file${named.files.length === 1 ? '' : 's'}: `
   : scope === 'own' ? 'own: ' : '';
 
+function nothingSelected() {
+  const at = new Date().toISOString();
+  const id = require('crypto').randomUUID();
+  const ledger = path.join(HOME_DIR, 'logs', 'suite-runs.jsonl');
+  const rows = [{
+    id,
+    phase: 'start',
+    kind: 'hand',
+    scope: 'own',
+    named: 0,
+    ticket: null,
+    seat: process.env.CLODEX_SEAT || null,
+    tree: measure,
+    sha: gitRead(measure, ['rev-parse', 'HEAD']) || null,
+    dirty: gitRead(measure, ['status', '--porcelain', '--untracked-files=no']) !== '',
+    pid: process.pid,
+    where: 'none',
+    route: null,
+    override: null,
+    queuedAt: at,
+    startedAt: at,
+  }, {
+    id, phase: 'end', outcome: 'pass', pass: 0, fail: 0, tests: 0, endedAt: at, durationMs: 0,
+  }];
+  try {
+    fs.mkdirSync(path.dirname(ledger), { recursive: true });
+    fs.appendFileSync(ledger, rows.map((r) => `${JSON.stringify(r)}\n`).join(''));
+  } catch {}
+  emit(`[${LEAF}] own: 0 test files selected for this branch (nothing run)`, 0);
+}
+
+if (!named && selected && !selected.files.length) nothingSelected();
+
 const headLine = `${gitRead(measure, ['rev-parse', '--abbrev-ref', 'HEAD'])} ${gitRead(measure, ['log', '-1', '--format=%h %s'])}`.trim();
 const headBefore = gitRead(measure, ['rev-parse', 'HEAD']);
 let startedIso = nowIso();

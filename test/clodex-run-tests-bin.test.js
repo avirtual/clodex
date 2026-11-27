@@ -1643,3 +1643,117 @@ test('testPool: this repo\'s pool under explicit default roots equals its pool u
   assert.ok(pool.includes('test/clodex-run-tests-bin.test.js'), 'ENTER: the pool walked this repo');
   assert.deepStrictEqual(testPool(repo, ['test', 'cli/test']), pool);
 });
+
+function bareRepo(root, { withTest = false, extraOnMaster = {} } = {}) {
+  writeStub(root, { body: "console.log('TOTALS: 1 pass, 0 fail, 1 tests');", exit: 0 });
+  git(root, 'init', '-q', '-b', 'master');
+  put(root, 'CONTRACT.md', 'v1\n');
+  put(root, 'test/alpha.test.js', EMPTY_TEST);
+  for (const [rel, body] of Object.entries(extraOnMaster)) put(root, rel, body);
+  git(root, 'add', '-A');
+  git(root, 'commit', '-qm', 'base');
+  git(root, 'checkout', '-q', '-b', 'feature');
+  put(root, 'CONTRACT.md', 'v2\n');
+  if (withTest) put(root, 'test/alpha.test.js', `${EMPTY_TEST}// edited\n`);
+  git(root, 'commit', '-aqm', 'branch work');
+}
+
+function ledgerRows(root) {
+  const p = path.join(root, 'home', '.clodex', 'logs', 'suite-runs.jsonl');
+  return fs.existsSync(p) ? fs.readFileSync(p, 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l)) : [];
+}
+
+for (const [label, roots] of [['no team test roots', ''], ['team test roots set', '["test","app/test"]']]) {
+  test(`scope own, ${label}: a branch selecting no test file spawns no runner and says so`, () => {
+    const hit = mkRoot();
+    const empty = mkRoot();
+    try {
+      bareRepo(hit, { withTest: true });
+      const h = run(hit, '{"scope":"own"}', { env: { CLODEX_SUITE_TEST_ROOTS: roots } });
+      assert.deepStrictEqual(stubRecord(hit) && stubRecord(hit).argv, ['--reporter=dot', 'test/alpha.test.js'],
+        `ENTER: the same fixture with a changed test file runs exactly that file: ${h.digest}`);
+
+      bareRepo(empty);
+      const r = run(empty, '{"scope":"own"}', { env: { CLODEX_SUITE_TEST_ROOTS: roots } });
+      assert.strictEqual(stubRecord(empty), null, 'an empty own selection must never start the runner');
+      assert.strictEqual(r.digest, `[${path.basename(empty)}] own: 0 test files selected for this branch (nothing run)`);
+      assert.strictEqual(r.code, 0);
+      const rows = ledgerRows(empty);
+      assert.strictEqual(rows.length, 2, `one start and one end row: ${JSON.stringify(rows)}`);
+      assert.deepStrictEqual(
+        { phase: rows[0].phase, kind: rows[0].kind, scope: rows[0].scope, named: rows[0].named, where: rows[0].where, tree: rows[0].tree },
+        { phase: 'start', kind: 'hand', scope: 'own', named: 0, where: 'none', tree: empty },
+      );
+      assert.deepStrictEqual(
+        { phase: rows[1].phase, outcome: rows[1].outcome, pass: rows[1].pass, fail: rows[1].fail, tests: rows[1].tests, id: rows[1].id },
+        { phase: 'end', outcome: 'pass', pass: 0, fail: 0, tests: 0, id: rows[0].id },
+      );
+    } finally {
+      fs.rmSync(hit, { recursive: true, force: true });
+      fs.rmSync(empty, { recursive: true, force: true });
+    }
+  });
+}
+
+test('scope own: a branch selecting only a shape check runs that check and nothing else', () => {
+  const root = mkRoot();
+  try {
+    bareRepo(root, { extraOnMaster: { 'test/comment-ratchet.test.js': EMPTY_TEST } });
+    const r = run(root, '{"scope":"own"}');
+    assert.deepStrictEqual(stubRecord(root) && stubRecord(root).argv, ['--reporter=dot', 'test/comment-ratchet.test.js'], r.digest);
+    assertDigest(r.digest, `[${path.basename(root)}] own: 1/1 green (${WALL}) — 1 files: 0 changed, 0 by subject, 1 scanners`);
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test('scope full: the branch that selects no own test still runs the whole suite', () => {
+  const root = mkRoot();
+  try {
+    bareRepo(root);
+    const r = run(root, '{"scope":"full"}');
+    assert.deepStrictEqual(stubRecord(root) && stubRecord(root).argv, ['--reporter=dot'], r.digest);
+    assertDigest(r.digest, `[${path.basename(root)}] 1/1 green (${WALL})`);
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+function runChannel(root, payload) {
+  const { spawn } = require('node:child_process');
+  const home = path.join(root, 'home');
+  const env = { ...process.env, HOME: home, CLODEX_HOME: path.join(home, '.clodex') };
+  delete env.CLODEX_RUN_TESTS_REEXEC;
+  return new Promise((resolve) => {
+    const child = spawn(process.execPath, [SCRIPT], { cwd: root, env, stdio: ['pipe', 'pipe', 'pipe', 'ipc'] });
+    const asked = [];
+    let stderr = '';
+    child.stderr.on('data', (d) => { stderr += d; });
+    child.on('message', (m) => {
+      asked.push(m);
+      child.send({ run: 'refused', why: 'stub host' });
+    });
+    child.on('close', (code) => {
+      const lines = stderr.split('\n').filter((l) => l.trim());
+      resolve({ code, asked, digest: lines.length ? lines[lines.length - 1] : '' });
+    });
+    child.stdin.end(payload);
+  });
+}
+
+test('scope own on the runner path: an empty selection submits nothing to the host', async () => {
+  const hit = mkRoot();
+  const empty = mkRoot();
+  try {
+    bareRepo(hit, { withTest: true });
+    const h = await runChannel(hit, '{"scope":"own"}');
+    assert.deepStrictEqual(h.asked.map((m) => [m.op, m.scope, m.files]), [['suite', 'own', ['test/alpha.test.js']]],
+      `ENTER: with a changed test file the bin asks the host for exactly that file: ${h.digest}`);
+
+    bareRepo(empty);
+    const r = await runChannel(empty, '{"scope":"own"}');
+    assert.deepStrictEqual(r.asked, [], 'an empty own selection must never ask the host for a job');
+    assert.strictEqual(r.digest, `[${path.basename(empty)}] own: 0 test files selected for this branch (nothing run)`);
+    assert.strictEqual(r.code, 0);
+    assert.strictEqual(ledgerRows(empty)[0].named, 0);
+  } finally {
+    fs.rmSync(hit, { recursive: true, force: true });
+    fs.rmSync(empty, { recursive: true, force: true });
+  }
+});
