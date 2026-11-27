@@ -179,17 +179,17 @@ test('t2362: runner add appends a pool row with the wire the peer verb would pic
   });
 });
 
-test('t2362: runner rm drops a pool row, promotes the next on rm of the first, and refuses the only runner', async () => {
+test('t2362: runner rm drops a pool row, promotes the next on rm of the first keeping the stored hands, and refuses the only runner', async () => {
   const f = mkFixture({
     manifestExtra: { testRunner: { peer: 'runner-1', hands: 'full', wire: 'push', pool: [{ peer: 'laptop', wire: 'pull' }, { peer: 'runner-2', wire: 'push' }] } },
     peers: [R1, R2], desk: ATTACHED, client: { reachable: async () => INFO(0, 1, []) },
   });
   assert.deepStrictEqual(await f.verb('[agent:team runner rm runner-9]'), ['[agent:team] error: runner-9 is not a test runner of team']);
   assert.deepStrictEqual(await f.verb('[agent:team runner rm runner-1]'),
-    ['[agent:team] test runner runner-1 removed from team; laptop is now the first runner, wire pull, hands off — 2 left']);
-  assert.deepStrictEqual(disk(f.file).testRunner, { peer: 'laptop', hands: 'off', wire: 'pull', pool: [{ peer: 'runner-2', wire: 'push' }] });
+    ['[agent:team] test runner runner-1 removed from team; laptop is now the first runner, wire pull, hands full — 2 left']);
+  assert.deepStrictEqual(disk(f.file).testRunner, { peer: 'laptop', hands: 'full', wire: 'pull', pool: [{ peer: 'runner-2', wire: 'push' }] });
   assert.deepStrictEqual(await f.verb('[agent:team runner rm runner-2]'), ['[agent:team] test runner runner-2 removed from team — 1 left']);
-  assert.deepStrictEqual(disk(f.file).testRunner, { peer: 'laptop', hands: 'off', wire: 'pull' });
+  assert.deepStrictEqual(disk(f.file).testRunner, { peer: 'laptop', hands: 'full', wire: 'pull' });
   const before = fs.readFileSync(f.file, 'utf8');
   assert.deepStrictEqual(await f.verb('[agent:team runner rm laptop]'),
     ['[agent:team] error: laptop is the only test runner of team — [agent:team runner off] removes it']);

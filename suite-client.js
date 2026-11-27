@@ -899,13 +899,12 @@ const FLAG_KEYS = ['CLODEX_TEST_LOCK', 'CLODEX_TEST_SLOW_ADVISORY'];
 function route({ team = null, kind = 'hand', scope = 'full', local = false } = {}) {
   const tr = team && team.testRunner;
   if (!tr || !tr.peer) return { where: 'local', why: 'no test runner' };
-  if (tr.wire === 'pull') return { where: 'local', why: 'wire:pull serves the merge gate only (gate:shadow or gate:on)' };
   if (kind !== 'hand') return { where: 'local', why: `${kind} runs are not routed` };
   const hands = tr.hands || 'off';
   if (hands !== 'full' && hands !== 'all') return { where: 'local', why: `hands:${hands}` };
   if (hands === 'full' && scope !== 'full') return { where: 'local', why: 'hands:full leaves own scope local' };
   if (local === true) return { where: 'local', why: 'local:true in the call', override: 'call' };
-  return { where: 'remote', peer: tr.peer, why: `hands:${hands}` };
+  return { where: 'remote', peer: tr.peer, wire: tr.wire === 'pull' ? 'pull' : 'push', why: `hands:${hands}` };
 }
 
 function safeFile(f) {
@@ -944,7 +943,7 @@ function createChannelHost({
     if (!wantCancel || finished || !inflight || !inflight.jobId || cancelled.has(inflight.jobId)) return;
     cancelled.add(inflight.jobId);
     cancelSent = true;
-    Promise.resolve(client.cancel(inflight.peer, inflight.jobId)).catch(() => {});
+    Promise.resolve(client.cancel(inflight.peer, inflight.jobId, inflight.wire)).catch(() => {});
   };
   const real = (p) => {
     try { return realpath(p); } catch { return null; }
@@ -986,14 +985,15 @@ function createChannelHost({
     if (!client) return say({ run: 'remote', runner: d.peer, unknown: 'no suite client on this node' });
     const picked = pool ? await Promise.resolve().then(() => pool()).catch(() => null) : null;
     const name = (picked && picked.chosen) || d.peer;
-    const peer = resolvePeer(name);
-    if (!peer) return say({ run: 'remote', runner: name, unknown: `runner ${name} is not a known peer` });
+    const via = resolvePeer(name);
+    if (!via || !via.peer) return say({ run: 'remote', runner: name, unknown: `runner ${name} is not a known peer` });
     if (wantCancel) return say({ run: 'remote', runner: name, unknown: 'cancelled by the caller' });
-    inflight = { peer, name, jobId: null };
-    const moved = (next) => { inflight.peer = next.peer; inflight.name = next.name || next.peer; inflight.jobId = null; };
+    const wire = via.wire === 'pull' ? 'pull' : 'push';
+    inflight = { peer: via.peer, wire, name, jobId: null };
+    const moved = (next) => { inflight.peer = next.peer; inflight.wire = next.wire === 'pull' ? 'pull' : 'push'; inflight.name = next.name || next.peer; inflight.jobId = null; };
     const tr = team.testRunner;
     const out = await client.run({
-      peer, name, tree, kind: 'hand', scope: msg.scope, team: team.name, ticket, seat,
+      peer: via.peer, wire, name, tree, kind: 'hand', scope: msg.scope, team: team.name, ticket, seat,
       files: msg.files || [], flags: msg.flags || {}, setup: tr.setup || null, env: tr.env || {},
       queueBudgetMs, runBudgetMs: runMs, timeoutMs: runMs, route: d.why,
       shouldStop: () => wantCancel,

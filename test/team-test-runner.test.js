@@ -588,7 +588,7 @@ const mkDesk = (rows) => ({
   origins: () => rows,
 });
 const LAPTOP_UP = { origin: 'laptop', attached: true, lastClaim: Date.now() };
-const PULL_SET = '[agent:team] test runner of team set to laptop, wire pull, hands off — a runner that dials in serves the merge gate only (gate:shadow or gate:on); '
+const PULL_SET = '[agent:team] test runner of team set to laptop, wire pull, hands off — '
   + 'attached, queue 3, env box-1 linux/arm64 node v22.11.0 key 0123456789ab';
 
 test('t2303: naming a node that only dialed in stores wire pull with hands off', async () => {
@@ -605,19 +605,20 @@ test('t2303: a name that is both a peer row and a dialed-in node stores wire pus
   assert.deepStrictEqual(disk(f.file).testRunner, { peer: 'runner-1', hands: 'full', wire: 'push' });
 });
 
-test('t2303: switching a team on hands:full to a pull runner sets hands off and keeps the gate', async () => {
+test('t2416: switching a team on hands:full to a pull runner keeps hands full and the gate', async () => {
   const f = mkVerbFixture({ manifestExtra: { testRunner: { peer: 'runner-1', hands: 'full', gate: 'shadow' } }, peers: [SUITE_PEER], reach: INFO, desk: mkDesk([LAPTOP_UP]) });
-  assert.deepStrictEqual(await f.verb('lead', '[agent:team runner laptop]'), [PULL_SET]);
-  assert.deepStrictEqual(disk(f.file).testRunner, { peer: 'laptop', wire: 'pull', hands: 'off', gate: 'shadow' });
+  assert.deepStrictEqual(await f.verb('lead', '[agent:team runner laptop]'),
+    ['[agent:team] test runner of team set to laptop, wire pull, hands full — attached, queue 3, env box-1 linux/arm64 node v22.11.0 key 0123456789ab']);
+  assert.deepStrictEqual(disk(f.file).testRunner, { peer: 'laptop', wire: 'pull', hands: 'full', gate: 'shadow' });
 });
 
-test('t2303: hands:full and hands:all are refused for a pull runner and gate:on stays refused; the stored setting is unchanged', async () => {
+test('t2416: hands:full and hands:all are accepted and persisted for a pull runner; gate:on stays refused', async () => {
   const f = mkVerbFixture({ manifestExtra: { testRunner: { peer: 'laptop', wire: 'pull', gate: 'shadow' } }, desk: mkDesk([LAPTOP_UP]), reach: INFO });
+  assert.deepStrictEqual(await f.verb('lead', '[agent:team runner hands:full]'), ['[agent:team] test runner hands mode of team set to full']);
+  assert.deepStrictEqual(disk(f.file).testRunner, { peer: 'laptop', wire: 'pull', gate: 'shadow', hands: 'full' });
+  assert.deepStrictEqual(await f.verb('lead', '[agent:team runner hands:all]'), ['[agent:team] test runner hands mode of team set to all']);
+  assert.deepStrictEqual(disk(f.file).testRunner.hands, 'all');
   const before = fs.readFileSync(f.file, 'utf8');
-  assert.deepStrictEqual(await f.verb('lead', '[agent:team runner hands:full]'),
-    ['[agent:team] error: hands:full is refused for laptop: a runner that dials in (wire pull) serves the merge gate only (gate:shadow or gate:on)']);
-  assert.deepStrictEqual(await f.verb('lead', '[agent:team runner hands:all]'),
-    ['[agent:team] error: hands:all is refused for laptop: a runner that dials in (wire pull) serves the merge gate only (gate:shadow or gate:on)']);
   assert.deepStrictEqual(await f.verb('lead', '[agent:team runner gate:on]'),
     ['[agent:team] error: gate:on needs a box definition — only a container result can decide the gate; set one with [agent:team box set] first']);
   assert.strictEqual(fs.readFileSync(f.file, 'utf8'), before);

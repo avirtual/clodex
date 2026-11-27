@@ -3251,9 +3251,8 @@ function createTicketMethods(deps, shared) {
     },
 
     async _handRunners(tr) {
-      const push = { ...tr, pool: (Array.isArray(tr.pool) ? tr.pool : []).filter((p) => p && p.wire !== 'pull') };
-      const chosen = this._runnerMembers(push).length > 1 ? await this._pickGateRunner(push, false) : null;
-      return { chosen: chosen ? chosen.peer : null, repick: chosen ? this._runnerRepick(push, false) : null, reroute: this._runnerReroute(push, false) };
+      const chosen = this._runnerMembers(tr).length > 1 ? await this._pickGateRunner(tr, false) : null;
+      return { chosen: chosen ? chosen.peer : null, repick: chosen ? this._runnerRepick(tr, false) : null, reroute: this._runnerReroute(tr, false) };
     },
 
     _runnerInvalid(team) {
@@ -3389,7 +3388,7 @@ function createTicketMethods(deps, shared) {
           }
           const [next, ...rest] = pool;
           const wire = next.wire || WIRE_PUSH;
-          const m = deps.setTeamTestRunner(team.name, { peer: next.peer, wire, pool: rest.length ? rest : null, ...(wire === 'pull' ? { hands: 'off' } : {}) });
+          const m = deps.setTeamTestRunner(team.name, { peer: next.peer, wire, pool: rest.length ? rest : null });
           reply(`test runner ${name} removed from ${team.name}; ${m.testRunner.peer} is now the first runner, wire ${wire}, hands ${m.testRunner.hands} — ${this._runnerMembers(m.testRunner).length} left`);
           return;
         }
@@ -3499,10 +3498,6 @@ function createTicketMethods(deps, shared) {
           reply('error: no test runner is set — name one first with [agent:team runner <peer>]');
           return;
         }
-        if (cur.wire === 'pull' && intent.hands !== 'off') {
-          reply(`error: hands:${intent.hands} is refused for ${cur.peer}: a runner that dials in (wire pull) serves the merge gate only (gate:shadow or gate:on)`);
-          return;
-        }
         const m = deps.setTeamTestRunner(team.name, { hands: intent.hands, ...(fb != null ? { fallback: fb } : {}) });
         reply(`test runner hands mode of ${team.name} set to ${m.testRunner.hands}${fb != null ? `, fallback ${m.testRunner.fallback || 'home'}` : ''}${released(m)}`);
         return;
@@ -3544,9 +3539,9 @@ function createTicketMethods(deps, shared) {
       }
       const peer = this._runnerPeerStatus(intent.value);
       if (!peer && this._runnerDialedIn(intent.value)) {
-        const m = deps.setTeamTestRunner(team.name, { peer: intent.value, wire: 'pull', hands: 'off' });
+        const m = deps.setTeamTestRunner(team.name, cur ? { peer: intent.value, wire: 'pull' } : { peer: intent.value, wire: 'pull', hands: 'off' });
         const tr = m.testRunner;
-        reply(`test runner of ${team.name} set to ${tr.peer}, wire pull, hands ${tr.hands} — a runner that dials in serves the merge gate only (gate:shadow or gate:on); ${await this._runnerPullReach(tr.peer)}`);
+        reply(`test runner of ${team.name} set to ${tr.peer}, wire pull, hands ${tr.hands} — ${await this._runnerPullReach(tr.peer)}`);
         return;
       }
       if (!peer) {
