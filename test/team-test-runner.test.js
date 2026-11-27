@@ -136,13 +136,13 @@ test('setTeamTestRunner patches one key and leaves a hand-written setup and env 
     },
   });
   assert.throws(() => tm.setTeamTestRunner('team', { hands: 'bogus' }), /testRunner would be invalid after this patch/);
-  assert.throws(() => tm.setTeamTestRunner('team', { env: {} }), /testRunner patch must name peer, hands, gate, wire, pool, fallback, runMs or handEnv, or be null for off \(/);
+  assert.throws(() => tm.setTeamTestRunner('team', { env: {} }), /testRunner patch must name peer, hands, gate, wire, pool, fallback, runMs, handEnv or queueMs, or be null for off \(/);
   assert.strictEqual(disk(file).testRunner.hands, 'full', 'a refused patch writes nothing');
   assert.strictEqual(tm.setTeamTestRunner('team', null).testRunner, undefined);
   assert.deepStrictEqual(disk(file), { root, lead: 'lead', roles, version: 3 });
 });
 
-function mkVerbFixture({ manifestExtra = {}, peers = [], reach = null, boxFor = null, compare = null, desk = null, shadow = null } = {}) {
+function mkVerbFixture({ manifestExtra = {}, peers = [], reach = null, boxFor = null, compare = null, desk = null, shadow = null, run = null } = {}) {
   const { home, root, file, tm } = mkHome(manifestExtra);
   const reachCalls = [];
   const deps = {
@@ -180,7 +180,7 @@ function mkVerbFixture({ manifestExtra = {}, peers = [], reach = null, boxFor = 
     setTeamTestRunner: tm.setTeamTestRunner,
     getPeerManager: () => ({ statuses: () => peers }),
     getSuiteDesk: () => desk,
-    getSuiteClient: () => ({ reachable: async (id, wire, want) => { reachCalls.push(wire ? `${id}/${wire}` : id); return want && boxFor ? { ...reach, info: { ...reach.info, box: boxFor(want) } } : reach; }, ...(compare ? { tally: compareClient(home, compare).tally, decideTally: compareClient(home, compare).decideTally } : {}), ...(shadow ? { shadow } : {}) }),
+    getSuiteClient: () => ({ reachable: async (id, wire, want) => { reachCalls.push(wire ? `${id}/${wire}` : id); return want && boxFor ? { ...reach, info: { ...reach.info, box: boxFor(want) } } : reach; }, ...(compare ? { tally: compareClient(home, compare).tally, decideTally: compareClient(home, compare).decideTally } : {}), ...(shadow ? { shadow } : {}), ...(run ? { run } : {}) }),
   };
   const SessionManager = createSessionManager(deps);
   const m = new SessionManager();
@@ -1073,4 +1073,86 @@ test('t2418: a gate:, hands: or fallback: inside a hand-env value sets no flag',
   const p = registry.parseWithRegistry('[agent:team runner hand-env:URL=http://h/?gate:on&hands:all&fallback:hold]');
   assert.deepStrictEqual(p.handEnv, ['URL=http://h/?gate:on&hands:all&fallback:hold'], 'ENTER: the token reached hand-env');
   assert.deepStrictEqual([p.gate, p.hands, 'fallback' in p], [null, null, false]);
+});
+
+const QUEUE_MS_ROWS = [
+  ['5 minutes', 300000, 300000],
+  ['120 minutes', 7200000, 7200000],
+  ['45 minutes', 2700000, 2700000],
+  ['4 minutes', 240000, undefined],
+  ['121 minutes', 7260000, undefined],
+  ['a minute and a half past 10', 690000, undefined],
+  ['a string', '2700000', undefined],
+];
+
+for (const [name, queueMs, want] of QUEUE_MS_ROWS) {
+  test(`t2425: testRunner.queueMs ${name} ${want === undefined ? 'drops the key and keeps the runner' : 'is kept'}`, () => {
+    const warns = [];
+    const orig = console.warn;
+    console.warn = (...a) => warns.push(a.join(' '));
+    let team;
+    try {
+      team = mkHome({ testRunner: { peer: 'r', queueMs } }).tm.loadManifest('team');
+    } finally {
+      console.warn = orig;
+    }
+    assert.deepStrictEqual(team.testRunner, { peer: 'r', hands: 'off', gate: 'off', ...(want !== undefined ? { queueMs: want } : {}) });
+    assert.deepStrictEqual(team.droppedFields, []);
+    assert.deepStrictEqual(warns.map((w) => /testRunner\.queueMs is invalid and ignored/.test(w)), want === undefined ? [true] : []);
+  });
+}
+
+test('t2425: queue:<minutes> stores queueMs, the bare line shows it, queue:off removes it; out of range or repeated is refused', async () => {
+  const f = mkVerbFixture({ manifestExtra: { testRunner: { peer: 'runner-1', hands: 'full' } }, peers: [SUITE_PEER], reach: INFO });
+  assert.deepStrictEqual(await f.verb('lead', '[agent:team runner]'),
+    ['[agent:team] test runner of team: runner-1, wire push, hands full, gate off, run 21 min (default), queue 15 min hands, 20 min gate (default) — reachable, suite capability, queue 3, env box-1 linux/arm64 node v22.11.0 key 0123456789ab']);
+  assert.deepStrictEqual(await f.verb('lead', '[agent:team runner queue:45]'), ['[agent:team] test runner of team: run 21 min (default), queue 45 min']);
+  assert.deepStrictEqual(disk(f.file).testRunner, { peer: 'runner-1', hands: 'full', queueMs: 2700000 });
+  assert.deepStrictEqual(await f.verb('lead', '[agent:team runner]'),
+    ['[agent:team] test runner of team: runner-1, wire push, hands full, gate off, run 21 min (default), queue 45 min — reachable, suite capability, queue 3, env box-1 linux/arm64 node v22.11.0 key 0123456789ab']);
+  const before = fs.readFileSync(f.file, 'utf8');
+  for (const bad of ['4', '121', '1.5', 'abc', '']) {
+    assert.deepStrictEqual(await f.verb('lead', `[agent:team runner queue:${bad}]`),
+      [`[agent:team] error: queue must be a whole number of minutes from 5 to 120, or off — not "${bad}"`], bad);
+  }
+  assert.deepStrictEqual(await f.verb('lead', '[agent:team runner queue:30 queue:20]'), ['[agent:team] error: name queue: once per [agent:team runner] intent']);
+  assert.deepStrictEqual(await f.verb('lead', '[agent:team runner queue:30 gate:shadow]'),
+    ['[agent:team] error: set run:, queue: and hand-env: in their own [agent:team runner] intent, apart from the peer, hands, gate and fallback']);
+  assert.strictEqual(fs.readFileSync(f.file, 'utf8'), before, 'refusals write nothing');
+  assert.deepStrictEqual(await f.verb('lead', '[agent:team runner queue:off run:30]'), ['[agent:team] test runner of team: run 30 min, queue 15 min hands, 20 min gate (default)']);
+  assert.deepStrictEqual(disk(f.file).testRunner, { peer: 'runner-1', hands: 'full', runMs: 1800000 });
+});
+
+test('t2425: the parser keeps the first queue: token and marks a repeat', () => {
+  const p = registry.parseWithRegistry('[agent:team runner queue:45 queue:off]');
+  assert.deepStrictEqual([p.queue, p.queueRepeated, p.value], ['45', true, null]);
+  assert.deepStrictEqual(['queue' in registry.parseWithRegistry('[agent:team runner run:30]'), 'queueRepeated' in registry.parseWithRegistry('[agent:team runner queue:45]')], [false, false]);
+});
+
+const SHADOW_QUEUE_ROWS = [
+  ['no queueMs', {}, [1200000, 2460000]],
+  ['queueMs 45 min', { queueMs: 2700000 }, [2700000, 3960000]],
+  ['queueMs 10 min, under the 20 min gate wait', { queueMs: 600000 }, [1200000, 2460000]],
+  ['queueMs 45 min and runMs 30 min', { queueMs: 2700000, runMs: 1800000 }, [2700000, 4500000]],
+];
+
+for (const [name, extra, want] of SHADOW_QUEUE_ROWS) {
+  test(`t2425: a gate:shadow submit with ${name} waits [queue, whole budget] ${JSON.stringify(want)}`, async () => {
+    const seen = [];
+    const shadow = async (o) => { seen.push([o.queueBudgetMs, o.budgetMs]); return null; };
+    const f = mkVerbFixture({ manifestExtra: { testRunner: { peer: 'runner-1', gate: 'shadow', ...extra } }, peers: [SUITE_PEER], shadow });
+    await f.m._shadowSubmit(f.tm.loadManifest('team'), { id: 't1' }, '/w', {});
+    assert.deepStrictEqual(seen, [want]);
+  });
+}
+
+test('t2425: a gate:on box decide keeps its 5 min queue budget whatever queueMs says', async () => {
+  const seen = [];
+  const run = async (o) => { seen.push([o.queueBudgetMs, o.budgetMs]); return { unknown: 'stub', res: null, record: null }; };
+  for (const extra of [{}, { queueMs: 2700000 }]) {
+    const f = mkVerbFixture({ manifestExtra: { testRunner: { peer: 'runner-1', gate: 'on', box: true, ...extra } }, peers: [SUITE_PEER], run });
+    require('../team-box').writeBox(path.dirname(f.file), 'FROM node:25-bookworm\nRUN true\n');
+    await f.m._boxDecide(f.tm.loadManifest('team'), { id: 't1' }, '/w', {});
+  }
+  assert.deepStrictEqual(seen, [[300000, 2460000], [300000, 2460000]]);
 });

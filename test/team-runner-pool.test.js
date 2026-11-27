@@ -708,6 +708,32 @@ test('t2412: a runner lost while the job is queued leaves the replacement the ru
   assert.deepStrictEqual([out.record.outcome, out.record.where, out.record.endedAt], ['pass', 'runner-b', '1970-01-01T00:10:00.000Z']);
 });
 
+const HAND_45 = { kind: 'hand', queueBudgetMs: 2700000, runBudgetMs: 2280000, timeoutMs: 1260000, budgetMs: 4980000 };
+
+const QUEUED_40_ROWS = [
+  ['a 45 min queue budget', HAND_45, ['pass', null, '1970-01-01T00:50:00.000Z']],
+  ['the 15 min default', { ...HAND_45, queueBudgetMs: 900000, budgetMs: 3180000 }, ['timeout', 'the job did not start within the 900000ms queue budget (cancelled)', '1970-01-01T00:15:00.000Z']],
+];
+
+for (const [name, opts, want] of QUEUED_40_ROWS) {
+  test(`t2425: a hand job queued 40 min, polled throughout, then run, under ${name}`, async () => {
+    const r = lostRig({ pA: { poll: (id, t) => (t < 2400000 ? jobAt(id, 'queued') : t < 3000000 ? jobAt(id, 'running') : jobAt(id, 'done')) } });
+    const out = await r.client.run({ ...r.base, ...opts });
+    assert.deepStrictEqual([out.record.outcome, out.record.reason, out.record.endedAt], want);
+  });
+}
+
+test('t2425: with a 45 min queue budget a runner lost after 30 min queued is rerouted and the replacement decides', async () => {
+  const r = lostRig({
+    pA: { poll: (id, t) => (t < 1800000 ? jobAt(id, 'queued') : DOWN) },
+    pB: { poll: (id, t) => (t < 2400000 ? jobAt(id, 'queued') : t < 3000000 ? jobAt(id, 'running') : jobAt(id, 'done')) },
+  });
+  const out = await r.client.run({ ...r.base, ...HAND_45, reroute: r.to(r.B) });
+  assert.deepStrictEqual(r.asked.map(([lost]) => lost), ['runner-a'], 'ENTER: lost while queued past the 15 min default');
+  assert.ok(r.asked[0][1] > 900000, `lost after the default queue budget: ${r.asked[0][1]}`);
+  assert.deepStrictEqual([out.record.outcome, out.record.where, out.record.endedAt], ['pass', 'runner-b', '1970-01-01T00:50:00.000Z']);
+});
+
 test('t2412: a runner lost during the pack upload is rerouted, and the lost job is cancelled once', async () => {
   const r = lostRig({
     pA: { post: () => ({ status: 200, body: { ok: true, state: 'awaiting-pack', have: [] } }), poll: () => DOWN },

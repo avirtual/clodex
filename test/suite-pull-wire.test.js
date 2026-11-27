@@ -553,9 +553,9 @@ test('a named hand run on the pull wire runs scripts/run-tests.js --reporter=dot
   await attach(t, lead, { engine: runner });
   const client = createSuiteClient({ getPeerManager: () => ({ get: () => lead.conn }), randomUUID: () => 'pull-named' });
   const out = await within(client.run({
-    peer: 'pull:laptop', tree: repo, kind: 'hand', scope: 'own', named: true, files: ['test/b.test.js', 'test/a.test.js'], budgetMs: RUN_BUDGET_MS,
+    peer: 'pull:laptop', tree: repo, kind: 'hand', scope: 'own', named: 2, files: ['test/b.test.js', 'test/a.test.js'], budgetMs: RUN_BUDGET_MS,
   }), RUN_MS, 'the pull run to conclude');
   assert.strictEqual(out.unknown, null, `run unknown: ${out.unknown}`);
   assert.deepStrictEqual(sp.argvs, [['scripts/run-tests.js', '--reporter=dot', 'test/b.test.js', 'test/a.test.js']]);
-  assert.deepStrictEqual([out.record.scope, out.record.named], ['own', true]);
+  assert.deepStrictEqual([out.record.scope, out.record.named], ['own', 2]);
 });

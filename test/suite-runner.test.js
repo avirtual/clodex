@@ -189,6 +189,34 @@ test('a job not polled for longer than the lease is cancelled as lease-expired',
   assert.deepStrictEqual(rows, [[121000, 'awaiting-pack', null], [121001, 'done', 'lease-expired']]);
 });
 
+test('t2425: a queued job polled every 25 s for 40 min behind a running job keeps its lease and then starts', async (t) => {
+  let clock = 1000;
+  let blocker = null;
+  const order = [];
+  const f = await fixture(t, {
+    now: () => clock,
+    onSpawn: (c) => {
+      order.push(c.job);
+      if (c.job === 'blocker') blocker = c.child;
+      else { c.child.stdout.write('TOTALS: 1 pass, 0 fail, 1 tests\n'); c.child.finish(0); }
+    },
+  });
+  await f.upload(f.body('blocker', 'hand'));
+  await waitState(f.runner, 'blocker', 'running');
+  assert.strictEqual((await f.runner.submit(f.body('waiting', 'hand'))).state, 'queued');
+  const end = clock + 40 * 60 * 1000;
+  while (clock < end) {
+    clock += 25000;
+    await f.runner.poll(['blocker', 'waiting']);
+    await f.runner.tick();
+  }
+  const held = (await f.runner.poll(['blocker', 'waiting'])).jobs.map((j) => [j.id, j.state, j.reason]);
+  assert.deepStrictEqual(held, [['blocker', 'running', null], ['waiting', 'queued', null]]);
+  blocker.finish(0);
+  const done = await waitState(f.runner, 'waiting', 'done');
+  assert.deepStrictEqual([order, done.reason, done.exit], [['blocker', 'waiting'], null, { code: 0, signal: null }]);
+});
+
 test('a restarted runner recovers each state as the table says', async (t) => {
   const f = await fixture(t);
   f.runner.close();
