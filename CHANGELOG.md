@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+- Team tickets: a verify held because the test runner was busy now retries by itself when the runner has a free slot, and `queue:` also sets how long a deciding run waits.
+
 ## 5.209.0 — 2026-11-27
 
 - Security: a seat can no longer be named `.claude`, `CLAUDE.md` or `.mcp.json`, names the Claude CLI reads as configuration inside a trusted messages folder.
