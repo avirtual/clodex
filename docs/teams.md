@@ -998,11 +998,16 @@ dropped with a warning and the rest of `testRunner` is kept. Gate runs
 (shadow, box decide and a reroute of either) then send it as the job's
 `timeoutMs` and grow their budget, and the box guard, by `runMs` minus 21
 minutes when it is longer; with no key the job body is unchanged. Hand runs
-use it as their run budget and `timeoutMs`, and the `clodex-run-tests` exec
-ceiling grows by the same difference. The home suite's kill timer does not
-change. A runner whose own `maxTimeoutMs` is lower refuses the job; that reads
-`runner refused the job: bad timeoutMs — the job asked for <n>ms, the runner's
-ceiling is <m>ms` (or `not reported`), class `outcome-unknown`.
+send it as `timeoutMs`; their run budget is `runMs` plus 17 minutes
+(`HAND_RUN_SLACK_MS`), because the client counts from the job's `setup` while
+the runner's kill counts from `running`, so a killed run comes back with its
+last output instead of being cancelled first. The `clodex-run-tests` exec
+ceiling adds 19 minutes (`HAND_EXEC_SLACK_MS`) plus `runMs` minus 21 minutes.
+The home suite's kill timer does not change. A runner whose own
+`maxTimeoutMs` is lower refuses the job; that reads `runner refused the job:
+bad timeoutMs — the job asked for <n>ms, the runner's ceiling is <m>ms`, or
+`… the runner's ceiling is lower and its info route does not report it` when
+the runner's info carries no `maxTimeoutMs`, class `outcome-unknown`.
 `[agent:team runner hand-env:KEY=VALUE]` (repeatable on one head line) merges
 into `testRunner.handEnv`, `hand-env:KEY=` drops one key and `hand-env:off`
 clears all. Names follow `env` (`^[A-Z_][A-Z0-9_]*$`, which the runner

@@ -1032,6 +1032,7 @@ test('t2418: run:<minutes> stores runMs, the bare line shows it, run:off removes
   }
   assert.deepStrictEqual(await f.verb('lead', '[agent:team runner run:30 hands:all]'),
     ['[agent:team] error: set run: and hand-env: in their own [agent:team runner] intent, apart from the peer, hands, gate and fallback']);
+  assert.deepStrictEqual(await f.verb('lead', '[agent:team runner run:30 run:20]'), ['[agent:team] error: name run: once per [agent:team runner] intent']);
   assert.strictEqual(fs.readFileSync(f.file, 'utf8'), before, 'refusals write nothing');
   assert.deepStrictEqual(await f.verb('lead', '[agent:team runner run:off]'), ['[agent:team] test runner of team: run 21 min (default)']);
   assert.deepStrictEqual(disk(f.file).testRunner, { peer: 'runner-1', hands: 'full' });
@@ -1066,4 +1067,10 @@ test('t2418: run: and hand-env: with no runner set are refused', async () => {
 test('t2418: the parser keeps run: and every hand-env: token of the head line', () => {
   const p = registry.parseWithRegistry('[agent:team runner run:30 hand-env:A=1 hand-env:B= hand-env:off]');
   assert.deepStrictEqual([p.run, p.handEnv, p.value], ['30', ['A=1', 'B=', 'off'], null]);
+});
+
+test('t2418: a gate:, hands: or fallback: inside a hand-env value sets no flag', () => {
+  const p = registry.parseWithRegistry('[agent:team runner hand-env:URL=http://h/?gate:on&hands:all&fallback:hold]');
+  assert.deepStrictEqual(p.handEnv, ['URL=http://h/?gate:on&hands:all&fallback:hold'], 'ENTER: the token reached hand-env');
+  assert.deepStrictEqual([p.gate, p.hands, 'fallback' in p], [null, null, false]);
 });

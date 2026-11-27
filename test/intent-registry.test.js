@@ -205,13 +205,12 @@ function parseIntentLegacy(rawLine) {
     if (sub === 'worktrees') return { type: 'team', sub, value: positional[0] || null, body: '' };
     if (sub === 'hands') return { type: 'team', sub, value: positional[0] || null, body: '' };
     if (sub === 'runner') {
-      const handsM = argStr.match(/\bhands:(\S+)/);
-      const gateM = argStr.match(/\bgate:(\S+)/);
-      const fallbackM = argStr.match(/\bfallback:(\S+)/);
       const tokens = argStr.trim().split(/\s+/);
-      const runT = tokens.find((t) => t.startsWith('run:'));
+      const flag = (k) => { const t = tokens.find((x) => x.startsWith(`${k}:`) && x.length > k.length + 1); return t ? t.slice(k.length + 1) : null; };
+      const runTs = tokens.filter((t) => t.startsWith('run:'));
       const handEnv = tokens.filter((t) => t.startsWith('hand-env:')).map((t) => t.slice('hand-env:'.length));
-      return { type: 'team', sub, value: positional[0] || null, hands: handsM ? handsM[1] : null, gate: gateM ? gateM[1] : null, ...(fallbackM ? { fallback: fallbackM[1] } : {}), ...(runT ? { run: runT.slice('run:'.length) } : {}), ...(handEnv.length ? { handEnv } : {}), body: '' };
+      const fallback = flag('fallback');
+      return { type: 'team', sub, value: positional[0] || null, hands: flag('hands'), gate: flag('gate'), ...(fallback != null ? { fallback } : {}), ...(runTs.length ? { run: runTs[0].slice('run:'.length) } : {}), ...(runTs.length > 1 ? { runRepeated: true } : {}), ...(handEnv.length ? { handEnv } : {}), body: '' };
     }
     if (sub === 'role-rename') return { type: 'team', sub, name: positional[0] || null, to: positional[1] || null, body: '' };
     // t701's gather, landed here in the same commit as parseTeam's — the same

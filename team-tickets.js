@@ -3455,6 +3455,10 @@ function createTicketMethods(deps, shared) {
         reply('error: no test runner is set — name one first with [agent:team runner <peer>]');
         return;
       }
+      if (intent.runRepeated) {
+        reply('error: name run: once per [agent:team runner] intent');
+        return;
+      }
       const patch = {};
       if (intent.run != null) {
         const min = TEST_RUNNER_RUN_MIN_MS / TEST_RUNNER_RUN_STEP_MS;
