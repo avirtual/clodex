@@ -889,10 +889,14 @@ const RA = { id: 'pA', label: 'runner-1', online: true, caps: ['peer', 'suite'] 
 const RB = { id: 'pB', label: 'runner-2', online: true, caps: ['peer', 'suite'] };
 const POOL_ON = { peer: 'runner-1', hands: 'off', gate: 'on', pool: [{ peer: 'runner-2' }] };
 
-function poolDecide(script) {
+function poolDecide(script, { busy = [] } = {}) {
   const r = lostRig(Object.fromEntries(Object.entries(script).map(([k, v]) => [k, { hash: BOX_HASH, ...v }])));
   const runs = [];
-  const client = { ...r.client, run: (o) => { const p = r.client.run(o); runs.push(p); return p; } };
+  const reachable = async (peer, ...rest) => {
+    const got = await r.client.reachable(peer, ...rest);
+    return busy.includes(peer) && got.ok ? { ...got, info: { ...got.info, slots: { total: 1, inUse: 1 } } } : got;
+  };
+  const client = { ...r.client, reachable, run: (o) => { const p = r.client.run(o); runs.push(p); return p; } };
   const f = mkFixture({ manifestExtra: { testRunner: POOL_ON }, peers: [RA, RB], client, extraDeps: { boxDecideTimers: { setTimeout: () => 1, clearTimeout: () => {} } } });
   const team = f.tm.loadManifest('team');
   require('../team-box').writeBox(team.dir, BOX_TEXT);
@@ -916,7 +920,7 @@ test('t2412: a flight stop between the old cancel and the new submit prevents th
 });
 
 test('t2412: two tickets losing the same runner each reroute on their own and neither picks the lost member', async () => {
-  const rig = poolDecide({ pA: { poll: () => DOWN }, pB: { poll: BOX_DONE } });
+  const rig = poolDecide({ pA: { poll: () => DOWN }, pB: { poll: BOX_DONE } }, { busy: ['pB'] });
   const [one, two] = await Promise.all([
     rig.f.m._boxDecide(rig.team, { id: 't1' }, '/w', {}),
     rig.f.m._boxDecide(rig.team, { id: 't2' }, '/w', {}),
