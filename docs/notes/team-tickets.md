@@ -118,6 +118,3 @@ real defect the hand must clear.
 Ownership is read out of GIT (`diffNames` + `fileAt` against the branch), not off
 the worktree: the merge arm asks after the branch has landed, and a torn-down
 tree would answer "nothing owned" for a branch that owns everything.
-
-## BOX_RETRY_WINDOW_MS
-60 minutes: the six retry delays add up to 45 minutes (54 at full jitter), so the window cuts in only when the runner stays busy; the longest queue-budget hold measured on team avh (2026-11-27) sat 35 minutes before a manual `task verify`.

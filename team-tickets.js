@@ -7897,8 +7897,7 @@ function createTicketMethods(deps, shared) {
         if (!own(t) || !t.boxRetry || t.boxRetry.inFlight || !this._boxHeld(t)) continue;
         const waitedMs = now - boxRetrySince(t.boxRetry);
         if (waitedMs < BOX_RETRY_WINDOW_MS) continue;
-        const fallback = (FALLBACK_CODES[t.verifyHold.code] || {}).reason || t.boxHoldReason || 'no box result';
-        expired.push([t.id, { fallback, attempts: t.boxRetry.attempts, waitedMs, cause: 'limit' }]);
+        expired.push([t.id, { fallback: t.boxHoldReason || 'no box result', attempts: t.boxRetry.attempts, waitedMs, cause: 'limit' }]);
         delete t.boxRetry;
       }
       if (!expired.length) return true;
