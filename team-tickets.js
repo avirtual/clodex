@@ -20,7 +20,8 @@ const { resolveAccountLabel, accountMissingError } = require('./accounts');
 const { trackedSessionIds: entrySessionIds } = require('./session-info');
 const { hostNotice } = require('./host-stamp');
 const { idleClearAfterMs, IDLE_CLEAR_MIN_MS } = require('./assistant-sleep');
-const { localHalf, failingNames } = require('./suite-client');
+const { localHalf, failingNames, phaseEnv, localPhaseEnv } = require('./suite-client');
+const { RUNNER_ENV_TOKENS } = require('./intent-registry');
 const { boxVerdict, fallbackOf, FALLBACK_CODES, pickRunner, runnerLoad, pickRecord, consideredOf, pickLine, aloneNote, BUILD_BUDGET_MS, HUNG_RE, HAND_QUEUE_MS } = require('./suite-client');
 const {
   matchSeatRole, nameRole, defaultLeadSeat, ROLE_RE, RESERVED_ROLE_KEYS, STOCK_ROLE_DEFS,
@@ -3547,16 +3548,17 @@ function createTicketMethods(deps, shared) {
     _runnerLimitsText(cur) {
       const run = Number.isInteger(cur.runMs) ? `run ${cur.runMs / TEST_RUNNER_RUN_STEP_MS} min` : `run ${TEST_RUNNER_RUN_DEFAULT_MS / TEST_RUNNER_RUN_STEP_MS} min (default)`;
       const flat = (v) => String(v).replace(/[\x00-\x1f\x7f]+/g, ' ').slice(0, 60);
-      const keys = Object.entries(cur.handEnv || {});
+      const envs = RUNNER_ENV_TOKENS.map(([tok, key]) => [tok, Object.entries(cur[key] || {})]).filter(([, keys]) => keys.length)
+        .map(([tok, keys]) => `, ${tok} ${keys.map(([k, v]) => `${flat(k)}=${flat(v)}`).join(' ')}`).join('');
       const set = Number.isInteger(cur.queueMs);
       const gateMs = cur.gate === 'shadow' ? TICKET_SUITE_LOCK_WAIT_MS + this._runnerQueueExtra(cur) : this._gateQueueMs(cur);
       const queue = `queue ${(set ? cur.queueMs : HAND_QUEUE_MS) / TEST_RUNNER_RUN_STEP_MS} min hands, ${gateMs / TEST_RUNNER_RUN_STEP_MS} min gate${set ? '' : ' (default)'}`;
-      return `, ${run}, ${queue}${cur.exclusive === true ? ', exclusive on' : ''}${keys.length ? `, hand-env ${keys.map(([k, v]) => `${flat(k)}=${flat(v)}`).join(' ')}` : ''}`;
+      return `, ${run}, ${queue}${cur.exclusive === true ? ', exclusive on' : ''}${envs}`;
     },
 
     _handleRunnerLimits(team, cur, intent, reply) {
       if (intent.value || intent.hands != null || intent.gate != null || intent.fallback != null) {
-        reply('error: set run:, queue:, exclusive: and hand-env: in their own [agent:team runner] intent, apart from the peer, hands, gate and fallback');
+        reply('error: set run:, queue:, exclusive:, hand-env:, verify-env: and merge-env: in their own [agent:team runner] intent, apart from the peer, hands, gate and fallback');
         return;
       }
       if (!cur) {
@@ -3604,19 +3606,20 @@ function createTicketMethods(deps, shared) {
           return;
         }
       }
-      if (intent.handEnv) {
-        let next = { ...(cur.handEnv || {}) };
-        for (const tok of intent.handEnv) {
+      for (const [label, key] of RUNNER_ENV_TOKENS) {
+        if (!intent[key]) continue;
+        let next = { ...(cur[key] || {}) };
+        for (const tok of intent[key]) {
           if (tok === 'off') { next = {}; continue; }
           const eq = tok.indexOf('=');
           const name = eq > 0 ? tok.slice(0, eq) : tok;
           if (eq <= 0 || !TEST_RUNNER_ENV_RE.test(name)) {
-            reply(`error: hand-env takes KEY=VALUE, KEY= or off, with KEY matching ${TEST_RUNNER_ENV_RE.source} — not "${tok}"`);
+            reply(`error: ${label} takes KEY=VALUE, KEY= or off, with KEY matching ${TEST_RUNNER_ENV_RE.source} — not "${tok}"`);
             return;
           }
           const value = tok.slice(eq + 1);
           if (value.length > TEST_RUNNER_ENV_VALUE_MAX) {
-            reply(`error: hand-env ${name} is ${value.length} characters; the most is ${TEST_RUNNER_ENV_VALUE_MAX}`);
+            reply(`error: ${label} ${name} is ${value.length} characters; the most is ${TEST_RUNNER_ENV_VALUE_MAX}`);
             return;
           }
           if (value === '') delete next[name];
@@ -3624,10 +3627,10 @@ function createTicketMethods(deps, shared) {
         }
         const merged = Object.keys({ ...(cur.env || {}), ...next }).length;
         if (merged > TEST_RUNNER_ENV_MAX) {
-          reply(`error: env and hand-env together would name ${merged} variables; the most is ${TEST_RUNNER_ENV_MAX}`);
+          reply(`error: env and ${label} together would name ${merged} variables; the most is ${TEST_RUNNER_ENV_MAX}`);
           return;
         }
-        patch.handEnv = Object.keys(next).length ? next : null;
+        patch[key] = Object.keys(next).length ? next : null;
       }
       const m = deps.setTeamTestRunner(team.name, patch);
       reply(`test runner of ${team.name}${this._runnerLimitsText(m.testRunner).replace(/^,/, ':')}`);
@@ -3635,7 +3638,7 @@ function createTicketMethods(deps, shared) {
 
     async _handleTeamRunner(team, intent, reply) {
       const cur = team.testRunner || null;
-      if (intent.run != null || intent.queue != null || intent.exclusive != null || intent.handEnv) {
+      if (intent.run != null || intent.queue != null || intent.exclusive != null || RUNNER_ENV_TOKENS.some(([, key]) => intent[key])) {
         this._handleRunnerLimits(team, cur, intent, reply);
         return;
       }
@@ -6949,7 +6952,7 @@ function createTicketMethods(deps, shared) {
         }
         return await client.shadow({
           ...via, name: member.peer, tree: cwd, kind, team: team.name, ticket: String(ticket.id),
-          setup: tr.setup || null, env: tr.env || {}, route: 'gate:shadow', box, ...(tr.shares ? { shares: tr.shares } : {}), ...(tr.exclusive === true ? { exclusive: true } : {}),
+          setup: tr.setup || null, env: phaseEnv(tr, kind), route: 'gate:shadow', box, ...(tr.shares ? { shares: tr.shares } : {}), ...(tr.exclusive === true ? { exclusive: true } : {}),
           queueBudgetMs: TICKET_SUITE_LOCK_WAIT_MS + this._runnerQueueExtra(tr), budgetMs: TICKET_SUITE_TIMEOUT + this._runnerRunExtra(tr) + this._runnerQueueExtra(tr), ...this._runnerTimeout(tr),
           ...(pooled ? { pool: true } : {}),
           ...(picked && picked.runId ? { runId: picked.runId } : {}), ...(picked ? { pick: picked.pick } : {}),
@@ -7028,7 +7031,7 @@ function createTicketMethods(deps, shared) {
       const job = Promise.resolve()
         .then(() => client.run({
           ...via, name: member.peer, tree: cwd, kind, team: team.name, ticket: String(ticket.id), scope: 'full',
-          setup: tr.setup || null, env: tr.env || {}, route: 'gate:on', box: def, ...(tr.shares ? { shares: tr.shares } : {}), ...(tr.exclusive === true ? { exclusive: true } : {}),
+          setup: tr.setup || null, env: phaseEnv(tr, kind), route: 'gate:on', box: def, ...(tr.shares ? { shares: tr.shares } : {}), ...(tr.exclusive === true ? { exclusive: true } : {}),
           queueBudgetMs: gateQueueMs, budgetMs: TICKET_SUITE_TIMEOUT + this._runnerRunExtra(tr) + gateQueueExtra, ...this._runnerTimeout(tr),
           ...(picked && picked.runId ? { runId: picked.runId } : {}), ...(picked ? { pick: picked.pick } : {}),
           onJob: (j) => { if (j && j.jobId) jobId = j.jobId; },
@@ -7284,6 +7287,7 @@ function createTicketMethods(deps, shared) {
             cwd,
             env: {
               ...Object.fromEntries(Object.entries(process.env).filter(([k]) => !k.startsWith('CLODEX_SUITE_'))),
+              ...localPhaseEnv(team.testRunner, opts && opts.merge ? 'post-merge' : 'verify'),
               // `process.execPath` is the Electron binary under the desktop app; without ELECTRON_RUN_AS_NODE the spawn is an app
               // launch, no tap is written and every ticket escalates.
               ELECTRON_RUN_AS_NODE: '1',

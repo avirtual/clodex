@@ -412,7 +412,12 @@ function readIfFile(p) {
   }
 }
 
-function reexecInMeasured(measure, rawStdin, routeEnv) {
+function teamEnvOf(env) {
+  if (!env || typeof env !== 'object' || Array.isArray(env)) return {};
+  return Object.fromEntries(Object.entries(env).filter(([k, v]) => typeof v === 'string' && !k.startsWith('CLODEX_')));
+}
+
+function reexecInMeasured(measure, rawStdin, routeEnv, teamEnv = {}) {
   if (process.env.CLODEX_RUN_TESTS_REEXEC === '1') return;
   const theirs = path.join(measure, 'scripts', 'clodex-run-tests.js');
   const theirBytes = readIfFile(theirs);
@@ -423,7 +428,7 @@ function reexecInMeasured(measure, rawStdin, routeEnv) {
     cwd: ROOT,
     input: rawStdin,
     stdio: ['pipe', 'inherit', 'inherit'],
-    env: { ...ledgerEnv({ ...process.env, CLODEX_RUN_TESTS_REEXEC: '1' }), ...routeEnv },
+    env: { ...ledgerEnv({ ...process.env, ...teamEnv, CLODEX_RUN_TESTS_REEXEC: '1' }), ...routeEnv },
   });
   if (res.error) emit(`[${LEAF}] own: re-exec of ${theirs} failed: ${res.error.message}`, 1, 400);
   if (res.status === null) {
@@ -518,11 +523,11 @@ const headBefore = gitRead(measure, ['rev-parse', 'HEAD']);
 let startedIso = nowIso();
 let startedAt = Date.now();
 
-function runLocal(routeEnv) {
+function runLocal(routeEnv, teamEnv = {}) {
   startedIso = nowIso();
   startedAt = Date.now();
   const childEnv = {
-    ...ledgerEnv(process.env, process.env.CLODEX_RUN_TESTS_REEXEC === '1'),
+    ...ledgerEnv({ ...process.env, ...teamEnv }, process.env.CLODEX_RUN_TESTS_REEXEC === '1'),
     ...routeEnv,
     CLODEX_TEST_LOCK_DIR: path.join(ROOT, '.test-digest.lock'),
     CLODEX_TEST_LOCK_WAIT_MS: String(LOCK_WAIT_MS),
@@ -563,8 +568,9 @@ function askHost() {
     if (m.run === 'local') {
       const routeEnv = { CLODEX_SUITE_ROUTE: String(m.why || '') };
       if (m.override) routeEnv.CLODEX_SUITE_OVERRIDE = String(m.override);
-      reexecInMeasured(measure, rawStdin, routeEnv);
-      runLocal(routeEnv);
+      const teamEnv = teamEnvOf(m.env);
+      reexecInMeasured(measure, rawStdin, routeEnv, teamEnv);
+      runLocal(routeEnv, teamEnv);
       return;
     }
     if (m.run !== 'remote' || m.unknown) {

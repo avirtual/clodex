@@ -13,6 +13,9 @@ blocks a release.
 
 ## Unreleased
 
+- Test runners: a team's `env` now also reaches test runs on the source machine (a verify or post-merge suite that falls back home, and a hand's local run), which previously ran without it.
+- Test runners: `[agent:team runner verify-env:KEY=VALUE]` and `merge-env:KEY=VALUE` set env for the verify run or the post-merge suite only, as `hand-env:` does for hand runs.
+
 ## 5.212.0 — 2026-11-28
 
 - Test runners: a job's record now lists every pool member that was considered and why each was not chosen, from the moment the job starts.

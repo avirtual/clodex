@@ -5,7 +5,7 @@ const path = require('path');
 const crypto = require('crypto');
 const childProcess = require('child_process');
 const snapshot = require('./suite-snapshot');
-const { lastTotals } = require('./suite-client');
+const { lastTotals, jobEnvRefusal } = require('./suite-client');
 const { git } = require('./git-worktree');
 const { resolveFs } = require('./resolve-fs');
 const { boxFingerprint } = require('./team-box');
@@ -29,9 +29,7 @@ const NAMED_BOX_MAX = 32;
 const NAMED_BOX_RETRY_MS = 5000;
 const SETTLED_BOX = new Set(['ready', 'no-image', 'ambiguous']);
 const REF_RE = /^(?![-/.])(?!.*\.\.)(?!.*\/\/)[A-Za-z0-9._/-]{1,200}$/;
-const ENV_NAME_RE = /^[A-Z_][A-Z0-9_]*$/;
 const FLAG_KEYS = ['CLODEX_TEST_LOCK', 'CLODEX_TEST_SLOW_ADVISORY'];
-const BASE_ENV_KEYS = ['PATH', 'HOME', 'TMPDIR', 'LANG', 'TZ', 'USER', 'LOGNAME', 'SHELL', 'ELECTRON_RUN_AS_NODE', 'GIT_CEILING_DIRECTORIES'];
 const SAFE_PATH = '/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin';
 const HOMEBREW_ARM_PATH = '/opt/homebrew/bin:/opt/homebrew/sbin';
 
@@ -390,8 +388,8 @@ function validateSubmit(b, limits) {
   const env = b.env || {};
   if (typeof env !== 'object' || Array.isArray(env) || Object.keys(env).length > 32) return 'bad env';
   for (const [k, v] of Object.entries(env)) {
-    if (!ENV_NAME_RE.test(k) || BASE_ENV_KEYS.includes(k) || k.startsWith('CLODEX_')) return `env key not allowed: ${k}`;
-    if (typeof v !== 'string' || v.length > 1000 || v.includes('\0')) return `bad env value: ${k}`;
+    const why = jobEnvRefusal(k, v);
+    if (why) return why;
   }
   if (b.setup != null) {
     const s = b.setup;

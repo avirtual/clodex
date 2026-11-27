@@ -1150,6 +1150,24 @@ const HAND_KILL_MS = 2 * 60 * 1000;
 const handSlackMs = (tr) => Math.max((tr && tr.setup && tr.setup.timeoutMs) || 0, HAND_SETUP_MS) + HAND_KILL_MS;
 const handExecSlackMs = (tr) => handSlackMs(tr) + HAND_KILL_MS;
 const FLAG_KEYS = ['CLODEX_TEST_LOCK', 'CLODEX_TEST_SLOW_ADVISORY'];
+const JOB_ENV_NAME_RE = /^[A-Z_][A-Z0-9_]*$/;
+const JOB_ENV_BASE_KEYS = ['PATH', 'HOME', 'TMPDIR', 'LANG', 'TZ', 'USER', 'LOGNAME', 'SHELL', 'ELECTRON_RUN_AS_NODE', 'GIT_CEILING_DIRECTORIES'];
+const PHASE_ENV_KEYS = { hand: 'handEnv', verify: 'verifyEnv', 'post-merge': 'mergeEnv' };
+
+function jobEnvRefusal(k, v) {
+  if (!JOB_ENV_NAME_RE.test(k) || JOB_ENV_BASE_KEYS.includes(k) || k.startsWith('CLODEX_')) return `env key not allowed: ${k}`;
+  if (typeof v !== 'string' || v.length > 1000 || v.includes('\0')) return `bad env value: ${k}`;
+  return null;
+}
+
+function phaseEnv(tr, kind) {
+  const own = tr && PHASE_ENV_KEYS[kind] ? tr[PHASE_ENV_KEYS[kind]] : null;
+  return { ...((tr && tr.env) || {}), ...(own || {}) };
+}
+
+function localPhaseEnv(tr, kind) {
+  return Object.fromEntries(Object.entries(phaseEnv(tr, kind)).filter(([k, v]) => !jobEnvRefusal(k, v)));
+}
 
 function route({ team = null, kind = 'hand', scope = 'full', local = false } = {}) {
   const tr = team && team.testRunner;
@@ -1236,7 +1254,7 @@ function createChannelHost({
     const d = route({ team, ticket, kind: 'hand', scope: msg.scope, local: msg.local === true });
     if (d.where === 'local') {
       if (d.override) notifyLead(`${seat}: clodex-run-tests ran here on request ({"local": true}); team ${team.name} routes hand runs to ${team.testRunner.peer}`);
-      return say({ run: 'local', why: d.why, override: d.override || null });
+      return say({ run: 'local', why: d.why, override: d.override || null, env: localPhaseEnv(team.testRunner, 'hand') });
     }
     if (!client) return say({ run: 'remote', runner: d.peer, unknown: 'no suite client on this node' });
     let box;
@@ -1252,7 +1270,7 @@ function createChannelHost({
     const tr = team.testRunner;
     const out = await client.run({
       peer: via.peer, wire, name, tree, kind: 'hand', scope: msg.scope, ...(msg.named === true ? { named: msg.files.length } : {}), team: team.name, ticket, seat,
-      files: msg.files || [], flags: msg.flags || {}, setup: tr.setup || null, env: { ...(tr.env || {}), ...(tr.handEnv || {}) },
+      files: msg.files || [], flags: msg.flags || {}, setup: tr.setup || null, env: phaseEnv(tr, 'hand'),
       queueBudgetMs, runBudgetMs: runMs + handSlackMs(tr), timeoutMs: runMs, budgetMs: queueBudgetMs + runMs + handSlackMs(tr), route: d.why,
       ...(box ? { box, ...(tr.shares ? { shares: tr.shares } : {}) } : {}),
       ...(tr.exclusive === true ? { exclusive: true } : {}),
@@ -1296,4 +1314,4 @@ function createChannelHost({
   };
 }
 
-module.exports = { createSuiteClient, createChannelHost, route, lastTotals, localHalf, failingNames, agreement, boxVerdict, fallbackOf, FALLBACK_CODES, pickRunner, runnerLoad, pickRecord, consideredOf, waitNote, ledgerPicks, CONSIDERED_MAX, pickLine, poolNote, aloneNote, HAND_QUEUE_MS, HAND_RUN_MS, handSlackMs, handExecSlackMs, HUNG_RE, BUILD_BUDGET_MS, LOST_AFTER_MS };
+module.exports = { createSuiteClient, createChannelHost, route, jobEnvRefusal, phaseEnv, localPhaseEnv, PHASE_ENV_KEYS,lastTotals, localHalf, failingNames, agreement, boxVerdict, fallbackOf, FALLBACK_CODES, pickRunner, runnerLoad, pickRecord, consideredOf, waitNote, ledgerPicks, CONSIDERED_MAX, pickLine, poolNote, aloneNote, HAND_QUEUE_MS, HAND_RUN_MS, handSlackMs, handExecSlackMs, HUNG_RE, BUILD_BUDGET_MS, LOST_AFTER_MS };

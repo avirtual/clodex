@@ -205,14 +205,7 @@ function parseIntentLegacy(rawLine) {
     if (sub === 'done') return { type: 'team', sub, mode: positional[0] || null, body: '' };
     if (sub === 'worktrees') return { type: 'team', sub, value: positional[0] || null, body: '' };
     if (sub === 'hands') return { type: 'team', sub, value: positional[0] || null, body: '' };
-    if (sub === 'runner') {
-      const tokens = argStr.trim().split(/\s+/);
-      const flag = (k) => { const t = tokens.find((x) => x.startsWith(`${k}:`) && x.length > k.length + 1); return t ? t.slice(k.length + 1) : null; };
-      const runTs = tokens.filter((t) => t.startsWith('run:'));
-      const handEnv = tokens.filter((t) => t.startsWith('hand-env:')).map((t) => t.slice('hand-env:'.length));
-      const fallback = flag('fallback');
-      return { type: 'team', sub, value: positional[0] || null, hands: flag('hands'), gate: flag('gate'), ...(fallback != null ? { fallback } : {}), ...(runTs.length ? { run: runTs[0].slice('run:'.length) } : {}), ...(runTs.length > 1 ? { runRepeated: true } : {}), ...(handEnv.length ? { handEnv } : {}), body: '' };
-    }
+    if (sub === 'runner') return registry.parseTeamRunner(argStr, positional);
     if (sub === 'role-rename') return { type: 'team', sub, name: positional[0] || null, to: positional[1] || null, body: '' };
     // t701's gather, landed here in the same commit as parseTeam's — the same
     // lockstep rule the task copy above states, and the reason it is stated:
