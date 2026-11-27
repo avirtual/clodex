@@ -21976,7 +21976,6 @@ function mkTrustSeedSeat(t) {
 
 test('t2441: a seat messages dir that is a symlink, holds a dotfile or holds a subdirectory is neither added nor trusted, with one WARN and one inbox note', async (t) => {
   const p = require('node:path');
-  const os = require('node:os');
   const run = async (plant) => {
     const rig = mkTrustSeedSeat(t);
     const own = p.join(rig.h.root, 'sessions', 'tt1', 'messages');
@@ -21999,7 +21998,7 @@ test('t2441: a seat messages dir that is a symlink, holds a dotfile or holds a s
   const withoutOwn = clean.shape.filter((a, i, all) => a !== '<root>/sessions/tt1/messages' && all[i + 1] !== '<root>/sessions/tt1/messages');
 
   const cases = [
-    ['symlink', (own) => fsReal.symlinkSync(fsReal.mkdtempSync(p.join(os.tmpdir(), 'clx-msg-elsewhere-')), own), 'is a symlink'],
+    ['symlink', (own) => fsReal.symlinkSync(mkTmpRoot('clx-msg-elsewhere-'), own), 'is a symlink'],
     ['.mcp.json', (own) => { fsReal.mkdirSync(own, { mode: 0o700 }); fsReal.writeFileSync(p.join(own, '.mcp.json'), '{}'); }, "holds '.mcp.json', which is not a delivered message file"],
     ['subdirectory', (own) => { fsReal.mkdirSync(p.join(own, '.claude'), { recursive: true, mode: 0o700 }); fsReal.chmodSync(own, 0o700); }, "holds '.claude', which is not a delivered message file"],
   ];
