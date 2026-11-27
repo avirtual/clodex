@@ -547,9 +547,9 @@ test('a named hand run on the push wire runs scripts/run-tests.js --reporter=dot
   const { conn } = peerFor(t, port);
   const ledgerFile = path.join(root, 'logs', 'suite-runs.jsonl');
   const { client } = clientFor(conn, { ledgerFile, randomUUID: () => 'run-named' });
-  const out = await client.run({ peer: 'runner-1', tree: repo, kind: 'hand', scope: 'own', named: true, files: ['test/b.test.js', 'test/a.test.js'] });
+  const out = await client.run({ peer: 'runner-1', tree: repo, kind: 'hand', scope: 'own', named: 2, files: ['test/b.test.js', 'test/a.test.js'] });
   assert.strictEqual(out.unknown, null, `run unknown: ${out.unknown}`);
   assert.deepStrictEqual(argvs, [['scripts/run-tests.js', '--reporter=dot', 'test/b.test.js', 'test/a.test.js']]);
   const lines = fs.readFileSync(ledgerFile, 'utf8').trim().split('\n').map((l) => JSON.parse(l));
-  assert.deepStrictEqual(lines.map((l) => [l.phase, l.scope, l.named]), [['start', 'own', true], ['end', 'own', true]]);
+  assert.deepStrictEqual(lines.map((l) => [l.phase, l.scope, l.named]), [['start', 'own', 2], ['end', 'own', 2]]);
 });

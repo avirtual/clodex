@@ -265,8 +265,9 @@ function parseTeam(cleaned) {
     const flag = (k) => { const t = tokens.find((x) => x.startsWith(`${k}:`) && x.length > k.length + 1); return t ? t.slice(k.length + 1) : null; };
     const runTs = tokens.filter((t) => t.startsWith('run:'));
     const handEnv = tokens.filter((t) => t.startsWith('hand-env:')).map((t) => t.slice('hand-env:'.length));
+    const queueTs = tokens.filter((t) => t.startsWith('queue:'));
     const fallback = flag('fallback');
-    return { type: 'team', sub, value: positional[0] || null, hands: flag('hands'), gate: flag('gate'), ...(fallback != null ? { fallback } : {}), ...(runTs.length ? { run: runTs[0].slice('run:'.length) } : {}), ...(runTs.length > 1 ? { runRepeated: true } : {}), ...(handEnv.length ? { handEnv } : {}), ...(positional[0] === 'add' || positional[0] === 'rm' ? { target: positional[1] || null } : {}), body: '' };
+    return { type: 'team', sub, value: positional[0] || null, hands: flag('hands'), gate: flag('gate'), ...(fallback != null ? { fallback } : {}), ...(runTs.length ? { run: runTs[0].slice('run:'.length) } : {}), ...(runTs.length > 1 ? { runRepeated: true } : {}), ...(queueTs.length ? { queue: queueTs[0].slice('queue:'.length) } : {}), ...(queueTs.length > 1 ? { queueRepeated: true } : {}), ...(handEnv.length ? { handEnv } : {}), ...(positional[0] === 'add' || positional[0] === 'rm' ? { target: positional[1] || null } : {}), body: '' };
   }
   if (sub === 'role-rename') return { type: 'team', sub, name: positional[0] || null, to: positional[1] || null, body: '' };
   if (sub === 'gather') return { type: 'team', sub, dry: positional[0] === 'dry', body: '' };

@@ -13,6 +13,9 @@ blocks a release.
 
 ## Unreleased
 
+- Test runners: a team can set how long its hand and shadow test runs wait for a free slot on a runner: `[agent:team runner queue:<minutes>]`, 5 to 120. The defaults stay 15 minutes for hands and 20 for shadow gate runs.
+- A hand's named-files run is now marked as such, with its file count, in the run records.
+
 ## 5.202.0 — 2026-11-27
 
 - An agent that asks for a restart is no longer told "Clodex restarted" before the restart has happened (seen when the web UI reloaded while the restart was waiting for test jobs); the notice now comes only from the relaunched app.

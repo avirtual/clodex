@@ -405,7 +405,7 @@ if (LEDGER) {
     phase: 'start',
     kind: process.env.CLODEX_SUITE_KIND || 'manual',
     scope: sweeping ? 'full' : 'own',
-    ...(!sweeping && process.env.CLODEX_SUITE_NAMED === '1' ? { named: true } : {}),
+    ...(!sweeping && /^[1-9][0-9]*$/.test(process.env.CLODEX_SUITE_NAMED || '') ? { named: Number(process.env.CLODEX_SUITE_NAMED) } : {}),
     ticket: process.env.CLODEX_SUITE_TICKET || null,
     seat: process.env.CLODEX_SUITE_SEAT || null,
     tree: path.resolve(ROOT),

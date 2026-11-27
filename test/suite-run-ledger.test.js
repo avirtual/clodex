@@ -209,21 +209,22 @@ test('ledger: the start carries where local, queuedAt no later than startedAt, a
   assert.ok(Date.parse(start.queuedAt) <= Date.parse(start.startedAt), `${start.queuedAt} <= ${start.startedAt}`);
 });
 
-test('ledger: a named run\'s start says named:true, and the digest hands the runner CLODEX_SUITE_NAMED only for files', () => {
+test('ledger: a named run\'s start says named:<file count>, and the digest hands the runner CLODEX_SUITE_NAMED only for files', () => {
   const { root } = mkRunnerRoot();
   const file = path.join(root, 'ledger.jsonl');
-  const named = runRunner(root, { CLODEX_SUITE_LEDGER: file, CLODEX_SUITE_RUN_ID: 'run-9', CLODEX_SUITE_NAMED: '1' });
+  const named = runRunner(root, { CLODEX_SUITE_LEDGER: file, CLODEX_SUITE_RUN_ID: 'run-9', CLODEX_SUITE_NAMED: '2' });
   assert.strictEqual(named.totals, 'TOTALS: 3 pass, 0 fail, 3 tests', 'ENTER: the named run was green');
   const own = runRunner(root, { CLODEX_SUITE_LEDGER: file, CLODEX_SUITE_RUN_ID: 'run-10' });
   assert.strictEqual(own.totals, 'TOTALS: 3 pass, 0 fail, 3 tests', 'ENTER: the own run was green');
   const starts = readLedger(file).filter((r) => r.phase === 'start');
-  assert.deepStrictEqual(starts.map((r) => [r.id, r.scope, r.named]), [['run-9', 'own', true], ['run-10', 'own', undefined]]);
+  assert.deepStrictEqual(starts.map((r) => [r.id, r.scope, r.named]), [['run-9', 'own', 2], ['run-10', 'own', undefined]]);
 
   const probeRoot = fs.realpathSync(mkTmpRoot('clx-ledger-named-'));
   const probe = path.join(probeRoot, 'probe.json');
   fs.mkdirSync(path.join(probeRoot, 'scripts'));
   fs.mkdirSync(path.join(probeRoot, 'test'));
   fs.writeFileSync(path.join(probeRoot, 'test', 'a.test.js'), GREEN);
+  fs.writeFileSync(path.join(probeRoot, 'test', 'b.test.js'), GREEN);
   fs.writeFileSync(path.join(probeRoot, 'scripts', 'run-tests.js'), [
     "const fs = require('fs');",
     `fs.writeFileSync(${JSON.stringify(probe)}, JSON.stringify(process.env.CLODEX_SUITE_NAMED || null));`,
@@ -231,7 +232,7 @@ test('ledger: a named run\'s start says named:true, and the digest hands the run
   ].join('\n'));
   const env = cleanEnv({ HOME: path.join(probeRoot, 'home'), CLODEX_HOME: path.join(probeRoot, 'home', '.clodex') });
   delete env.CLODEX_RUN_TESTS_REEXEC;
-  const res = spawnSync(process.execPath, [DIGEST], { cwd: probeRoot, input: '{"files":["test/a.test.js"]}', encoding: 'utf8', timeout: 60000, env });
+  const res = spawnSync(process.execPath, [DIGEST], { cwd: probeRoot, input: '{"files":["test/a.test.js","test/b.test.js"]}', encoding: 'utf8', timeout: 60000, env });
   assert.ok(fs.existsSync(probe), `ENTER: the stub runner ran (${res.stderr})`);
-  assert.strictEqual(JSON.parse(fs.readFileSync(probe, 'utf8')), '1');
+  assert.strictEqual(JSON.parse(fs.readFileSync(probe, 'utf8')), '2');
 });

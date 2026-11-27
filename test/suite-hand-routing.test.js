@@ -383,6 +383,18 @@ for (const name of Object.keys(CAPTURED)) {
   });
 }
 
+test('t2425: a failing remote named run whose output names no failing test drops the empty names field before the runner and box', async () => {
+  const captured = { status: 1, stdout: '..X\nTOTALS: 2 pass, 1 fail, 3 tests\n', stderr: '' };
+  const root = mkRoot(captured);
+  fs.mkdirSync(path.join(root, 'test'));
+  fs.writeFileSync(path.join(root, 'test', 'a.test.js'), '');
+  const leaf = path.basename(root);
+  const r = await runWithHost(root, '{"files":["test/a.test.js"]}', path.join(root, 'h'), () => [
+    { run: 'remote', runner: 'avh', ...captured, signal: null, error: null, unknown: null, treeHash: TREE, note: null, box: { isolation: 'container', imageId: 'sha256:0123456789abcdef' } },
+  ]);
+  assert.strictEqual(wall(r.digest), `[${leaf}] named: 1 file: 2/3 green, 1 failing (<WALL>) (~/.clodex/test-failures/last.txt) (runner avh) (box container, image 0123456789ab)`);
+});
+
 test('unknown: the digest says unknown and why, exits non-zero, and no local run starts; a local answer starts exactly one', async () => {
   const root = mkRoot(CAPTURED.green);
   const leaf = path.basename(root);
@@ -1130,6 +1142,57 @@ test('t2419: a box:true team with a definition sends it from the exec, and the e
   assert.deepStrictEqual(child.kills, ['SIGKILL']);
 });
 
+const fnless = (o) => Object.fromEntries(Object.entries(o).map(([k, v]) => [k, typeof v === 'function' ? 'function' : v]));
+
+test('t2425: with no queueMs the hand run options are exactly the 15 min queue ones', async (t) => {
+  const client = stubClient({ hang: true });
+  const team = { ...teamWith('all'), root: fs.realpathSync(mkTmpRoot('suite-route-tree-')) };
+  const f = execFixture(t, 'clodex-run-tests.js', { client, team });
+  await turns(2);
+  f.children[0].emit('message', ask(team.root));
+  await turns();
+  assert.strictEqual(client.runs.length, 1, 'ENTER: the job is in flight');
+  assert.deepStrictEqual(fnless(client.runs[0]), {
+    peer: 'p1', wire: 'push', name: 'runner-1', tree: team.root, kind: 'hand', scope: 'full', team: 'tm', ticket: null, seat: 'hand-1',
+    files: [], flags: {}, setup: null, env: {},
+    queueBudgetMs: 900000, runBudgetMs: 2280000, timeoutMs: 1260000, budgetMs: 3180000, route: 'hands:all',
+    shouldStop: 'function', onSubmitted: 'function', onProgress: 'function', reroute: 'function', onReroute: 'function',
+  });
+});
+
+test('t2425: a team queueMs of 45 min is the hand queue budget, and the client budget and exec ceiling grow by 30 min', async (t) => {
+  const client = stubClient({ hang: true });
+  const team = { ...teamWith('all'), testRunner: { peer: 'runner-1', hands: 'all', queueMs: 45 * 60 * 1000 }, root: fs.realpathSync(mkTmpRoot('suite-route-tree-')) };
+  const f = execFixture(t, 'clodex-run-tests.js', { client, team });
+  await turns(2);
+  const child = f.children[0];
+  child.emit('message', ask(team.root));
+  await turns();
+  assert.strictEqual(client.runs.length, 1, 'ENTER: the job is in flight');
+  const r = client.runs[0];
+  assert.deepStrictEqual([r.queueBudgetMs, r.runBudgetMs, r.timeoutMs, r.budgetMs], [2700000, 2280000, 1260000, 4980000]);
+  mock.timers.tick(5000 + 19 * 60 * 1000 + 30 * 60 * 1000 - 1);
+  assert.deepStrictEqual(child.kills, []);
+  mock.timers.tick(1);
+  assert.deepStrictEqual(child.kills, ['SIGKILL']);
+});
+
+test('t2425: a box team with a definition and queueMs 45 min adds the 45 min queue again for the build', async (t) => {
+  const client = stubClient({ hang: true });
+  const team = boxTeam(true, { queueMs: 45 * 60 * 1000 });
+  const f = execFixture(t, 'clodex-run-tests.js', { client, team });
+  await turns(2);
+  const child = f.children[0];
+  child.emit('message', ask(team.root));
+  await turns();
+  assert.strictEqual(client.runs.length, 1, 'ENTER: the job is in flight');
+  assert.strictEqual(client.runs[0].queueBudgetMs, 2700000);
+  mock.timers.tick(5000 + 19 * 60 * 1000 + 30 * 60 * 1000 + 70 * 60 * 1000 - 1);
+  assert.deepStrictEqual(child.kills, []);
+  mock.timers.tick(1);
+  assert.deepStrictEqual(child.kills, ['SIGKILL']);
+});
+
 test('t2419: a box:true team with no definition sends box:true and keeps the plain hand ceiling', async (t) => {
   const client = stubClient({ hang: true });
   const team = boxTeam(false);
@@ -1177,7 +1240,7 @@ test('host: a named-files call routes exactly as scope own — local under hands
   all.host.onMessage(ask(all.dir, NAMED));
   assert.strictEqual((await all.done).run, 'remote');
   const o = client.runs[0];
-  assert.deepStrictEqual([o.scope, o.named, o.files, o.route], ['own', true, ['test/b.test.js', 'test/a.test.js'], 'hands:all']);
+  assert.deepStrictEqual([o.scope, o.named, o.files, o.route], ['own', 2, ['test/b.test.js', 'test/a.test.js'], 'hands:all']);
 });
 
 for (const [name, extra] of [
