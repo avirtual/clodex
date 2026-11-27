@@ -896,7 +896,7 @@ test('t2364: a pooled box:true team keeps the box-definition tally and shows eac
 });
 
 test('t2328: no runner line in the label table prints null or undefined', () => {
-  assert.strictEqual(LABEL_ROWS.length, 7, 'ENTER: all seven rows are in the table');
+  assert.strictEqual(LABEL_ROWS.length, 8, 'ENTER: all eight rows are in the table');
   for (const [name, , , , want] of LABEL_ROWS) assert.doesNotMatch(want, /null|undefined/, name);
 });
 
