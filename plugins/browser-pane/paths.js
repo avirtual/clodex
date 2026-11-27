@@ -6,7 +6,7 @@ const path = require('node:path');
 
 const REMOTE = 'downloads to a folder need a local session (this one is remote)';
 const NAME_MAX = 120;
-const CTRL = new RegExp('[\\u0000-\\u001F\\u007F]+', 'g');
+const CTRL = new RegExp('[\\u0000-\\u001F\\u007F-\\u009F\\u200B-\\u200F\\u2028-\\u202E\\u2066-\\u2069\\uFEFF]+', 'g');
 const MIME_EXT = {
   'application/pdf': '.pdf',
   'text/html': '.html',

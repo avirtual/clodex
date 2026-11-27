@@ -467,9 +467,9 @@ function createDownloadRouter({ profile, ses, services, downloadsRoot, policyDen
   const reserved = new Set();
   const r = { waiters };
   const drop = (w) => { const i = waiters.indexOf(w); if (i >= 0) waiters.splice(i, 1); };
-  r.expect = ({ url = null, dir, nameHint = null, wc = null }) => {
+  r.expect = ({ url = null, dir, nameHint = null, wc = null, watch = false }) => {
     const actor = actorOf(wc) || {};
-    const w = { url, dir, nameHint, wc, item: null, service: actor.service || null, seat: actor.seat || null };
+    const w = { url, dir, nameHint, wc, watch, item: null, service: actor.service || null, seat: actor.seat || null };
     w.started = new Promise((res) => { w.onStart = res; });
     w.done = new Promise((res, rej) => { w.resolve = res; w.reject = rej; });
     w.done.catch(() => {});
@@ -490,7 +490,7 @@ function createDownloadRouter({ profile, ses, services, downloadsRoot, policyDen
     if (hit) {
       item.cancel();
       if (w) w.reject(deniedError(owner, url, hit, 'download'));
-      else lost('policy', item.getFilename());
+      if (!w || w.watch) lost('policy', item.getFilename());
       return;
     }
     const mime = item.getMimeType();
@@ -503,7 +503,7 @@ function createDownloadRouter({ profile, ses, services, downloadsRoot, policyDen
     } catch (e) {
       item.cancel();
       if (w) w.reject(codedError('DOWNLOAD_FAILED', `DOWNLOAD_FAILED: cannot write to ${dir} (${e.code || e.message})`));
-      else lost('unwritable', item.getFilename());
+      if (!w || w.watch) lost('unwritable', item.getFilename());
       return;
     }
     item.setSavePath(file);
@@ -1215,7 +1215,7 @@ function run(electron, ctx) {
 
   async function clickWatched(svc, n, el, nav, dir) {
     const wc = svc.wc;
-    const w = routerFor(profileOf(svc.name), svc.ses).expect({ dir, wc });
+    const w = routerFor(profileOf(svc.name), svc.ses).expect({ dir, wc, watch: true });
     let began = false;
     let pdf = false;
     let acting = true;
@@ -1235,7 +1235,7 @@ function run(electron, ctx) {
       if (began) out.download = await settleDownload(w, deadline);
       else if (svc.popupUrl && await inMain(wc, scripts.CONTENT_TYPE) === 'application/pdf') {
         w.cancel();
-        const pw = routerFor(profileOf(svc.name), svc.ses).expect({ url: wc.getURL(), dir });
+        const pw = routerFor(profileOf(svc.name), svc.ses).expect({ url: wc.getURL(), dir, watch: true });
         wc.downloadURL(wc.getURL());
         out.download = await settleDownload(pw, deadline);
         if (out.download) out.download.url = svc.popupUrl;

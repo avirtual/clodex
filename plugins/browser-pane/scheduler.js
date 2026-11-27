@@ -499,7 +499,7 @@ function createScheduler({
     const handle = seat ? handles.get(seat) : null;
     if (!handle) return;
     const near = [services.get(service), ...[...services.entries()].filter(([n]) => n !== service && profileOf(n) === profileOf(service)).map(([, s]) => s)];
-    const s = near.find((x) => x && (pendingFor(seat)(x.inflight) || x.queue.some(pendingFor(seat))));
+    const s = near.find((x) => x && pendingFor(seat)(x.inflight));
     if (s) s.notes.push({ seat, line });
     else handle.inject(`${replies.PREFIX} ${line}`);
   }

@@ -206,8 +206,9 @@ function safePath(file) {
 }
 
 function typeOf(mime, file) {
-  const m = String(mime || '').trim();
-  if (m && !/^application\/octet-stream\b/i.test(m)) return m;
+  const base = String(mime || '').split(';')[0].trim();
+  const m = /^[\w.+-]+\/[\w.+-]+$/.test(base) ? base : '';
+  if (m && !/^application\/octet-stream$/i.test(m)) return m;
   return TYPE_BY_EXT[path.extname(String(file || '')).slice(1).toLowerCase()] || m || 'unknown type';
 }
 

@@ -2862,7 +2862,7 @@ test('child: partition, numbers dir, downloads dir, cookie watch and download ro
   assert.ok(CHILD_SRC.includes("ses.on('will-download', (_e, item, from) => {"));
   assert.ok(CHILD_SRC.includes('if (!w) w = waiters.find((x) => !x.url && x.wc && x.wc === from);\n'));
   assert.ok(!CHILD_SRC.includes('waiters.find((x) => !x.url);'), 'no cross-tab URL-less fallback');
-  assert.deepStrictEqual(['.expect({ dir, wc });', '.expect({ url, dir, nameHint, wc: svc.wc });', '.expect({ dir, nameHint, wc });'].map((x) => CHILD_SRC.split(x).length - 1), [1, 1, 1]);
+  assert.deepStrictEqual(['.expect({ dir, wc, watch: true });', '.expect({ url, dir, nameHint, wc: svc.wc });', '.expect({ dir, nameHint, wc });'].map((x) => CHILD_SRC.split(x).length - 1), [1, 1, 1]);
   assert.ok(CHILD_SRC.includes("const { NAME_RE, profileOf, tabOf } = require('./grammar');"));
 });
 
