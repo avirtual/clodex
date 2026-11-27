@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+- Security: a seat can no longer be named `.claude`, `CLAUDE.md` or `.mcp.json`, names the Claude CLI reads as configuration inside a trusted messages folder.
+
 ## 5.208.0 — 2026-11-27
 
 - Test runners: a job waiting in one pool member's queue moves to another member that is idle and ready.

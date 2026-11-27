@@ -30042,7 +30042,7 @@ ${lines[j].trimEnd()}` : ` ${lines[j].trim()}`;
     "renderer/lib/name-validity.js"(exports, module) {
       "use strict";
       var SESSION_NAME_RE = /^(?!\.+$)[a-zA-Z0-9._-]{1,64}$/;
-      var RESERVED_SEAT_NAMES = /* @__PURE__ */ new Set([".claims"]);
+      var RESERVED_SEAT_NAMES = /* @__PURE__ */ new Set([".claims", ".claude", "claude.md", ".mcp.json"]);
       var LEGACY_CLAIM_RE = /^\.resend\.|\.draining\.[a-z]+\.\d+$/i;
       var isReservedSeatName = (name) => RESERVED_SEAT_NAMES.has(String(name).toLowerCase()) || LEGACY_CLAIM_RE.test(String(name));
       var RESERVED_SENDER_NAMES = /* @__PURE__ */ new Set(["reminder", "reboot", "ticket-loop", "ticket-watchdog", "monitor", "memory", "exec", "terminal", "team", "clodex-team", "wirescope", "deploy-fix", "permission", "clodex", "user", "relay", "ctl-admin", "peer", "ext"]);
@@ -30054,7 +30054,7 @@ ${lines[j].trimEnd()}` : ` ${lines[j].trim()}`;
         live: "That name is taken by a live session \u2014 pick another name.",
         persisted: "That name is taken by an archived session \u2014 unarchive it or pick another name.",
         taken: "That name is already taken \u2014 pick another name.",
-        reserved: "That name is reserved by the mail store \u2014 pick another name."
+        reserved: "That name is reserved by Clodex \u2014 pick another name."
       };
       function asSet(v) {
         if (v instanceof Set) return v;
