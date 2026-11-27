@@ -454,7 +454,7 @@ test('download notes: the download verb on an over-cap file answers at once with
   router = r.router;
   await r.submit('hand-a', '[agent:browser read utility]');
   r.out.splice(0);
-  await r.submit('hand-a', '[agent:browser download utility https://dl.example.com/big.zip?sig=x]');
+  await r.submit('hand-a', '[agent:browser download utility] https://dl.example.com/big.zip?sig=x');
   assert.deepStrictEqual(r.out.map(([, t]) => t), ['[agent:browser] error: DOWNLOAD_FAILED: larger than 500 MB: 600 MB declared from https://dl.example.com']);
   await r.submit('hand-a', '[agent:browser read utility]');
   assert.strictEqual(r.out.length, 2);
