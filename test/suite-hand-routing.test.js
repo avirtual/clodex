@@ -523,7 +523,7 @@ test('host: an unreachable runner reports unknown at the 15-minute queue budget'
   assert.strictEqual(clock, 15 * 60 * 1000);
 });
 
-test('host: a job that keeps running reports unknown at the 21-minute run budget and is cancelled', async () => {
+test('host: a job that keeps running reports unknown at the 21-minute run limit plus the 17-minute setup slack and is cancelled', async () => {
   let clock = 0;
   const { conn, calls } = stubConn((m, p) => {
     const w = /[?&]wait=(\d+)/.exec(p);
@@ -533,8 +533,8 @@ test('host: a job that keeps running reports unknown at the 21-minute run budget
   const { client } = clientWith(conn, { now: () => clock });
   const f = hostFor({ client });
   f.host.onMessage(ask(f.dir));
-  assert.deepStrictEqual(await f.done, { run: 'remote', runner: 'runner-1', unknown: 'no result within the 1260000ms run budget (cancelled)' });
-  assert.strictEqual(clock, 25000 + 21 * 60 * 1000);
+  assert.deepStrictEqual(await f.done, { run: 'remote', runner: 'runner-1', unknown: 'no result within the 2280000ms run budget (cancelled)' });
+  assert.strictEqual(clock, 25000 + 38 * 60 * 1000);
   assert.ok(calls.includes('DELETE /api/suite/jobs/run-1'), calls.join('\n'));
 });
 
