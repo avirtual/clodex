@@ -53,7 +53,7 @@
 | `sanitizeSandboxPorts` | an array of container, host, proto, allInterfaces, label rows; a row without a valid container port is dropped | none | none | unpinned |
 | `sanitizeSandboxLimits` | a cpus, memory, pids, shmSize object, each null unless well-typed | none | none | unpinned |
 | `sanitizeBoxes` | the persisted boxes list, deduped by id with malformed and reserved ids dropped; null only for non-array input | none (reads BOX_ID_RE, RESERVED_BOX_IDS) | sanitizeSandbox | unpinned |
-| `sanitizeRebootNotice` | the pending reboot notice normalised to name, at, reason, attempts and a string launch when present, or null without a name | none | none | stores.test.js |
+| `sanitizeRebootNotice` | the pending reboot notice normalised to name, at, reason, attempts and a string launch when present, or null without a name | none | none | unpinned |
 | `sanitizeTerminalReports` | the tri-state terminalReports from the current key, the legacy boolean, or neither (absent resolves to off) | none | none | unpinned |
 | `sanitizeSpeakRate` | an integer words-per-minute rate in 80..400, else the shipped 210 | none | none | spoken-replies.test.js |
 
