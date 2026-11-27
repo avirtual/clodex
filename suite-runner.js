@@ -1626,5 +1626,5 @@ function createSuiteRunner({
 
 module.exports = {
   createSuiteRunner, noneIsolation, resolveFs, userIsolation, envIdentity, jobPaths, statePaths, jobPath, jobLang, DEFAULT_LIMITS, BOX_DEFINITION_MAX,
-  BUILD_TIMEOUT_MS, BUILD_COOL_OFF_MS, BUILDS_PER_DAY, BUILD_DISK_FLOOR, boxPrunePlan,
+  BUILD_TIMEOUT_MS, BUILD_COOL_OFF_MS, BUILDS_PER_DAY, BUILD_DISK_FLOOR, boxPrunePlan, MAX_SLOTS,
 };

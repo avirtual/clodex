@@ -935,7 +935,7 @@ test('GET /api/resources: the document a fully-injected node serves', async () =
     const r = await req(port, '/api/resources');
     assert.strictEqual(r.status, 200);
     const doc = JSON.parse(r.body);
-    assert.deepStrictEqual(doc, { ok: true, version: 6, resources: RESOURCES });
+    assert.deepStrictEqual(doc, { ok: true, version: 7, resources: RESOURCES });
     assert.deepStrictEqual(doc.resources.find((x) => x.name === 'sessions').subresources['client-token'], ['put']);
   });
 });

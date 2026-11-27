@@ -2014,7 +2014,7 @@ const sandboxManager = enableSandbox ? createSandboxManager({
 // Built only when the host granted the capability, so a null service means no
 // handler is registered rather than one that decides at call time.
 const { createCtlService } = require('./ctl-service');
-const ctlService = enableCtl ? createCtlService({}) : null;
+const ctlService = enableCtl ? createCtlService({ localPort: () => (remoteServer ? remoteServer.port : null) }) : null;
 
 const PASSIVE_TERM_KIND = 'terminal-passive';
 const { createDrawerPtys } = require('./drawer-pty');

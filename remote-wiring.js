@@ -10,6 +10,7 @@ const { spillDirFor } = require('./intent-spill');
 const { durableMessageCopyOf } = require('./file-resolve');
 const { planRemoteRestart } = require('./restart-waiter');
 const { createTicketsStore } = require('./tickets-store');
+const { sanitizeSuiteRunner } = require('./stores');
 // Exec grants are LOCAL-ONLY — this pure leaf sanitizes them off the wire in both
 // directions (require-const, like pathFor above; no injected-seam needed).
 const { withoutExecGrants, withoutLocalOnly } = require('./session-args');
@@ -154,6 +155,14 @@ function suiteRunnerOptions(env, root, { platform = process.platform, setting = 
     ...(s.buildBoxes === true ? { buildBoxes: true } : {}),
     forced,
   };
+}
+
+function suiteSlotsRefusal(v) {
+  const { MAX_SLOTS } = require('./suite-runner');
+  if (typeof v !== 'number') return `slots must be a number from 1 to ${MAX_SLOTS}`;
+  if (!Number.isInteger(v)) return `slots must be a whole number from 1 to ${MAX_SLOTS}`;
+  if (v < 1 || v > MAX_SLOTS) return `slots must be from 1 to ${MAX_SLOTS}, not ${v}`;
+  return null;
 }
 
 function offerCallbacks({ getBoxOffer, getOfferFacts, offerDirectory, dialers, onChange } = {}) {
@@ -834,6 +843,7 @@ function createRemoteWiring(deps) {
         suiteRunner: getSuiteRunner(),
         suiteRunnerError: () => suiteRunnerError,
         listTestjobs: suiteActivity,
+        setTestjobSlots: setSuiteRunnerSlots,
         readTestjobOutput: suiteOutput,
         suiteDesk: suiteDesk || null,
         suiteToken: process.env.CLODEX_SUITE_TOKEN || null,
@@ -1557,6 +1567,26 @@ function createRemoteWiring(deps) {
     return { pending: false, running: 0 };
   }
 
+  function setSuiteRunnerSlots(slots) {
+    const refusal = suiteSlotsRefusal(slots);
+    if (refusal) return { ok: false, status: 400, error: refusal };
+    const store = getUiSettings();
+    const cur = store.get().suiteRunner;
+    if (!cur) return { ok: false, status: 409, error: 'this node has no test runner setting' };
+    if (!suiteRunnerOptions(process.env, REGISTRY_DIR, { setting: cur })) return { ok: false, status: 409, error: 'the test runner is off on this node' };
+    const next = sanitizeSuiteRunner({ ...cur, slots });
+    if (JSON.stringify(next) === JSON.stringify(cur)) {
+      const running = drainPending && suiteRunner && typeof suiteRunner.activeCount === 'function' ? suiteRunner.activeCount() : 0;
+      return { ok: true, slots, applied: drainPending ? 'after-drain' : 'now', running };
+    }
+    store.set({ suiteRunner: next });
+    const applied = applySuiteRunner();
+    log.info('remote', applied.pending
+      ? `test runner slots set to ${slots}, applies when ${applied.running} running job(s) finish`
+      : `test runner slots set to ${slots}`);
+    return { ok: true, slots, applied: applied.pending ? 'after-drain' : 'now', running: applied.running };
+  }
+
   function shutdownRemoteServer() {
     closed = true;
     if (suiteRunner) suiteRunner.close();
@@ -1567,10 +1597,10 @@ function createRemoteWiring(deps) {
   }
 
   return {
-    syncRemoteServer, refreshRemoteToken, shutdownRemoteServer, suiteRunnerState, suiteRunnerBusy, reloadSuiteRunner, applySuiteRunner,
+    syncRemoteServer, refreshRemoteToken, shutdownRemoteServer, suiteRunnerState, suiteRunnerBusy, reloadSuiteRunner, applySuiteRunner, setSuiteRunnerSlots,
     suiteActivity, suiteActivityNow, refreshSuiteActivity: refreshActivity, suiteOutput, fenceSuiteRunner, suiteRestartJobs,
     getSuiteEngine:() => (closed ? null : getSuiteRunner()),
   };
 }
 
-module.exports = { createRemoteWiring, suiteRunnerOptions, suiteRunnerForced, startSuiteRunner, offerCallbacks };
+module.exports = { createRemoteWiring, suiteRunnerOptions, suiteRunnerForced, suiteSlotsRefusal, startSuiteRunner, offerCallbacks };
