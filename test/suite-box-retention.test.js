@@ -201,3 +201,12 @@ test('t2413: a box row whose image is no longer listed is dropped after a succes
   await f.pass();
   assert.deepStrictEqual(f.cache(), { [`box:${H1}`]: T0 });
 });
+
+test('t2449: a box image the runner prunes drops its cached named box state, so the next named info answers no-image', async (t) => {
+  const f = await fixture(t, { images: [img(H1, 1)], cache: { [`box:${H1}`]: T0 } });
+  const want = { definitionHash: H1, rev: 1 };
+  f.at(T0 + 15 * DAY);
+  assert.strictEqual((await f.runner.info(want)).box.state, 'ready');
+  assert.deepStrictEqual((await f.pass()).images, [`clodex-box:${H1.slice(0, 12)}`]);
+  assert.deepStrictEqual((await f.runner.info(want)).box, { state: 'no-image', why: `no image for box ${H1.slice(0, 12)} on this runner` });
+});

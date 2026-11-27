@@ -1675,7 +1675,6 @@ function createSuiteRunner({
 
   function close() {
     closed = true;
-    namedBoxes.clear();
     if (interval) timers.clearInterval(interval);
     interval = null;
     if (activityTimer) timers.clearTimeout(activityTimer);
