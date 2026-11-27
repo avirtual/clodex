@@ -23,7 +23,7 @@ const H3 = '3'.repeat(64);
 const H4 = '4'.repeat(64);
 const img = (hash, n) => ({ hash, id: `sha256:${String(n).repeat(64)}`, labels: [`clodex.box=${hash}`], tags: [`clodex-box:${hash.slice(0, 12)}`], size: n * 1024 ** 3 });
 
-async function fixture(t, { images, cache = {}, fail = {}, refuse = new Set(), extraIds = [] }) {
+async function fixture(t, { images, cache = {}, fail = {}, refuse = new Set(), extraIds = [], buildBoxes = false }) {
   const root = mkTmpRoot('suite-box-retention-');
   const workRaw = path.join(root, 'work');
   fs.mkdirSync(workRaw);
@@ -56,7 +56,7 @@ async function fixture(t, { images, cache = {}, fail = {}, refuse = new Set(), e
   const runner = createSuiteRunner({
     root, work, isolation: noneIsolation({ user: 'suite-test', kill: () => {} }), now: () => clock, log: (s) => logs.push(s),
     timers: { setTimeout: () => ({}), clearTimeout: () => {}, setInterval: () => ({}), clearInterval: () => {} },
-    platform: 'linux', arch: 'x64', box,
+    platform: 'linux', arch: 'x64', box, buildBoxes,
   });
   t.after(() => { runner.close(); spawnSync('chmod', ['-R', 'u+w', root]); });
   const pass = async () => {
@@ -69,6 +69,7 @@ async function fixture(t, { images, cache = {}, fail = {}, refuse = new Set(), e
   };
   return {
     root, work, runner, rms, logs, images, pass,
+    rootReads: () => base.calls.filter((c) => c.args[0] === 'info' && c.args[2] === '{{.DockerRootDir}}').length,
     lists: () => base.calls.filter((c) => c.args[1] === 'ls' && c.args[c.args.length - 1] === 'label=clodex.box').length,
     cache: () => JSON.parse(fs.readFileSync(state.cache, 'utf8')),
     at: (ms) => { clock = ms; },
@@ -209,4 +210,16 @@ test('t2449: a box image the runner prunes drops its cached named box state, so 
   assert.strictEqual((await f.runner.info(want)).box.state, 'ready');
   assert.deepStrictEqual((await f.pass()).images, [`clodex-box:${H1.slice(0, 12)}`]);
   assert.deepStrictEqual((await f.runner.info(want)).box, { state: 'no-image', why: `no image for box ${H1.slice(0, 12)} on this runner` });
+});
+
+test('t2449: a prune drops the cached free-space reading, so the next can-build answer reads it again', async (t) => {
+  const f = await fixture(t, { images: [img(H1, 1)], cache: { [`box:${H1}`]: T0 }, buildBoxes: true });
+  const want = { definitionHash: H2, rev: 1 };
+  f.at(T0 + 15 * DAY);
+  assert.strictEqual((await f.runner.info(want, { origin: 'peer-a' })).box.state, 'can-build');
+  assert.strictEqual((await f.runner.info(want, { origin: 'peer-a' })).box.state, 'can-build');
+  assert.strictEqual(f.rootReads(), 1, 'ENTER: the second answer used the cached reading');
+  assert.deepStrictEqual((await f.pass()).images, [`clodex-box:${H1.slice(0, 12)}`]);
+  assert.strictEqual((await f.runner.info(want, { origin: 'peer-a' })).box.state, 'can-build');
+  assert.strictEqual(f.rootReads(), 2);
 });
