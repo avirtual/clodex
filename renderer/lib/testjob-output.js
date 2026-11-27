@@ -150,7 +150,7 @@ function streamLabel(stream, bytes) {
 }
 
 function createOutputFollower({
-  read, onUpdate = () => {}, timers = { setTimeout, clearTimeout },
+  read, onUpdate = () => {}, timers = { setTimeout: (fn, ms) => setTimeout(fn, ms), clearTimeout: (t) => clearTimeout(t) },
   pollMs = POLL_MS, maxBackoffMs = MAX_BACKOFF_MS, cap = PANE_CAP_CHARS, readBytes = READ_BYTES,
   stream = null, context = () => ({}),
 } = {}) {

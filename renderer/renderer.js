@@ -9366,38 +9366,51 @@ function paintTestOutput(view) {
   paintTestOutputStreams();
 }
 
+function showTestOutputFailure(e) {
+  console.error('Test Box Activity: could not show the output', e);
+  const status = document.getElementById('test-output-status');
+  status.textContent = `could not show the output: ${e && e.message ? e.message : String(e)}`;
+  status.style.display = '';
+}
+
 function followTestOutput() {
-  if (testOutputFollower) testOutputFollower.close();
-  const id = testOutputJob;
-  const stream = testOutputChoice.stream;
-  const follower = createOutputFollower({
-    read: ({ offset, length }) => window.api.suiteRunnerOutput(id, { stream, offset, length }),
-    onUpdate: (view) => { if (testOutputFollower === follower) paintTestOutput(view); },
-    stream,
-    context: testOutputContext,
-  });
-  testOutputFollower = follower;
-  testOutputRevealPending = true;
-  document.getElementById('test-output-text').textContent = '';
-  follower.setFollow(document.getElementById('test-output-follow').checked);
-  follower.start();
+  try {
+    if (testOutputFollower) testOutputFollower.close();
+    const id = testOutputJob;
+    const stream = testOutputChoice.stream;
+    const follower = createOutputFollower({
+      read: ({ offset, length }) => window.api.suiteRunnerOutput(id, { stream, offset, length }),
+      onUpdate: (view) => {
+        if (testOutputFollower !== follower) return;
+        try { paintTestOutput(view); } catch (e) { showTestOutputFailure(e); }
+      },
+      stream,
+      context: testOutputContext,
+    });
+    testOutputFollower = follower;
+    testOutputRevealPending = true;
+    document.getElementById('test-output-text').textContent = '';
+    follower.setFollow(document.getElementById('test-output-follow').checked);
+    follower.start();
+  } catch (e) { showTestOutputFailure(e); }
 }
 
 function openTestOutput(id, title) {
-  testOutputJob = id;
-  testOutputChoice.open(id, testActivityJob(id));
-  document.getElementById('test-output-title').textContent = title;
-  testOutputPane.classList.remove('hidden');
-  document.getElementById('test-activity-dialog').classList.add('output-open');
-  markTestActivityRows();
-  followTestOutput();
-  paintTestOutputStreams();
-  const row = testActivityJobRows().find((r) => r.dataset.jobId === id);
-  if (row) row.scrollIntoView({ block: 'nearest' });
-  testOutputPane.scrollIntoView({ block: 'nearest' });
-  document.getElementById('test-output-text').focus({ preventScroll: true });
+  try {
+    testOutputJob = id;
+    testOutputChoice.open(id, testActivityJob(id));
+    document.getElementById('test-output-title').textContent = title;
+    testOutputPane.classList.remove('hidden');
+    document.getElementById('test-activity-dialog').classList.add('output-open');
+    markTestActivityRows();
+    followTestOutput();
+    paintTestOutputStreams();
+    const row = testActivityJobRows().find((r) => r.dataset.jobId === id);
+    if (row) row.scrollIntoView({ block: 'nearest' });
+    testOutputPane.scrollIntoView({ block: 'nearest' });
+    document.getElementById('test-output-text').focus({ preventScroll: true });
+  } catch (e) { showTestOutputFailure(e); }
 }
-
 function closeTestOutput() {
   if (testOutputFollower) testOutputFollower.close();
   testOutputFollower = null;

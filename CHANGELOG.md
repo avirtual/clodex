@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+- Test Box Activity: a job's output now actually appears; the pane called the browser's timers in a way a window refuses, so nothing was ever read.
+
 ## 5.205.0 — 2026-11-27
 
 - Browser pane: a download that is refused or lost is reported instead of vanishing, a download that finishes after the action's reply is announced to the agent that started it, and `--to` on a click stays armed until the download starts, your next action, or 120 s, and says so. A navigation the pane blocks right after an agent's action is reported to that agent.
