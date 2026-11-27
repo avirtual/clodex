@@ -225,8 +225,8 @@ const TEST_RUNNER_GATE = ['off', 'shadow', 'on'];
 const TEST_RUNNER_WIRE_PUSH = 'push';
 const TEST_RUNNER_WIRE = [TEST_RUNNER_WIRE_PUSH, 'pull'];
 const TEST_RUNNER_FALLBACK = ['home', 'hold'];
-const TEST_RUNNER_PATCH_KEYS = ['peer', 'hands', 'gate', 'wire', 'pool', 'fallback', 'runMs', 'handEnv', 'queueMs', 'exclusive'];
-const TEST_RUNNER_KEYS = ['peer', 'hands', 'gate', 'wire', 'setup', 'env', 'box', 'pool', 'shares', 'fallback', 'runMs', 'handEnv', 'queueMs', 'exclusive'];
+const TEST_RUNNER_PATCH_KEYS = ['peer', 'hands', 'gate', 'wire', 'pool', 'fallback', 'runMs', 'handEnv', 'verifyEnv', 'mergeEnv', 'queueMs', 'exclusive'];
+const TEST_RUNNER_KEYS = ['peer', 'hands', 'gate', 'wire', 'setup', 'env', 'box', 'pool', 'shares', 'fallback', 'runMs', 'handEnv', 'verifyEnv', 'mergeEnv', 'queueMs', 'exclusive'];
 const TEST_RUNNER_SHARES_MAX = 8;
 const TEST_RUNNER_SHARE_VERSION_RE = /^[A-Za-z0-9._-]{1,64}$/;
 const TEST_RUNNER_POOL_MAX = 8;
@@ -235,6 +235,7 @@ const TEST_RUNNER_ENV_RE = /^[A-Z_][A-Z0-9_]*$/;
 const TEST_RUNNER_TIMEOUT_MIN_MS = 10 * 1000;
 const TEST_RUNNER_TIMEOUT_MAX_MS = 30 * 60 * 1000;
 const TEST_RUNNER_ENV_MAX = 32;
+const TEST_RUNNER_PHASE_ENV_KEYS = ['handEnv', 'verifyEnv', 'mergeEnv'];
 const TEST_RUNNER_ENV_VALUE_MAX = 1000;
 const TEST_RUNNER_RUN_STEP_MS = 60 * 1000;
 const TEST_RUNNER_RUN_MIN_MS = TEST_RUNNER_RUN_STEP_MS;
@@ -317,14 +318,19 @@ function normalizeTestRunner(v) {
   const setup = v.setup === undefined ? undefined : normalizeRunnerSetup(v.setup);
   const env = v.env === undefined ? undefined : normalizeRunnerEnv(v.env);
   const shares = v.shares === undefined ? undefined : normalizeRunnerShares(v.shares);
-  const handEnv = v.handEnv === undefined ? undefined : normalizeRunnerEnv(v.handEnv);
-  if (setup === null || env === null || shares === null || handEnv === null) return null;
-  if (handEnv && Object.keys({ ...env, ...handEnv }).length > TEST_RUNNER_ENV_MAX) return null;
+  const phase = {};
+  for (const k of TEST_RUNNER_PHASE_ENV_KEYS) {
+    if (v[k] === undefined) continue;
+    const n = normalizeRunnerEnv(v[k]);
+    if (n === null || Object.keys({ ...env, ...n }).length > TEST_RUNNER_ENV_MAX) return null;
+    phase[k] = n;
+  }
+  if (setup === null || env === null || shares === null) return null;
   const pool = v.pool === undefined ? null : normalizeRunnerPool(v.pool, v.peer);
   const hold = v.fallback === 'hold' && gate === 'on';
   const runMs = normalizeRunMs(v.runMs);
   const queueMs = normalizeQueueMs(v.queueMs);
-  return { peer: v.peer, hands, gate, ...(v.wire !== undefined ? { wire: v.wire } : {}), ...(setup ? { setup } : {}), ...(env ? { env } : {}), ...(v.box !== undefined ? { box: v.box } : {}), ...(pool ? { pool } : {}), ...(shares ? { shares } : {}), ...(hold ? { fallback: 'hold' } : {}), ...(runMs !== undefined ? { runMs } : {}), ...(handEnv ? { handEnv } : {}), ...(queueMs !== undefined ? { queueMs } : {}), ...(v.exclusive === true ? { exclusive: true } : {}) };
+  return { peer: v.peer, hands, gate, ...(v.wire !== undefined ? { wire: v.wire } : {}), ...(setup ? { setup } : {}), ...(env ? { env } : {}), ...(v.box !== undefined ? { box: v.box } : {}), ...(pool ? { pool } : {}), ...(shares ? { shares } : {}), ...(hold ? { fallback: 'hold' } : {}), ...(runMs !== undefined ? { runMs } : {}), ...phase, ...(queueMs !== undefined ? { queueMs } : {}), ...(v.exclusive === true ? { exclusive: true } : {}) };
 }
 
 function boxCpus(cpuMax, cpus) {
@@ -1827,7 +1833,7 @@ function createTeamManifest({ fs, clodexHome, log = null, now = () => Date.now()
       if (next.pool === null) delete next.pool;
       if (next.fallback === 'home') delete next.fallback;
       if (next.runMs === null) delete next.runMs;
-      if (next.handEnv === null) delete next.handEnv;
+      for (const k of TEST_RUNNER_PHASE_ENV_KEYS) if (next[k] === null) delete next[k];
       if (next.queueMs === null) delete next.queueMs;
       if (next.exclusive !== true) delete next.exclusive;
       const norm = normalizeTestRunner(next);
@@ -2030,6 +2036,6 @@ module.exports = {
   // Exported so the retired-field warn test iterates the REAL list — a copy in
   // the test would keep passing over a field added here and never warned about.
   ROLE_KEYS, CUT_ROLE_FIELDS, HONORED_CUT_FIELDS, EDITABLE_ROLE_FIELDS, UNREACHABLE_ROLE_FIELDS, MANIFEST_VERSION,
-  ROLE_DISPATCH_VALUES, DEFAULT_ROLE_DISPATCH, normalizeTrunk, TRUNK_HEAD, normalizeTestRoots, TEST_ROOTS_MAX, TEST_ROOT_LEN_MAX, DONE_VALUES, DEFAULT_DONE, normalizeDone, WORKTREES_VALUES, normalizeWorktrees, normalizeMaxHands, effectiveHandCap, normalizeTestRunner, TEST_RUNNER_HANDS, TEST_RUNNER_GATE, TEST_RUNNER_FALLBACK, TEST_RUNNER_WIRE, TEST_RUNNER_WIRE_PUSH, TEST_RUNNER_POOL_MAX, TEST_RUNNER_ENV_RE, TEST_RUNNER_ENV_MAX, TEST_RUNNER_ENV_VALUE_MAX, TEST_RUNNER_RUN_STEP_MS, TEST_RUNNER_RUN_MIN_MS, TEST_RUNNER_RUN_MAX_MS, TEST_RUNNER_RUN_DEFAULT_MS, TEST_RUNNER_QUEUE_MIN_MS, TEST_RUNNER_QUEUE_MAX_MS,
+  ROLE_DISPATCH_VALUES, DEFAULT_ROLE_DISPATCH, normalizeTrunk, TRUNK_HEAD, normalizeTestRoots, TEST_ROOTS_MAX, TEST_ROOT_LEN_MAX, DONE_VALUES, DEFAULT_DONE, normalizeDone, WORKTREES_VALUES, normalizeWorktrees, normalizeMaxHands, effectiveHandCap, normalizeTestRunner, TEST_RUNNER_HANDS, TEST_RUNNER_GATE, TEST_RUNNER_FALLBACK, TEST_RUNNER_WIRE, TEST_RUNNER_WIRE_PUSH, TEST_RUNNER_POOL_MAX, TEST_RUNNER_ENV_RE, TEST_RUNNER_ENV_MAX, TEST_RUNNER_PHASE_ENV_KEYS, TEST_RUNNER_ENV_VALUE_MAX, TEST_RUNNER_RUN_STEP_MS, TEST_RUNNER_RUN_MIN_MS, TEST_RUNNER_RUN_MAX_MS, TEST_RUNNER_RUN_DEFAULT_MS, TEST_RUNNER_QUEUE_MIN_MS, TEST_RUNNER_QUEUE_MAX_MS,
   ROLE_RE, RESERVED_ROLE_KEYS, RESERVED_ROLE_PATCH_FIELDS, NAME_RE,
 };

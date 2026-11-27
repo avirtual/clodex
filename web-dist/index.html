@@ -34911,6 +34911,24 @@ ${m[2].replace(/^\r?\n/, "")}`;
           body: m[2]
         };
       }
+      var RUNNER_ENV_TOKENS = [["hand-env", "handEnv"], ["verify-env", "verifyEnv"], ["merge-env", "mergeEnv"]];
+      function parseTeamRunner(argStr, positional) {
+        const tokens = argStr.trim().split(/\s+/);
+        const flag = (k) => {
+          const t = tokens.find((x) => x.startsWith(`${k}:`) && x.length > k.length + 1);
+          return t ? t.slice(k.length + 1) : null;
+        };
+        const runTs = tokens.filter((t) => t.startsWith("run:"));
+        const envs = {};
+        for (const [tok, key] of RUNNER_ENV_TOKENS) {
+          const vals = tokens.filter((t) => t.startsWith(`${tok}:`)).map((t) => t.slice(tok.length + 1));
+          if (vals.length) envs[key] = vals;
+        }
+        const queueTs = tokens.filter((t) => t.startsWith("queue:"));
+        const exclusiveTs = tokens.filter((t) => t.startsWith("exclusive:"));
+        const fallback = flag("fallback");
+        return { type: "team", sub: "runner", value: positional[0] || null, hands: flag("hands"), gate: flag("gate"), ...fallback != null ? { fallback } : {}, ...runTs.length ? { run: runTs[0].slice("run:".length) } : {}, ...runTs.length > 1 ? { runRepeated: true } : {}, ...queueTs.length ? { queue: queueTs[0].slice("queue:".length) } : {}, ...queueTs.length > 1 ? { queueRepeated: true } : {}, ...exclusiveTs.length ? { exclusive: exclusiveTs[0].slice("exclusive:".length) } : {}, ...exclusiveTs.length > 1 ? { exclusiveRepeated: true } : {}, ...envs, ...positional[0] === "add" || positional[0] === "rm" ? { target: positional[1] || null } : {}, body: "" };
+      }
       function parseTeam(cleaned) {
         const m = cleaned.match(/^\[agent:team\s+(role-add|role-set|role-rm|role-rename|watchdog|gather|set-lead|bind|unbind|roster|template-save|template-rm|prompt-save|prompt-rm|sandbox|box|trunk|test-roots|done|worktrees|hands|runner)\b([^\]]*)\]\s*(.*)/s);
         if (!m) return null;
@@ -34937,19 +34955,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
         if (sub === "done") return { type: "team", sub, mode: positional[0] || null, body: "" };
         if (sub === "worktrees") return { type: "team", sub, value: positional[0] || null, body: "" };
         if (sub === "hands") return { type: "team", sub, value: positional[0] || null, body: "" };
-        if (sub === "runner") {
-          const tokens = argStr.trim().split(/\s+/);
-          const flag = (k) => {
-            const t = tokens.find((x) => x.startsWith(`${k}:`) && x.length > k.length + 1);
-            return t ? t.slice(k.length + 1) : null;
-          };
-          const runTs = tokens.filter((t) => t.startsWith("run:"));
-          const handEnv = tokens.filter((t) => t.startsWith("hand-env:")).map((t) => t.slice("hand-env:".length));
-          const queueTs = tokens.filter((t) => t.startsWith("queue:"));
-          const exclusiveTs = tokens.filter((t) => t.startsWith("exclusive:"));
-          const fallback = flag("fallback");
-          return { type: "team", sub, value: positional[0] || null, hands: flag("hands"), gate: flag("gate"), ...fallback != null ? { fallback } : {}, ...runTs.length ? { run: runTs[0].slice("run:".length) } : {}, ...runTs.length > 1 ? { runRepeated: true } : {}, ...queueTs.length ? { queue: queueTs[0].slice("queue:".length) } : {}, ...queueTs.length > 1 ? { queueRepeated: true } : {}, ...exclusiveTs.length ? { exclusive: exclusiveTs[0].slice("exclusive:".length) } : {}, ...exclusiveTs.length > 1 ? { exclusiveRepeated: true } : {}, ...handEnv.length ? { handEnv } : {}, ...positional[0] === "add" || positional[0] === "rm" ? { target: positional[1] || null } : {}, body: "" };
-        }
+        if (sub === "runner") return parseTeamRunner(argStr, positional);
         if (sub === "role-rename") return { type: "team", sub, name: positional[0] || null, to: positional[1] || null, body: "" };
         if (sub === "gather") return { type: "team", sub, dry: positional[0] === "dry", body: "" };
         if (sub === "template-save") return { type: "team", sub, stem: positional[0] || null, body };
@@ -35452,6 +35458,8 @@ ${m[2].replace(/^\r?\n/, "")}`;
       }
       module.exports = {
         CORE_ROWS,
+        parseTeamRunner,
+        RUNNER_ENV_TOKENS,
         CORE_TYPES,
         RESERVED_TYPES,
         PLUGIN_VERB_RE,

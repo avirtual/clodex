@@ -967,7 +967,8 @@ most 32 keys matching `^[A-Z_][A-Z0-9_]*$` with string values of at most 1,000
 chars. Any other key, or one value out of bounds, drops the whole setting: it is
 never applied in part, the load warns once, and `team.droppedFields` carries
 `{ field: 'testRunner', status: 'invalid' }`. `setup`, `env` and `box` are edited in
-team.json only.
+team.json only. `env` reaches every suite run of the team, on a runner or on the source
+machine, with the map of the run's kind over it (see `hand-env:` below).
 
 `shares` (team.json only, like `setup`) lists at most 8 `{ "share": "<name>", "version": "<v>" }`
 rows: `share` follows the session-name grammar and is unique, `version` matches
@@ -1061,12 +1062,20 @@ bad timeoutMs — the job asked for <n>ms, the runner's ceiling is <m>ms`, or
 the runner's info carries no `maxTimeoutMs`, class `outcome-unknown`.
 `[agent:team runner hand-env:KEY=VALUE]` (repeatable on one head line) merges
 into `testRunner.handEnv`, `hand-env:KEY=` drops one key and `hand-env:off`
-clears all. Names follow `env` (`^[A-Z_][A-Z0-9_]*$`, which the runner
-enforces) and `env` and `handEnv` together hold at most 32 names. Hand runs
-send `{ ...env, ...handEnv }`; gate runs never see `handEnv`. Both may share
-one head line, never with a peer, `hands:`, `gate:` or `fallback:`. Bare
+clears all; `verify-env:` and `merge-env:` do the same for `testRunner.verifyEnv`
+and `testRunner.mergeEnv`. Names follow `env` (`^[A-Z_][A-Z0-9_]*$`) and `env`
+with each of the three maps holds at most 32 names. A run gets `env` with the
+map of its kind over it: hand runs `{ ...env, ...handEnv }`, the verify run
+`{ ...env, ...verifyEnv }`, the post-merge suite `{ ...env, ...mergeEnv }`, and
+never another kind's map. This holds on the runner and on the source machine
+alike (a verify or post-merge that falls back home, a hand's local run); a
+runner refuses a job whose env names `PATH`, `HOME`, `TMPDIR`, `LANG`, `TZ`,
+`USER`, `LOGNAME`, `SHELL`, `ELECTRON_RUN_AS_NODE`, `GIT_CEILING_DIRECTORIES`
+or any `CLODEX_*` key, and a local run leaves the same names out and never lets
+a team value replace a `CLODEX_*` key it sets. The env tokens may share one head
+line, never with a peer, `hands:`, `gate:` or `fallback:`. Bare
 `[agent:team runner]` shows `run <n> min` (or `run 21 min (default)`) and the
-`hand-env` names and values after the gate mode.
+`hand-env`, `verify-env` and `merge-env` names and values after the gate mode.
 
 `[agent:team runner queue:<minutes>|off]` (lead only, a runner must be set)
 stores `testRunner.queueMs`: how long a job may wait for a free slot on a

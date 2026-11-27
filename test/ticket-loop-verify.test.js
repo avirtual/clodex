@@ -6791,6 +6791,35 @@ for (const [label, opts, kind] of [['verify', {}, 'verify'], ['post-merge', { me
   });
 }
 
+const PHASE_ENV_PROBE = (probe) => 'const fs = require("fs");\n'
+  + 'const e = {};\n'
+  + 'for (const k of ["T_A", "T_B", "T_H", "T_V", "T_M", "PATH", "CLODEX_SUITE_KIND", "CLODEX_TEST_LOCK_MERGE"]) e[k] = process.env[k] === undefined ? null : process.env[k];\n'
+  + `fs.writeFileSync(${JSON.stringify(probe)}, JSON.stringify(e));\n`
+  + 'console.log("TOTALS: 5 pass, 0 fail, 5 tests");\n';
+
+const PHASE_ENV_RUNNER = {
+  peer: 'runner-1', hands: 'off', gate: 'off',
+  env: { T_A: '1', T_B: 'env', PATH: '/team/bin', CLODEX_SUITE_KIND: 'team', CLODEX_TEST_LOCK_MERGE: 'team' },
+  handEnv: { T_B: 'hand', T_H: '1' }, verifyEnv: { T_B: 'verify', T_V: '1' }, mergeEnv: { T_B: 'merge', T_M: '1' },
+};
+
+const PHASE_LOCAL_ROWS = [
+  ['verify', {}, { T_A: '1', T_B: 'verify', T_H: null, T_V: '1', T_M: null, PATH: process.env.PATH, CLODEX_SUITE_KIND: 'verify', CLODEX_TEST_LOCK_MERGE: '0' }],
+  ['post-merge', { merge: true }, { T_A: '1', T_B: 'merge', T_H: null, T_V: null, T_M: '1', PATH: process.env.PATH, CLODEX_SUITE_KIND: 'post-merge', CLODEX_TEST_LOCK_MERGE: '1' }],
+];
+
+for (const [label, opts, want] of PHASE_LOCAL_ROWS) {
+  test(`t2458: a ${label} run on the source machine gets env with its phase map over it, never another phase's, a refused name or a CLODEX_* key over the loop's`, async () => {
+    const repo = mkRepo();
+    const f = mkLoop({ repo, suite: 'green' });
+    const probe = pathReal.join(repo.dir, 'phase-env.json');
+    fsReal.writeFileSync(pathReal.join(repo.dir, 'wt', 'scripts', 'run-tests.js'), PHASE_ENV_PROBE(probe));
+    const r = await f.m._runTicketSuite({ ...f.team, testRunner: PHASE_ENV_RUNNER }, f.one(), null, opts);
+    assert.strictEqual(r.green, true, 'ENTER: the probe runner ran to a green TOTALS');
+    assert.deepStrictEqual(JSON.parse(fsReal.readFileSync(probe, 'utf8')), want);
+  });
+}
+
 test('t2254: a run killed by the suite timeout gets its end record from the loop, under the id it handed the runner', async () => {
   const repo = mkRepo();
   const f = mkLoop({ repo, suite: 'green', suiteTimeoutMs: 3000 });
