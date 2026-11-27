@@ -25778,6 +25778,7 @@ test('t2443 recovery: an added-folder-trust dialog for the seat messages dir Clo
   const r = mkBootTrustRig();
   const s = r.seat();
   r.f.m._scanBootScreen(s);
+  assert.strictEqual(s._reloadInFlight, true, 'the respawn was scheduled');
   await r.respawned;
   assert.deepStrictEqual(r.order, [
     ['kill', 'team-hand-1', { respawn: true }, false],
