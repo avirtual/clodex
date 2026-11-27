@@ -563,3 +563,34 @@ test('t2439: jobs waiting on another job\'s build are pending in info; the build
   f.succeed(c);
   for (const id of ['j1', 'j2', 'j3']) await waitState(f.runner, id, 'done');
 });
+
+const namedLists = (f) => f.docker.calls.filter((c) => c.args[1] === 'ls' && c.args[c.args.length - 1] === `label=clodex.box=${HASH}`).length;
+
+test('t2449: a build finishing for a hash drops its cached box state, so the next named info answers ready at once', async (t) => {
+  const f = await fixture(t);
+  const want = { definitionHash: HASH, rev: 1 };
+  assert.strictEqual((await f.runner.info(want, { origin: 'peer-a' })).box.state, 'can-build');
+  const started = heldBuild(f);
+  await f.upload(f.body('j1', BUILD()));
+  f.succeed(await started);
+  await waitState(f.runner, 'j1', 'done');
+  const b = (await f.runner.info(want, { origin: 'peer-a' })).box;
+  assert.deepStrictEqual([b.state, b.env.box], ['ready', { imageId: IMG_BUILT, definitionHash: HASH, rev: 1, built: true }]);
+});
+
+test('t2449: a build failing for a hash drops its cached box state: the next named info probes docker again', async (t) => {
+  const f = await fixture(t);
+  const want = { definitionHash: HASH, rev: 1 };
+  await f.runner.info(want, { origin: 'peer-a' });
+  await f.runner.info(want, { origin: 'peer-a' });
+  assert.strictEqual(namedLists(f), 1, 'ENTER: the second info answered from the cache');
+  const started = heldBuild(f);
+  await f.upload(f.body('j1', BUILD()));
+  const c = await started;
+  f.alive.delete(c.child.pid);
+  c.child.finish(1);
+  assert.strictEqual((await waitState(f.runner, 'j1', 'done')).reason, 'box-failed');
+  const before = namedLists(f);
+  await f.runner.info(want, { origin: 'peer-a' });
+  assert.strictEqual(namedLists(f), before + 1);
+});

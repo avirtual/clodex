@@ -1014,8 +1014,8 @@ yet queued or started (the runner's info `pending`: awaiting its pack, waiting
 on a box build) and the jobs this node has sent it that its info does not show
 yet, so jobs sent at once spread over free members. Every pooled pick logs one
 `suite-client` line naming the job, the chosen member and each member's rank
-inputs or `skipped: <reason>` (`no answer`, `not connected`, `no box for this
-job`, `refused`); the run's ledger row carries `pick: { chosen, skipped }`, and
+inputs or `skipped: <reason>` (`no answer`, `timeout`, `not connected`, `no box for this
+job`, `refused`), and `(box state not known yet)` after the box tier of a member that answered `probing`; the run's ledger row carries `pick: { chosen, skipped, boxUnknown }` (`boxUnknown` lists those members, present only when there are any), and
 a hand digest ends with `(pool: skipped <member>: <reason>)` when a member was
 skipped. Because the loss is counted for every routed run, a
 single runner that stops answering ends a hand run as `result unknown` after
@@ -1237,7 +1237,7 @@ the verify, its re-measure and post-merge) asks `pickRunner` (suite-client.js):
 among the members that are attached (pull) or online with the `suite`
 capability (push), whose info route answers within the usual request timeout,
 and, for a box job, whose info reports the box ready for the team's definition
-hash (the lead passes the hash on the info call) — or, when no member is ready, one whose info says `building` that hash, then one that says `can-build`, so a second member is not sent a duplicate build while one builds — one with a free slot
+hash (the lead passes the hash on the info call) — or, when no member is ready, one whose info says `building` that hash, then one that says `can-build` or `probing`, so a second member is not sent a duplicate build while one builds — one with a free slot
 (`slots.total - slots.inUse`; a runner that reports no slots reads as one slot, in
 use while a job runs; a fenced or draining runner reports every slot in use), then
 the fewest slots in use, so an idle runner beats a busy one whatever their sizes,
@@ -1275,6 +1275,8 @@ source restart ends the run loop as before, no abandoned job is revived and no
 reroute repeats. The held-ticket retry sweep does not reroute; its pick may choose
 the lost member again once that member answers info. Compare rows of a pooled team carry `runner: <member>`, the member that
 ran the job, and a superseded job's cancel goes to that member.
+
+A runner answers a named info call (`definitionHash` and `rev`) from a per-hash cache of its Docker box state (`namedBoxes` in suite-runner.js; 30 s, 5 s for an `unavailable` state, 32 entries, one shared probe per name, dropped when the runner finishes or fails a build of that hash or prunes its image, and empty on every enable), with its free-space reading for `can-build` cached the same way; past the TTL it answers the last known state while one refresh runs. Only while the first probe of a name is still running after 2.5 s does it answer `probing` with the hash instead of making the source time out. Slots, pending and queue are always read live. A 5.208 source skips a `probing` member as `no box for this job`.
 
 On a pool, a hand, verify or shadow job that its runner accepted but has not
 started (state `queued`) re-asks the pick every 60 s (`MOVE_CHECK_MS`,

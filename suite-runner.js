@@ -23,6 +23,11 @@ const SHARE_NAME_RE = /^(?!\.+$)[a-zA-Z0-9._-]{1,64}$/;
 const SHARE_VERSION_RE = /^[A-Za-z0-9._-]{1,64}$/;
 const SHARES_MAX = 8;
 const BOX_REFUSALS = { 'no-image': 'no-image', ambiguous: 'ambiguous-image' };
+const NAMED_BOX_TTL_MS = 30000;
+const NAMED_BOX_WAIT_MS = 2500;
+const NAMED_BOX_MAX = 32;
+const NAMED_BOX_RETRY_MS = 5000;
+const SETTLED_BOX = new Set(['ready', 'no-image', 'ambiguous']);
 const REF_RE = /^(?![-/.])(?!.*\.\.)(?!.*\/\/)[A-Za-z0-9._/-]{1,200}$/;
 const ENV_NAME_RE = /^[A-Z_][A-Z0-9_]*$/;
 const FLAG_KEYS = ['CLODEX_TEST_LOCK', 'CLODEX_TEST_SLOW_ADVISORY'];
@@ -534,6 +539,8 @@ function createSuiteRunner({
   let boxPrunedAt = null;
   const coolOff = new Map();
   const builtIds = new Set();
+  const namedBoxes = new Map();
+  const rooms = new Map();
 
   const isBox = (job) => job.isolation === 'container';
   const namedBox = (job) => Boolean((job.identity && job.identity.box && job.identity.box.definitionHash) || job.build);
@@ -712,11 +719,14 @@ function createSuiteRunner({
     return null;
   }
 
-  async function buildRefusal(hash, origin) {
+  async function readRoom() {
+    try { return await box.freeBytes(); } catch { return { bytes: null }; }
+  }
+
+  async function buildRefusal(hash, origin, room$ = readRoom) {
     const now0 = refusalNow(hash, origin);
     if (now0) return now0;
-    let room;
-    try { room = await box.freeBytes(); } catch { room = { bytes: null }; }
+    const room = await room$();
     if (room.bytes == null) return { why: 'the free disk space could not be read' };
     if (room.bytes < BUILD_DISK_FLOOR) {
       return { why: `${(room.bytes / 1024 ** 3).toFixed(1)} GiB free on the ${room.where}; a build needs ${BUILD_DISK_FLOOR / 1024 ** 3} GiB` };
@@ -724,11 +734,11 @@ function createSuiteRunner({
     return null;
   }
 
-  async function buildAnswer(want, origin, found) {
+  async function buildAnswer(want, origin, found, room$ = readRoom) {
     const hash12 = want.definitionHash.slice(0, 12);
     if (building && building.hash === want.definitionHash) return { state: 'building', definitionHash: want.definitionHash, why: `building box ${hash12} on this runner` };
     if (!buildBoxes) return found;
-    const refusal = await buildRefusal(want.definitionHash, origin);
+    const refusal = await buildRefusal(want.definitionHash, origin, room$);
     if (refusal) return { ...found, why: `${found.why}; no build: ${refusal.why}` };
     return { state: 'can-build', definitionHash: want.definitionHash, why: `no image for box ${hash12} on this runner; it builds one on the first job` };
   }
@@ -766,6 +776,7 @@ function createSuiteRunner({
   }
 
   async function failBuild(hash, { why, tail = '', cool = true }, trigger) {
+    forgetBox(hash);
     if (cool) coolOff.set(hash, { until: now() + BUILD_COOL_OFF_MS, why, tail });
     for (const w of waitersOf(hash)) {
       if (w === trigger) continue;
@@ -778,6 +789,7 @@ function createSuiteRunner({
 
   function recordBuilt(imageId, definitionHash) {
     builtIds.add(imageId);
+    forgetBox(definitionHash);
     touchCache(boxKey(definitionHash));
     const rows = readJson(builtFile, []);
     writeJson(builtFile, [...(Array.isArray(rows) ? rows : []), { imageId, definitionHash, at: now() }], 0o600);
@@ -1274,6 +1286,7 @@ function createSuiteRunner({
       const r = await box.removeImage(im.id);
       if (!r.ok) { log(`suite-runner: box image ${name} not removed: ${r.why}`); continue; }
       log(`suite-runner: removed box image ${name} (${(im.bytes / 1024 ** 3).toFixed(2)} GiB)`);
+      forgetBox(im.hash);
       gone.push(im);
     }
     const cache = readJson(cacheFile, {});
@@ -1313,23 +1326,72 @@ function createSuiteRunner({
     try { return await maintenance; } finally { maintenance = null; pump(); }
   }
 
-  async function boxState(want = null) {
-    if (!box || (!want && box.labelsOnly)) return null;
-    if (boxHold) return { state: 'unavailable', why: `cleanup not confirmed: ${boxHold.why}` };
-    let found;
-    try { found = await (want ? box.probe(want) : box.probe()); } catch (e) { return { state: 'unavailable', why: e.message }; }
+  async function probeBox(want) {
+    try { return await (want ? box.probe(want) : box.probe()); } catch (e) { return { state: 'unavailable', why: e.message }; }
+  }
+
+  function boxAnswerOf(want, found) {
     if (want && found && BOX_REFUSALS[found.state]) return { state: found.state, why: found.why };
     if (!found || found.state !== 'ready') return { state: 'unavailable', why: (found && found.why) || 'no answer' };
     const e = found.env;
     return { state: 'ready', env: e && e.box && builtIds.has(e.box.imageId) ? withBuilt(e) : e };
   }
 
+  async function boxState(want = null) {
+    if (!box || (!want && box.labelsOnly)) return null;
+    if (boxHold) return { state: 'unavailable', why: `cleanup not confirmed: ${boxHold.why}` };
+    return boxAnswerOf(want, await probeBox(want));
+  }
+
+  function forgetBox(hash) {
+    for (const key of [...namedBoxes.keys()]) if (key.startsWith(`${hash}@`)) namedBoxes.delete(key);
+    rooms.clear();
+  }
+
+  function cachedRead(map, key, read, ttlOf) {
+    let entry = map.get(key);
+    if (!entry) {
+      entry = { at: null, value: null, pending: null };
+      map.set(key, entry);
+      while (map.size > NAMED_BOX_MAX) map.delete(map.keys().next().value);
+    }
+    if (!entry.pending && (entry.at == null || now() - entry.at >= ttlOf(entry.value))) {
+      const mine = entry;
+      mine.pending = read().then((value) => {
+        if (map.get(key) === mine) { mine.value = value; mine.at = now(); }
+        mine.pending = null;
+        return value;
+      });
+    }
+    return entry.at != null ? Promise.resolve(entry.value) : entry.pending;
+  }
+
+  const boxTtl = (found) => (found && SETTLED_BOX.has(found.state) ? NAMED_BOX_TTL_MS : NAMED_BOX_RETRY_MS);
+  const roomTtl = (room) => (room && room.bytes != null ? NAMED_BOX_TTL_MS : NAMED_BOX_RETRY_MS);
+  const cachedRoom = () => cachedRead(rooms, 'room', readRoom, roomTtl);
+
+  async function namedBoxState(want, origin) {
+    if (!box) return null;
+    if (boxHold) return { state: 'unavailable', why: `cleanup not confirmed: ${boxHold.why}` };
+    const known = cachedRead(namedBoxes, `${want.definitionHash}@${want.rev}`, () => probeBox(want), boxTtl).then(async (found) => {
+      const b = boxAnswerOf(want, found);
+      return b.state === 'no-image' ? buildAnswer(want, origin, b, cachedRoom) : b;
+    });
+    let timer = null;
+    const late = new Promise((resolve) => {
+      timer = timers.setTimeout(() => resolve({
+        state: 'probing', definitionHash: want.definitionHash,
+        why: `box ${want.definitionHash.slice(0, 12)} not known yet: its docker probe is still running`,
+      }), NAMED_BOX_WAIT_MS);
+    });
+    try { return await Promise.race([known, late]); } finally { timers.clearTimeout(timer); }
+  }
+
   async function info(want = null, { origin = null } = {}) {
     const env = await ensureIdentity();
     const named = want && BOX_HASH_RE.test(String(want.definitionHash)) && Number.isInteger(want.rev) && want.rev >= 1
       ? { definitionHash: want.definitionHash, rev: want.rev } : null;
-    let boxAnswer = await boxState(named);
-    if (named && boxAnswer && boxAnswer.state === 'no-image') boxAnswer = await buildAnswer(named, origin, boxAnswer);
+    const boxAnswer = named ? await namedBoxState(named, origin) : await boxState(null);
     return {
       ok: true, bootId, env, isolation: isoState, box: boxAnswer,
       shares: held.map(({ name, version }) => ({ name, version })),

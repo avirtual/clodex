@@ -3205,7 +3205,7 @@ function createTicketMethods(deps, shared) {
       const id12 = String((be.box && be.box.imageId) || '').replace(/^sha256:/, '').slice(0, 12);
       const box = !b ? '' : b.state === 'ready'
         ? `, box ready ${flat(be.platform)}/${flat(be.arch)} image ${flat(id12 || null)} key ${flat(be.envKey)}`
-        : b.state === 'building' || b.state === 'can-build' ? `, box ${b.state}: ${flat(b.why)}`
+        : b.state === 'building' || b.state === 'can-build' || b.state === 'probing' ? `, box ${b.state}: ${flat(b.why)}`
           : `, box unavailable: ${flat(b.why)}`;
       return `queue ${queue}, env ${flat(e.runner)} ${flat(e.platform)}/${flat(e.arch)} node ${flat(e.node)} key ${flat(e.envKey)}${box}`;
     },
@@ -3274,7 +3274,8 @@ function createTicketMethods(deps, shared) {
         const { live, via } = this._runnerVia(m);
         if (!live || !via) return { ...m, live: false, info: null };
         const r = await Promise.resolve().then(() => client.reachable(via.peer, via.wire, want)).catch(() => null);
-        return { ...m, live: true, info: r && r.ok ? r.info : null, ...(r && !r.ok && /refused/.test(r.why || '') ? { why: 'refused' } : {}) };
+        const why = r && !r.ok ? (/refused/.test(r.why || '') ? 'refused' : r.timedOut ? 'timeout' : null) : null;
+        return { ...m, live: true, info: r && r.ok ? r.info : null, ...(why ? { why } : {}) };
       }));
       const counted = typeof client.sentTo === 'function' ? rows.map((m) => (m.info ? { ...m, sent: client.sentTo(m.peer, m.info) } : m)) : rows;
       const pick = pickRunner(counted, { box, shares: tr.shares || [], ...(tr.exclusive === true ? { exclusive: true } : {}) });
