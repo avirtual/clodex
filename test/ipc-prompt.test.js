@@ -611,8 +611,8 @@ test('t1407: the team rows sit after team-create and before plugin rows, where t
   const plain = leadPrompt(null).split('\n');
   const at = plain.findIndex((l) => l.startsWith('  [agent:team role-add '));
   assert.ok(plain[at - 1].startsWith('  [agent:file open PATH]'), 'with no privileged grant the file rows are directly above');
-  assert.strictEqual(plain[at + 11], '', 'and the grammar block ends at runner');
-  assert.ok(plain[at + 12].startsWith('Replies arrive later'), 'before the replies line');
+  assert.strictEqual(plain[at + 12], '', 'and the grammar block ends at runner');
+  assert.ok(plain[at + 13].startsWith('Replies arrive later'), 'before the replies line');
 });
 
 // t798. The line is the ONLY description of the create a granted seat reads, so
