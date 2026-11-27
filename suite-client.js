@@ -133,6 +133,7 @@ function createSuiteClient({
         continue;
       }
       const c = e.ctx;
+      if (!c.ended && c.moving != null && c.moving === where) { n += 1; continue; }
       if (c.ended || c.where !== where || c.started || (counted && c.submitted) || seen.has(c.jobId)) continue;
       n += 1;
     }
@@ -177,7 +178,7 @@ function createSuiteClient({
       shares: box && Array.isArray(shares) ? shares.map(({ share, version }) => ({ share, version })) : [],
       lostAfterMs: typeof opts.reroute === 'function' ? LOST_AFTER_MS : Infinity, cap: null, attempts: [], abandoned: null, ended: false,
       pick: opts.pick && typeof opts.pick === 'object' ? opts.pick : null,
-      requeue: typeof opts.requeue === 'function' && kind !== 'post-merge' ? opts.requeue : null, moveAt: null, moved: [], fallback: null,
+      requeue: typeof opts.requeue === 'function' && kind !== 'post-merge' ? opts.requeue : null, moveAt: null, moved: [], fallback: null, moving: null,
     };
     const onMove = typeof opts.onMove === 'function' ? opts.onMove : () => {};
     const goTo = (next) => {
@@ -217,7 +218,7 @@ function createSuiteClient({
           out = { unknown: e.refused ? 'runner refused the token' : `client error: ${e.message}`, thrown: true };
         }
         if (ctx.stopWhy) return conclude(ctx, { unknown: ctx.stopWhy });
-        const back = ctx.fallback && !ctx.submitted && out.unknown && !out.lost ? ctx.fallback : null;
+        const back = ctx.fallback && !ctx.submitted && out.unknown && !out.lost && !ctx.shouldStop() ? ctx.fallback : null;
         if (out.move || back) {
           const next = out.move || back;
           const from = { peer: ctx.peer, wire: ctx.wire, name: ctx.where };
@@ -226,7 +227,7 @@ function createSuiteClient({
           ctx.fallback = back ? null : from;
           repick = null;
           goTo(next);
-          Object.assign(ctx, { jobId: null, submitted: false, env: null, failFast: true, moveAt: null });
+          Object.assign(ctx, { jobId: null, submitted: false, env: null, failFast: true, moveAt: null, moving: null });
           used.clear();
           full = false;
           progress(back ? `runner ${from.name}: ${out.unknown}; resubmitting to ${ctx.where}` : `runner ${from.name}: job still queued; moved to ${ctx.where}, which is idle`);
@@ -498,7 +499,7 @@ function createSuiteClient({
         await cancel(ctx.peer, jobId, ctx.wire);
         return { unknown: budgetText(ctx), outcome: 'timeout' };
       }
-      const toMove = ctx.requeue && ctx.moveAt != null && !ctx.started ? ctx.moveAt - now() : Infinity;
+      const toMove = ctx.requeue && ctx.moveAt != null && !ctx.started && ctx.moved.length < MAX_MOVES ? ctx.moveAt - now() : Infinity;
       const wait = Math.min(pollWaitMs, left, toMove > 0 ? toMove : Infinity);
       askAbandoned(ctx, jobId);
       const r = await ask(ctx, (c) => c.suiteAsk('GET', `/api/suite/jobs?ids=${encodeURIComponent(jobId)}&wait=${wait}`, null, wait + POLL_SLACK_MS), progress, Infinity, ctx.lostAfterMs);
@@ -544,16 +545,36 @@ function createSuiteClient({
     }
   }
 
+  function heading(ctx, peer) {
+    for (const e of runs.values()) {
+      const c = e.ctx;
+      if (!c) {
+        if (e.where === peer && now() - e.at <= CLAIM_TTL_MS) return true;
+        continue;
+      }
+      if (c === ctx || c.ended) continue;
+      if (c.moving === peer || (c.peer === peer && !c.submitted)) return true;
+    }
+    return false;
+  }
+
   async function moveCheck(ctx, jobId) {
     if (!ctx.requeue || ctx.moved.length >= MAX_MOVES || ctx.moveAt == null || now() < ctx.moveAt || now() >= deadlineOf(ctx)) return null;
     ctx.moveAt = now() + MOVE_CHECK_MS;
     const ask = ctx.requeue;
     const next = await Promise.resolve().then(() => ask(ctx.where, ctx.id)).catch(() => null);
     if (!next || !next.peer || (next.name || next.peer) === ctx.where || ctx.shouldStop()) return null;
+    if (heading(ctx, next.peer)) return null;
+    ctx.moving = next.peer;
+    const stay = () => { ctx.moving = null; return null; };
+    const r = await once(ctx.peer, (c) => c.suiteAsk('GET', `/api/suite/jobs?ids=${encodeURIComponent(jobId)}&wait=0`, null, POLL_SLACK_MS), ctx.wire).catch(() => null);
+    const jobs = r && r.body && r.body.ok && Array.isArray(r.body.jobs) ? r.body.jobs : [];
+    const job = jobs.find((j) => j && j.id === jobId);
+    if (!job || job.state !== 'queued' || ctx.shouldStop()) return stay();
     const c = await Promise.resolve().then(() => cancel(ctx.peer, jobId, ctx.wire)).catch((e) => ({ ok: false, error: e && e.message ? e.message : String(e) }));
     if (c && c.ok) return { move: next };
     log(`suite-client: job ${jobId} stays on ${ctx.where}: the cancel before a move to ${next.name || next.peer} was not confirmed (${(c && c.error) || 'no answer'})`);
-    return null;
+    return stay();
   }
 
   function doneVerdict(ctx, job, stderr) {

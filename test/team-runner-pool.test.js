@@ -1205,6 +1205,7 @@ const MOVE_ROWS = [
   ['an exclusive job, the other member ignores exclusive', EXCLUSIVE_POOL, false, () => IDLE_ONE({ exclusive: 'ignore' }), false],
   ['an exclusive job, runner-1 too old to say, the other member ignores exclusive', EXCLUSIVE_POOL, false, () => IDLE_ONE({ exclusive: 'ignore' }), false, {}],
   ['an exclusive job, the other member honours exclusive', EXCLUSIVE_POOL, false, () => IDLE_ONE({ exclusive: 'honour' }), true],
+  ['an exclusive job, the other member honours exclusive with one of two slots in use', EXCLUSIVE_POOL, false, () => IDLE_ONE({ exclusive: 'honour', slots: { total: 2, inUse: 1 } }), false],
 ];
 
 for (const [name, manifestExtra, boxed, other, moves, mine = { exclusive: 'honour' }] of MOVE_ROWS) {
@@ -1293,4 +1294,59 @@ test('t2440: a post-merge job is never moved', async () => {
   const r = moveRig({ info: { p1: () => BUSY_WITH([]), p2: () => IDLE_ONE() }, poll: { p1: QUEUED_ON_1 } });
   const out = await r.client.run({ ...r.base, kind: 'post-merge', requeue: spyMove(r, OTHER) });
   assert.deepStrictEqual([r.asked, r.posts(), out.record.outcome], [[], ['0 p1 POST run-1'], 'timeout']);
+});
+
+test('t2440: a job that starts on runner-1 while the move pick waits on runner-2 is re-read before the cancel and stays: no DELETE, no second POST', async () => {
+  let started = false;
+  const r = moveRig({
+    info: { p1: () => BUSY_WITH(['run-1']), p2: () => { started = true; return IDLE_ONE(); } },
+    poll: { p1: (id, t) => (!started ? jobAt(id, 'queued') : t < 200000 ? jobAt(id, 'running') : jobAt(id, 'done')) },
+  });
+  const out = await r.client.run({ ...r.base, requeue: r.requeue() });
+  assert.deepStrictEqual(r.asked, [['runner-1', 60000]], 'ENTER: the pick ran and found runner-2 idle');
+  assert.deepStrictEqual(r.events.filter((e) => / DELETE /.test(e)), []);
+  assert.deepStrictEqual(r.posts(), ['0 p1 POST run-1']);
+  assert.deepStrictEqual([out.record.outcome, out.record.where, 'moved' in out.record], ['pass', 'runner-1', false]);
+});
+
+test('t2440: two jobs queued on runner-1 whose 60 s checks overlap both see runner-2 idle, and only one moves there', async () => {
+  let busy2 = false;
+  const r = moveRig({
+    info: { p1: () => BUSY_WITH(['run-1', 'run-2']), p2: () => (busy2 ? BUSY_WITH([]) : IDLE_ONE()) },
+    poll: { p1: QUEUED_ON_1, p2: RAN_ON_2 },
+    post: { p2: () => { busy2 = true; return { status: 200, body: { ok: true, state: 'queued' } }; } },
+  });
+  const inner = r.requeue();
+  let open;
+  const both = new Promise((res) => { open = res; });
+  let picks = 0;
+  const requeue = async (where, id) => {
+    const next = await inner(where, id);
+    picks += 1;
+    if (picks === 2) open();
+    if (picks <= 2) await both;
+    return next;
+  };
+  const outs = await Promise.all([r.client.run({ ...r.base, requeue }), r.client.run({ ...r.base, requeue })]);
+  assert.ok(picks >= 2, 'ENTER: both checks picked');
+  assert.deepStrictEqual(r.posts().filter((e) => / p2 POST /.test(e)).length, 1);
+  assert.deepStrictEqual(outs.map((o) => o.record.where).sort(), ['runner-1', 'runner-2']);
+});
+
+test('t2440: a verify shadow and a verify box decide are given a move hook on a pool; their post-merge runs are not', async () => {
+  const shadowSent = [];
+  const sc = { reachable: async () => ({ ok: true, info: IDLE_ONE() }), shadow: async (o) => { shadowSent.push(o); return null; } };
+  const s = mkFixture({ manifestExtra: { testRunner: { peer: 'runner-1', gate: 'shadow', pool: [{ peer: 'runner-2' }] } }, peers: [R1, R2], client: sc });
+  await s.m._shadowSubmit(s.tm.loadManifest('team'), { id: 't1' }, '/w', {});
+  await s.m._shadowSubmit(s.tm.loadManifest('team'), { id: 't1' }, '/w', { merge: true });
+  assert.deepStrictEqual(shadowSent.map((o) => [o.kind, typeof o.requeue]), [['verify', 'function'], ['post-merge', 'undefined']]);
+  const runSent = [];
+  const bc = { reachable: async () => ({ ok: true, info: IDLE_ONE() }), run: async (o) => { runSent.push(o); return { unknown: 'runner unreachable', res: null, record: null }; } };
+  const timers = { setTimeout: () => 1, clearTimeout: () => {} };
+  const b = mkFixture({ manifestExtra: { testRunner: { ...PUSH_ON, pool: [{ peer: 'runner-2' }] } }, peers: [R1, R2], client: bc, extraDeps: { boxDecideTimers: timers } });
+  const team = b.tm.loadManifest('team');
+  require('../team-box').writeBox(team.dir, BOX_TEXT);
+  await b.m._boxDecide(team, { id: 't1' }, '/w', {});
+  await b.m._boxDecide(team, { id: 't1' }, '/w', { merge: true });
+  assert.deepStrictEqual(runSent.map((o) => [o.kind, typeof o.requeue, typeof o.onMove]), [['verify', 'function', 'function'], ['post-merge', 'undefined', 'undefined']]);
 });
