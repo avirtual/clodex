@@ -36,7 +36,7 @@ test('the facts line shows os/arch, cores, memory and the runtime or none found'
   );
 });
 
-test('the facts line shows the runtime capacity a box gets, with the host beside it only when it differs', () => {
+test('the facts line shows the runtime capacity its boxes share, with the host beside it only when it differs', () => {
   assert.strictEqual(
     ownFactsLine({ os: 'darwin', arch: 'arm64', cpus: 14, memMb: 49152, runtime: { platforms: ['linux/arm64'], cpus: 8, memMb: 21094 } }),
     'darwin/arm64 · linux/arm64 boxes · 8 cores · 21 GB (host: 14 cores, 48 GB)',

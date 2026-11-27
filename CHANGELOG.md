@@ -13,7 +13,7 @@ blocks a release.
 
 ## Unreleased
 
-- Test boxes: a node's offer now shows the CPUs and memory its container runtime has, which is what a box gets, with the host's numbers beside it when they differ.
+- Test boxes: a node's offer now shows the CPUs and memory of its container runtime, which is what its boxes share, with the host's numbers beside it when they differ.
 
 ## 5.202.0 — 2026-11-27
 
