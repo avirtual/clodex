@@ -276,6 +276,7 @@ const {
 } = require('./intent-spill');
 const { createFiledRing, seedFiledRing, filedEntry, spillHead } = require('./filed-ring');
 const nodePath = require('path');
+const nodeOs = require('os');
 const { durableMessageCopyOf, literalMessagePathOf } = require('./file-resolve');
 const { spillGrammarLine } = require('./ipc-prompt');
 const { readPromptSnapshotMemo, restageAtReset, clearCache } = require('./ipc-prompt-cache');
@@ -398,7 +399,21 @@ function addDirArgs(args) {
   return out;
 }
 
+function realClaudeHomeUnderTest(dir, env = process.env, realHome = nodeOs.userInfo().homedir) {
+  if (!env.NODE_TEST_CONTEXT || typeof dir !== 'string' || !dir) return false;
+  const target = nodePath.resolve(dir);
+  const home = nodePath.resolve(realHome);
+  if (target === home) return true;
+  return ['.claude', '.clodex'].some((sub) => {
+    const rel = nodePath.relative(nodePath.join(home, sub), target);
+    return rel === '' || (!rel.startsWith('..') && !nodePath.isAbsolute(rel));
+  });
+}
+
 function preseedClaudeOnboarding({ fs, path, homeDir, configDir = null, cwd, addDirs = [] }) {
+  if (realClaudeHomeUnderTest(configDir || homeDir)) {
+    throw new Error(`preseedClaudeOnboarding: refusing to write ${nodePath.join(configDir || homeDir, '.claude.json')} under node --test; give createSessionManager an os whose homedir() is a temp dir (os: { ...os, homedir: () => tmpHome })`);
+  }
   try {
     const p = path.join(configDir || homeDir, '.claude.json');
     let j = {};

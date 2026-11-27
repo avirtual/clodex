@@ -23,7 +23,7 @@ const path = require('node:path');
 const { createSessionManager } = require('../session-manager');
 const { pathFor, runDirFor } = require('../clodex-paths');
 const { createTicketsStore } = require('../tickets-store');
-const { mkTmpRoot } = require('./lib/tmp-roots');
+const { mkTmpRoot, tmpHomeOs } = require('./lib/tmp-roots');
 
 const CWD = os.tmpdir();
 
@@ -109,7 +109,7 @@ function boot(world, opts = {}) {
         };
       },
     },
-    os,
+    os: tmpHomeOs(),
     notifyOS: () => {},
     log: { info: () => {}, warn: () => {}, error: () => {}, debug: () => {} },
     // The team is what gates the replay, so these two are the only resolution

@@ -25,7 +25,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { createSessionManager } = require('../session-manager');
 const { pathFor, runDirFor } = require('../clodex-paths');
-const { mkTmpRoot } = require('./lib/tmp-roots');
+const { mkTmpRoot, tmpHomeOs } = require('./lib/tmp-roots');
 
 // Two keys, not one. The drop is a whole-env loss, not a hint-specific one — a
 // single-key fixture would read as if some named variable were special-cased and
@@ -76,7 +76,7 @@ function mkManager() {
     Transport: class { start() {} stop() {} },
     JsonlWatcher: class { start() {} stop() {} },
     pty: fakePty,
-    os,
+    os: tmpHomeOs(),
     // Reached AFTER create() on the reload path. Without it the respawn throws
     // into the intent's catch, which does `persistence.upsert(entry)` to save the
     // record from a failed respawn — restoring the pre-reload env and making the

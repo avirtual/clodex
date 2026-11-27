@@ -8,7 +8,7 @@ const path = require('node:path');
 const { createSessionManager } = require('../session-manager');
 const { createTicketMethods } = require('../team-tickets');
 const registry = require('../intent-registry');
-const { mkTmpRoot } = require('./lib/tmp-roots');
+const { mkTmpRoot, tmpHomeOs } = require('./lib/tmp-roots');
 
 const EXEC = 16;
 const INTENTS = 17;
@@ -21,7 +21,7 @@ function harness(rec, team = null) {
   const replies = [];
   const home = fs.realpathSync(mkTmpRoot('clx-plugin-intents-'));
   const SessionManager = createSessionManager({
-    knownSkillNames: () => [], os, fs, path,
+    knownSkillNames: () => [], os: tmpHomeOs(), fs, path,
     resolveTeam: () => team,
     log: { warn() {}, info() {}, error() {} },
     getPersistence: () => ({ get: (n) => (n === 'spawner' ? rec : null), setStripLevel() {}, setAutoCompact() {}, setPlugins() {} }),

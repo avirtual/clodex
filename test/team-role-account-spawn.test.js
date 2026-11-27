@@ -25,7 +25,7 @@ const osReal = require('node:os');
 const { createSessionManager } = require('../session-manager');
 const ticketsMod = require('../tickets-store');
 const { intentEnabled } = require('../intent-catalog');
-const { mkTmpRoot } = require('./lib/tmp-roots');
+const { mkTmpRoot, tmpHomeOs } = require('./lib/tmp-roots');
 
 const SESSION_ENV_ARG = 18;
 
@@ -125,7 +125,7 @@ function mkFixture({ handRole = {}, reviewerRole = {}, accounts = ACCOUNTS, temp
     validIntentNames: require('../intent-registry').validIntentNames,
     fs: fsReal,
     path: pathReal,
-    os: osReal,
+    os: tmpHomeOs(),
     ensureDir: () => {},
     countPending: require('../pending-store').countPending,
     isDraftOpen: require('../proxy-util').isDraftOpen,

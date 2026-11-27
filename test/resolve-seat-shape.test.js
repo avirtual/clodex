@@ -23,7 +23,7 @@ const { createSessionManager } = require('../session-manager');
 const { CLAUDE_TOOLS } = require('../catalogs');
 const { ADAPTERS } = require('../cli-adapters');
 const { STOCK_ROLE_DEFS } = require('../team-manifest');
-const { mkTmpRoot } = require('./lib/tmp-roots');
+const { mkTmpRoot, tmpHomeOs } = require('./lib/tmp-roots');
 
 const REVIEWER_CAP = ['Read', 'Grep', 'Glob'];
 
@@ -35,7 +35,7 @@ const REVIEWER_CAP = ['Read', 'Grep', 'Glob'];
 function managerWith(templatesList, { leadArgs = [], leadExec = undefined, leadMcp = undefined, leadEnv = undefined, accounts = undefined, resolveTeam = () => null, listAllTemplates } = {}) {
   const SessionManager = createSessionManager({
     knownSkillNames: () => [],
-    os,
+    os: tmpHomeOs(),
     fs,
     path,
     resolveTeam,

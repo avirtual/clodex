@@ -12,7 +12,7 @@ const { promptCacheDir } = require('../ipc-prompt-cache');
 const { parseCtxFile } = require('../argv-merge');
 const { ctxReminderFor, ctxThresholdsFor, CTX_THRESHOLD_MIN } = require('../ctx-reminder');
 const { countPending } = require('../pending-store');
-const { mkTmpRoot } = require('./lib/tmp-roots');
+const { mkTmpRoot, tmpHomeOs } = require('./lib/tmp-roots');
 
 function harness(t) {
   const root = mkTmpRoot('clodex-t1532-');
@@ -85,7 +85,7 @@ function harness(t) {
     resolveProxyBase: () => null,
     lastTranscriptWrite: () => null,
     pty: { spawn: () => ({ onData() {}, onExit() {}, pid: 999 }) },
-    os,
+    os: tmpHomeOs(),
     notifyOS: () => {},
     log: { info: () => {}, warn: () => {}, error: () => {} },
   });

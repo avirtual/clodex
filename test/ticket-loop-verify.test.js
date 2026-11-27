@@ -26,7 +26,7 @@ const { createSessionManager } = require('../session-manager');
 const ticketsMod = require('../tickets-store');
 const { ticketInFlight } = require('../tickets-store');
 const { intentEnabled } = require('../intent-catalog');
-const { mkTmpRoot } = require('./lib/tmp-roots');
+const { mkTmpRoot, tmpHomeOs } = require('./lib/tmp-roots');
 const { assertTicketDepsCovered } = require('./lib/loop-fixture-deps');
 // The REAL parser, used to execute the recovery an escalation prescribes rather
 // than to pattern-match it: a copy of the grammar in this file would agree with
@@ -409,7 +409,7 @@ function mkLoop({
     // nothing while passing.
     pathFor: require('../clodex-paths').pathFor,
     runDirFor: require('../clodex-paths').runDirFor,
-    os: osReal,
+    os: tmpHomeOs(),
     ensureDir: require('../fs-util').ensureDir,
     // The REAL module, deliberately: see the header. A stub here would assert
     // only that the loop calls the functions it calls.

@@ -26,7 +26,7 @@ const { execFileSync } = require('node:child_process');
 const { createSessionManager } = require('../session-manager');
 const ticketsMod = require('../tickets-store');
 const { intentEnabled } = require('../intent-catalog');
-const { mkTmpRoot } = require('./lib/tmp-roots');
+const { mkTmpRoot, tmpHomeOs } = require('./lib/tmp-roots');
 const { assertTicketDepsCovered } = require('./lib/loop-fixture-deps');
 // The REAL scheduler, built as engine.js builds it. See the deps block below.
 const { createTeamManifest } = require('../team-manifest');
@@ -246,7 +246,7 @@ function mkMerge({ repo, ticketOver = {}, suite = 'green', gitOver = null, isAli
     validIntentNames: require('../intent-registry').validIntentNames,
     fs: fsReal,
     path: pathReal,
-    os: osReal,
+    os: tmpHomeOs(),
     // REAL, like gitWorktree: the suite-in-flight gate asks whether a pid that
     // wrote a lock file is still running, and a stub answering `false` would
     // turn every "a live suite holds the lock" subject into a merge that

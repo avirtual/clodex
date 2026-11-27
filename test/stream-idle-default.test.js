@@ -37,7 +37,7 @@ const { createSessionManager } = require('../session-manager');
 const { pathFor, runDirFor } = require('../clodex-paths');
 const { initStores } = require('../stores');
 const { loadEnvDefaults } = require('../env-defaults');
-const { mkTmpRoot } = require('./lib/tmp-roots');
+const { mkTmpRoot, tmpHomeOs } = require('./lib/tmp-roots');
 
 const KEY = 'CLAUDE_STREAM_IDLE_TIMEOUT_MS';
 const FLOOR = '1800000'; // the CLI clamps to [1, 1800000]; nothing higher is expressible
@@ -84,7 +84,7 @@ function mkManager(scopes, { breakScopes = false } = {}) {
         return { onData() {}, onExit() {}, pid: 999, kill() {} };
       },
     },
-    os,
+    os: tmpHomeOs(),
     stripLevelOf: () => 0,
     notifyOS: () => {},
     log: { info: () => {}, warn: () => {}, error: () => {} },

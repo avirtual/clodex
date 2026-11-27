@@ -33,7 +33,7 @@ const { confine } = require('../path-confine');
 const { CLAUDE_TOOLS, AGENT_NAME_RE } = require('../catalogs');
 const { buildAgentPlugin, parseAgentFrontmatter, qualifiedAgentName, DROPPED_AGENT_FIELDS, BUILTIN_AGENTS } = require('../agents-util');
 const { buildSkillPlugin, unresolvedSubagentRefs } = require('../skills-util');
-const { mkTmpRoot } = require('./lib/tmp-roots');
+const { mkTmpRoot, tmpHomeOs } = require('./lib/tmp-roots');
 
 // A literal, not derived from either template: deriving it would make the
 // partition below a tautology. These eight are what a ticket seat actually uses
@@ -224,7 +224,7 @@ function mkManager() {
   const SessionManager = createSessionManager({
     knownSkillNames: () => [],
     REGISTRY_DIR: root,
-    fs, path, pathFor, runDirFor, os,
+    fs, path, pathFor, runDirFor, os: tmpHomeOs(),
     PENDING_DIR: path.join(root, 'pending'),
     MSG_DIR: path.join(root, 'messages'),
     ensureDir,

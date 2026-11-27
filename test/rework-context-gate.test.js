@@ -40,7 +40,7 @@ const { intentEnabled } = require('../intent-catalog');
 const { initStores } = require('../stores');
 const { createRemindScheduler } = require('../remind-scheduler');
 const { createTeamManifest } = require('../team-manifest');
-const { mkTmpRoot } = require('./lib/tmp-roots');
+const { mkTmpRoot, tmpHomeOs } = require('./lib/tmp-roots');
 const { assertTicketDepsCovered } = require('./lib/loop-fixture-deps');
 const { CTX_REMINDER_NUDGE_TOKENS } = require('../ctx-reminder');
 const { matchSeatRole } = require('../team-manifest');
@@ -148,7 +148,7 @@ function mkFixture(world) {
     path: pathReal,
     pathFor: require('../clodex-paths').pathFor,
     runDirFor: require('../clodex-paths').runDirFor,
-    os: osReal,
+    os: tmpHomeOs(),
     ensureDir: require('../fs-util').ensureDir,
     gitWorktree: require('../git-worktree'),
     childProcess: require('node:child_process'),

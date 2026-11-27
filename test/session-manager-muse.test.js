@@ -8,7 +8,7 @@ const pathReal = require('node:path');
 
 const { intentEnabled } = require('../intent-catalog');
 const { createSessionManager } = require('../session-manager');
-const { mkTmpRoot } = require('./lib/tmp-roots');
+const { mkTmpRoot, tmpHomeOs } = require('./lib/tmp-roots');
 const { processStubs } = require('./lib/process-stubs');
 const { pathFor: pathForReal, runDirFor: runDirForReal } = require('../clodex-paths');
 const { mergeInstructionBodies } = require('../argv-merge');
@@ -76,7 +76,7 @@ function mkMuse({ proxyBase = PROXY, probeAnswer = { capabilities: { muse: true 
     REGISTRY_DIR: root,
     MSG_DIR: pathReal.join(root, 'messages'),
     PENDING_DIR: pathReal.join(root, 'pending'),
-    fs, path: pathReal, os: osReal,
+    fs, path: pathReal, os: tmpHomeOs(),
     pathFor: pathForReal, runDirFor: runDirForReal,
     ensureDir: (d) => fsReal.mkdirSync(d, { recursive: true }),
     setupClaudeHook: () => null,

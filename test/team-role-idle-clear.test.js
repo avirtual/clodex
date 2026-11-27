@@ -15,7 +15,7 @@ const ticketsMod = require('../tickets-store');
 const { intentEnabled } = require('../intent-catalog');
 const { parseIntent } = require('../intent-scanner');
 const lib = require('../renderer/lib/team-roles');
-const { mkTmpRoot } = require('./lib/tmp-roots');
+const { mkTmpRoot, tmpHomeOs } = require('./lib/tmp-roots');
 
 const POPOVER = fs.readFileSync(path.join(__dirname, '..', 'renderer/popovers/team-roles-popover.js'), 'utf-8');
 
@@ -202,7 +202,7 @@ function mkMint({ handRole = {}, template = HAND_TEMPLATE } = {}) {
     intentEnabledForSeat: require('../intent-registry').intentEnabledForSeat,
     pluginRowFor: require('../intent-registry').pluginRowFor,
     validIntentNames: require('../intent-registry').validIntentNames,
-    fs, path, os,
+    fs, path, os: tmpHomeOs(),
     ensureDir: () => {},
     countPending: require('../pending-store').countPending,
     isDraftOpen: require('../proxy-util').isDraftOpen,
@@ -277,7 +277,7 @@ for (const [label, hand, want] of [
   const store = fakePersistence();
   const team = { name: 'team', root: tplDir, lead: 'lead', roles: { lead: {}, hand } };
   const SessionManager = createSessionManager({
-    knownSkillNames: () => [], os, fs, path,
+    knownSkillNames: () => [], os: tmpHomeOs(), fs, path,
     log: { warn() {}, info() {}, error() {} },
     getPersistence: () => store,
     withoutPrivilegedIntentsFor: (x) => x,

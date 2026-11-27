@@ -29,7 +29,7 @@ const path = require('node:path');
 const { createSessionManager } = require('../session-manager');
 const { isDraftOpen } = require('../proxy-util');
 const { pathFor, runDirFor } = require('../clodex-paths');
-const { mkTmpRoot } = require('./lib/tmp-roots');
+const { mkTmpRoot, tmpHomeOs } = require('./lib/tmp-roots');
 
 const CWD = os.tmpdir();
 
@@ -82,7 +82,7 @@ function boot(opts = {}) {
         };
       },
     },
-    os,
+    os: tmpHomeOs(),
     notifyOS: () => {},
     log: { info: () => {}, warn: () => {}, error: () => {}, debug: () => {} },
     resolveTeam: () => null,

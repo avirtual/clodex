@@ -20,7 +20,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { createSessionManager } = require('../session-manager');
 const { pathFor, runDirFor } = require('../clodex-paths');
-const { mkTmpRoot } = require('./lib/tmp-roots');
+const { mkTmpRoot, tmpHomeOs } = require('./lib/tmp-roots');
 
 // --- 1. the `account` column on a list() row ---------------------------------
 
@@ -250,7 +250,7 @@ function mkManager(extraDeps = {}) {
     Transport: class { start() {} stop() {} },
     JsonlWatcher: class { start() {} stop() {} },
     pty: fakePty,
-    os,
+    os: tmpHomeOs(),
     stripLevelOf: () => 0,
     notifyOS: () => {},
     log: { info: () => {}, warn: () => {}, error: () => {} },
@@ -354,7 +354,7 @@ test('create(): the guard reads the MERGED env, so a GLOBAL scope var is checked
     Transport: class { start() {} stop() {} },
     JsonlWatcher: class { start() {} stop() {} },
     pty: { spawn: () => { spawns.push(1); return { onData() {}, onExit() {}, pid: 9, kill() {} }; } },
-    os,
+    os: tmpHomeOs(),
     stripLevelOf: () => 0,
     notifyOS: () => {},
     log: { info: () => {}, warn: () => {}, error: () => {} },

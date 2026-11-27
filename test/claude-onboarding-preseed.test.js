@@ -209,3 +209,23 @@ test('cwd and added dirs all trusted already: no write, false', () => {
   assert.strictEqual(preseedClaudeOnboarding({ fs, path, homeDir: home, cwd: '/tmp/p1', addDirs: [dir] }), false);
   assert.strictEqual(fs.readFileSync(p, 'utf8'), orig);
 });
+
+for (const [label, dirs] of [
+  ['the real home', { homeDir: os.userInfo().homedir }],
+  ['a config dir at the real ~/.claude', { homeDir: '/nope', configDir: path.join(os.userInfo().homedir, '.claude') }],
+  ['a config dir under the real ~/.clodex', { homeDir: '/nope', configDir: path.join(os.userInfo().homedir, '.clodex', 'accounts', 'a1') }],
+]) {
+  test(`t2442: under node --test, a seed into ${label} throws naming the os seam and touches no file`, () => {
+    assert.ok(process.env.NODE_TEST_CONTEXT, 'ENTER: this file runs under node --test');
+    const calls = [];
+    const spyFs = new Proxy(fs, { get: (t, k) => (typeof t[k] === 'function' ? (...a) => { calls.push(k); return t[k](...a); } : t[k]) });
+    assert.throws(() => preseedClaudeOnboarding({ fs: spyFs, path, ...dirs, cwd: '/tmp/p1' }),
+      /refusing to write .*\.claude\.json under node --test; give createSessionManager an os whose homedir\(\) is a temp dir/);
+    assert.deepStrictEqual(calls, []);
+  });
+}
+
+test('t2442: a temp home beside the real one is not refused', () => {
+  const home = tmpHome();
+  assert.strictEqual(preseedClaudeOnboarding({ fs, path, homeDir: home, cwd: '/tmp/p1' }), true);
+});

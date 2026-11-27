@@ -6,7 +6,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { createSessionManager } = require('../session-manager');
-const { mkTmpRoot } = require('./lib/tmp-roots');
+const { mkTmpRoot, tmpHomeOs } = require('./lib/tmp-roots');
 
 const EXTRA_ARGS = 3;
 const SESSION_ENV = 18;
@@ -17,7 +17,7 @@ function harness({ rec = null, accounts = null, templates = [], team = null } = 
   const upserts = [];
   const home = fs.realpathSync(mkTmpRoot('clx-posture-home-'));
   const SessionManager = createSessionManager({
-    knownSkillNames: () => [], os, fs, path,
+    knownSkillNames: () => [], os: tmpHomeOs(), fs, path,
     resolveTeam: () => team,
     log: { warn() {}, info() {}, error() {} },
     getPersistence: () => ({

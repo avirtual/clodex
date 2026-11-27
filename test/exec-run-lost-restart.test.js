@@ -9,7 +9,7 @@ const { EventEmitter } = require('node:events');
 
 const { createSessionManager } = require('../session-manager');
 const { isFilenameToken, parseAndValidate } = require('../exec-schema');
-const { mkTmpRoot } = require('./lib/tmp-roots');
+const { mkTmpRoot, tmpHomeOs } = require('./lib/tmp-roots');
 
 const LEDGER = 'exec-runs-inflight.json';
 
@@ -40,7 +40,7 @@ function harness({ ledger, persisted = ['a'] } = {}) {
     isFilenameToken,
     parseAndValidate,
     resolveTeam: () => ({ name: 't', root: '/proj/alpha' }),
-    os,
+    os: tmpHomeOs(),
     fs,
     path,
     log: { warn(tag, msg) { warns.push(msg); }, info() {}, error() {}, debug() {} },

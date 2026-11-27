@@ -7,7 +7,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { EventEmitter } = require('node:events');
 const { spawn, spawnSync } = require('node:child_process');
-const { mkTmpRoot } = require('./lib/tmp-roots');
+const { mkTmpRoot, tmpHomeOs } = require('./lib/tmp-roots');
 const { route, createChannelHost, createSuiteClient, boxVerdict } = require('../suite-client');
 
 const SCRIPT = path.join(__dirname, '..', 'scripts', 'clodex-run-tests.js');
@@ -186,7 +186,7 @@ function execFixture(t, bin, { client = null, team = null, peers = null, desk = 
   const children = [];
   const broadcasts = [];
   const SessionManager = createSessionManager({
-    knownSkillNames: () => [], REGISTRY_DIR, isFilenameToken, parseAndValidate, os, fs, path,
+    knownSkillNames: () => [], REGISTRY_DIR, isFilenameToken, parseAndValidate, os: tmpHomeOs(), fs, path,
     log: { warn() {}, info() {}, error() {} },
     getPersistence: () => ({ list: () => [], get: () => ({ execCommands: ['cmd'] }) }),
     getSuiteClient: () => client,

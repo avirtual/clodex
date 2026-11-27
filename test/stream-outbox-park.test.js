@@ -9,12 +9,13 @@ const { createSessionManager } = require('../session-manager');
 const { pathFor, runDirFor } = require('../clodex-paths');
 const pendingStore = require('../pending-store');
 const crypto = require('node:crypto');
-const { mkTmpRoot } = require('./lib/tmp-roots');
+const { mkTmpRoot, tmpHomeOs } = require('./lib/tmp-roots');
 
 const IO_ARG = 24;
 
 function boot(opts = {}) {
   const root = mkTmpRoot('clx-sop-');
+  const homeOs = tmpHomeOs();
   const PENDING_DIR = path.join(root, 'pending');
   const store = new Map();
   const sends = new Map();
@@ -35,7 +36,7 @@ function boot(opts = {}) {
   const SessionManager = createSessionManager({
     knownSkillNames: () => [],
     REGISTRY_DIR: root,
-    fs, path, pathFor, runDirFor, os,
+    fs, path, pathFor, runDirFor, os: homeOs,
     PENDING_DIR,
     MSG_DIR: path.join(root, 'messages'),
     ensureDir: (d) => fs.mkdirSync(d, { recursive: true }),
@@ -131,7 +132,7 @@ function boot(opts = {}) {
     return m.sessions.get(name);
   };
   return {
-    m, root, PENDING_DIR, logs, sends, persistence, seats,
+    m, root, home: homeOs.homedir(), PENDING_DIR, logs, sends, persistence, seats,
     close: (n, code = 1) => closes.get(n)(code, null),
     setPending: (n) => { pending = n; },
     spawn,
@@ -492,4 +493,17 @@ test('a producer item that produces nothing is dropped at turn end, not kept at 
     app.m._streamTurnEnd(s);
     assert.deepStrictEqual(slept, [['sx', 'idle']]);
   } finally { app.stop(); }
+});
+
+test('t2442: a claude spawn seeds the injected home and leaves the real ~/.claude.json mtime and size unchanged', async () => {
+  const realFile = path.join(os.userInfo().homedir, '.claude.json');
+  const statOf = () => { try { const st = fs.statSync(realFile); return { mtimeMs: st.mtimeMs, size: st.size }; } catch { return null; } };
+  const before = statOf();
+  const app = boot();
+  try {
+    await app.spawn('sx', 'stream');
+    const seeded = JSON.parse(fs.readFileSync(path.join(app.home, '.claude.json'), 'utf8'));
+    assert.strictEqual(seeded.projects[app.root].hasTrustDialogAccepted, true, 'ENTER: the spawn path seeded the injected home');
+  } finally { app.stop(); }
+  assert.deepStrictEqual(statOf(), before);
 });

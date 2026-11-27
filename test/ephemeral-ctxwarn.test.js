@@ -25,7 +25,7 @@ const { pathFor, runDirFor } = require('../clodex-paths');
 const { promptCacheDir } = require('../ipc-prompt-cache');
 const { parseCtxFile } = require('../argv-merge');
 const { ctxReminderFor, ctxThresholdsFor, CTX_THRESHOLD_MIN } = require('../ctx-reminder');
-const { mkTmpRoot } = require('./lib/tmp-roots');
+const { mkTmpRoot, tmpHomeOs } = require('./lib/tmp-roots');
 
 function tmp() { return mkTmpRoot('clodex-t433-'); }
 
@@ -126,7 +126,7 @@ function harness(t, { ephemeral = false, getThrows = false } = {}) {
     resolveProxyBase: () => null,
     lastTranscriptWrite: () => null,
     pty: { spawn: () => ({ onData() {}, onExit() {}, pid: 999 }) },
-    os,
+    os: tmpHomeOs(),
     notifyOS: () => {},
     log: { info: () => {}, warn: () => {}, error: () => {} },
   });

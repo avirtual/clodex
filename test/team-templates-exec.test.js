@@ -37,7 +37,7 @@ const { teamPromptFile, teamJsonFile, readTeamJson } = require('../team-prompt-d
 const { teamPreflight } = require('../team-preflight');
 const { createSessionManager } = require('../session-manager');
 const { isFilenameToken, parseAndValidate } = require('../exec-schema');
-const { mkTmpRoot } = require('./lib/tmp-roots');
+const { mkTmpRoot, tmpHomeOs } = require('./lib/tmp-roots');
 
 const SRC = (name) => fs.readFileSync(path.join(__dirname, '..', name), 'utf8');
 
@@ -176,7 +176,7 @@ test('t700: readTeamJson returns the object, and null for every unusable file', 
 function shapeManager({ templatesList = [], resolveTeam = () => null, fsImpl = fs } = {}) {
   const SessionManager = createSessionManager({
     knownSkillNames: () => [],
-    os,
+    os: tmpHomeOs(),
     fs: fsImpl,
     path,
     resolveTeam,
@@ -272,7 +272,7 @@ function spawnHarness({ listAllTemplates = () => [], resolveTeam = () => null } 
   const replies = [];
   const SessionManager = createSessionManager({
     knownSkillNames: () => [],
-    os,
+    os: tmpHomeOs(),
     fs,
     path,
     resolveTeam,
@@ -348,7 +348,7 @@ function execManager({ home, resolveTeam = () => null }) {
     isFilenameToken,
     parseAndValidate,
     resolveTeam,
-    os,
+    os: tmpHomeOs(),
     fs,
     path,
     log: { warn() {}, info() {}, error() {} },

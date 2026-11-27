@@ -26,7 +26,7 @@ const { createSessionManager } = require('../session-manager');
 const ticketsMod = require('../tickets-store');
 const { intentEnabled } = require('../intent-catalog');
 const { matchSeatRole, formatRoster } = require('../team-manifest');
-const { mkTmpRoot } = require('./lib/tmp-roots');
+const { mkTmpRoot, tmpHomeOs } = require('./lib/tmp-roots');
 
 // Copied, not shared, for the reason review-verdict-ticket.test.js states: these
 // assertions are about the NAME, and a shared fixture makes either file's edits
@@ -91,7 +91,7 @@ function mkFixture() {
     validIntentNames: require('../intent-registry').validIntentNames,
     fs: fsReal,
     path: pathReal,
-    os: osReal,
+    os: tmpHomeOs(),
     ensureDir: require('../fs-util').ensureDir,
     countPending: require('../pending-store').countPending,
     isDraftOpen: require('../proxy-util').isDraftOpen,

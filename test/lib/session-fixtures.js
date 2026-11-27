@@ -15,7 +15,7 @@ const { intentEnabled } = require('../../intent-catalog');
 const fsReal = require('fs');
 const pathReal = require('path');
 const { createTeamManifest: createTeamManifestReal } = require('../../team-manifest');
-const { mkTmpRoot } = require('./tmp-roots');
+const { mkTmpRoot, tmpHomeOs } = require('./tmp-roots');
 const { execFileSync } = require('child_process');
 const { parkDelivery, drainPending, hasPending, hasActivePending, countPending: countPendingReal, parkIdInUse } = require('../../pending-store');
 const { isDraftOpen: isDraftOpenReal } = require('../../proxy-util');
@@ -168,7 +168,7 @@ function mkTeamCreate({
   const { m, injected } = mkPark({
     fs: wrapFs ? wrapFs(fsReal, home) : fsReal,
     path: pathReal,
-    os: require('os'),
+    os: tmpHomeOs(),
     REGISTRY_DIR: home,
     AGENT_NAME_RE: /^[a-zA-Z0-9._-]{1,64}$/,
     DEFAULT_WORKSPACE_ID: 'default',

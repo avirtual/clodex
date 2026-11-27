@@ -33,7 +33,7 @@ const { createCliHooks } = require('../cli-hooks');
 const { createSessionManager } = require('../session-manager');
 const { pathFor, runDirFor } = require('../clodex-paths');
 const { bakePrompt, promptCacheDir, cachePathFor, readCache } = require('../ipc-prompt-cache');
-const { mkTmpRoot } = require('./lib/tmp-roots');
+const { mkTmpRoot, tmpHomeOs } = require('./lib/tmp-roots');
 
 function tmp() { return mkTmpRoot('clodex-t63-'); }
 
@@ -118,7 +118,7 @@ function reuseArgFor({ resumeId = null, mint = false, extraArgs = [] } = {}) {
     resolveProxyBase: () => null,
     lastTranscriptWrite: () => null,
     pty: { spawn: () => ({ onData() {}, onExit() {}, pid: 999 }) },
-    os,
+    os: tmpHomeOs(),
     notifyOS: () => {},
     log: { info: () => {}, warn: () => {}, error: () => {} },
   });

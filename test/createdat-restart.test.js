@@ -47,7 +47,7 @@ const os = require('node:os');
 const fs = require('node:fs');
 const path = require('node:path');
 const { createEngine } = require('./lib/engine-isolation');
-const { mkTmpRoot } = require('./lib/tmp-roots');
+const { mkTmpRoot, tmpHomeOs } = require('./lib/tmp-roots');
 
 // A fixed point in the past, not a relative offset: ENTER (c). Any re-mint
 // lands on Date.now(), which cannot collide with it.
@@ -244,7 +244,7 @@ function mkManagerWithStore(extraDeps = {}) {
     Transport: class { start() {} stop() {} },
     JsonlWatcher: class { start() {} stop() {} },
     pty: { spawn: () => ({ onData() {}, onExit() {}, pid: 999 }) },
-    os,
+    os: tmpHomeOs(),
     notifyOS: () => {},
     log: { info: () => {}, warn: () => {}, error: () => {} },
     ...extraDeps,

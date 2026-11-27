@@ -3,6 +3,7 @@
 const assert = require('node:assert');
 const fs = require('node:fs');
 const os = require('node:os');
+const { tmpHomeOs } = require('./tmp-roots');
 const path = require('node:path');
 const { createSessionManager } = require('../../session-manager');
 const { createCliHooks } = require('../../cli-hooks');
@@ -25,7 +26,7 @@ function mkManager(root, overrides = {}) {
     REGISTRY_DIR: root,
     PENDING_DIR: path.join(root, 'pending'),
     MSG_DIR: path.join(root, 'messages'),
-    fs, path, os,
+    fs, path, os: tmpHomeOs(),
     pathFor, runDirFor,
     buildIpcPrompt: require('../../ipc-prompt').buildIpcPrompt,
     mergeClaudeSystemPrompt: require('../../argv-merge').mergeClaudeSystemPrompt,

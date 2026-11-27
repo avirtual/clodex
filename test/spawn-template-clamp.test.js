@@ -9,7 +9,7 @@ const { createSessionManager } = require('../session-manager');
 const { teamTemplateSave } = require('../team-prompt-dir');
 const { restoreSessionsForWorkspace } = require('../session-restore');
 const { splitPrivilegedArgs } = require('../cli-adapters');
-const { mkTmpRoot } = require('./lib/tmp-roots');
+const { mkTmpRoot, tmpHomeOs } = require('./lib/tmp-roots');
 
 const EXTRA_ARGS = 3;
 const EXEC = 16;
@@ -24,7 +24,7 @@ function harness({ rec = null, team = null, others = {}, resolve = null } = {}) 
   const replies = [];
   const home = fs.realpathSync(mkTmpRoot('clx-clamp-home-'));
   const SessionManager = createSessionManager({
-    knownSkillNames: () => [], os, fs, path,
+    knownSkillNames: () => [], os: tmpHomeOs(), fs, path,
     resolveTeam: resolve || (() => team),
     log: { warn() {}, info() {}, error() {} },
     getPersistence: () => ({ get: (n) => (n === 'spawner' ? rec : (others[n] || null)), setStripLevel() {}, setAutoCompact() {} }),

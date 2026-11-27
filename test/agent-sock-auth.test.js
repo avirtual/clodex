@@ -13,7 +13,7 @@ const {
 } = require('../agent-transport');
 const { createEngine } = require('./lib/engine-isolation');
 const { mkPark } = require('./lib/session-fixtures');
-const { mkTmpRoot } = require('./lib/tmp-roots');
+const { mkTmpRoot, tmpHomeOs } = require('./lib/tmp-roots');
 
 function frameOnce(REGISTRY_DIR, hostCred, frame) {
   const { Transport } = createAgentTransport({ REGISTRY_DIR, MAX_MSG: 65536, hostCred });
@@ -154,7 +154,7 @@ function execEnvFor(bin, argv = ['/usr/bin/env', 'node', `\${CLODEX_BIN}/${bin}`
     return ee;
   };
   const SessionManager = createSessionManager({
-    knownSkillNames: () => [], REGISTRY_DIR, isFilenameToken, parseAndValidate, os, fs, path,
+    knownSkillNames: () => [], REGISTRY_DIR, isFilenameToken, parseAndValidate, os: tmpHomeOs(), fs, path,
     AGENT_SOCK_CRED: 'c'.repeat(64),
     log: { warn() {}, info() {}, error() {} },
     getPersistence: () => ({ list: () => [], get: () => ({ execCommands: ['cmd'] }) }),

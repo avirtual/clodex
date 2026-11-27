@@ -7,7 +7,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { createSessionManager } = require('../session-manager');
 const { pathFor, runDirFor } = require('../clodex-paths');
-const { mkTmpRoot } = require('./lib/tmp-roots');
+const { mkTmpRoot, tmpHomeOs } = require('./lib/tmp-roots');
 const { isHumanPtyInput, draftChunkSignal } = require('../proxy-util');
 
 const RESUME_ID = '01a0da2a-6469-7632-88a4-67b6ba1a041a';
@@ -45,7 +45,7 @@ function mkCodex({ pollMs = 1, deadlineMs = 60000, slowPollMs = 5000 } = {}) {
         return { onData() {}, onExit() {}, pid: 999, kill() {}, write() {} };
       },
     },
-    os,
+    os: tmpHomeOs(),
     stripLevelOf: () => 0,
     notifyOS: () => {},
     log: { info: () => {}, warn: (scope, msg) => warns.push([scope, msg]), error: () => {} },

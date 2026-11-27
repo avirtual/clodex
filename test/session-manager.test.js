@@ -13,7 +13,7 @@ const assert = require('node:assert');
 const { intentEnabled } = require('../intent-catalog');
 const { createSessionManager, deniedBodyDisposition, findPeerByOrigin, isStaleRegistration, nameConflict, peerOriginSuffix } = require('../session-manager');
 const { canFireCompact } = require('../inject-queue');
-const { mkTmpRoot } = require('./lib/tmp-roots');
+const { mkTmpRoot, tmpHomeOs } = require('./lib/tmp-roots');
 const { processStubs } = require('./lib/process-stubs');
 const { mk, mkPark, mkTeamCreate } = require('./lib/session-fixtures');
 
@@ -1795,7 +1795,7 @@ test('reboot: an agent [agent:spawn] from a template STRIPS privileged intents (
     getPersistence: () => ({ list: () => [], get: (n) => (n === 'child' ? null : { extraArgs: [] }) }),
     getTemplates: () => ({ list: () => [{ name: 'rebooter', type: 'claude', cwd: '/tmp/spawn-x', intents: ['dm', 'reboot'] }] }),
     ensureDir: () => {},
-    os: require('node:os'),
+    os: tmpHomeOs(),
     path: require('node:path'),
     log: { info: () => {}, error: () => {} },
   });
@@ -1828,7 +1828,7 @@ test('t8 F1: an agent [agent:spawn] template carrying a PLUGIN verb has it strip
       getPersistence: () => ({ list: () => [], get: (n) => (n === 'child' ? null : { extraArgs: [] }) }),
       getTemplates: () => ({ list: () => [{ name: 'granter', type: 'claude', cwd: '/tmp/spawn-x', intents: ['dm', 'fake-grant', 'reboot'] }] }),
       ensureDir: () => {},
-      os: require('node:os'),
+      os: tmpHomeOs(),
       path: require('node:path'),
       log: { info: () => {}, error: () => {} },
     });
@@ -1853,7 +1853,7 @@ test('t1680: an agent spawn template carrying [*, term] creates with [*]', async
     getPersistence: () => ({ list: () => [], get: (n) => (n === 'child' ? null : { extraArgs: [] }) }),
     getTemplates: () => ({ list: () => [{ name: 'living', type: 'claude', cwd: '/tmp/spawn-x', intents: ['*', 'term'] }] }),
     ensureDir: () => {},
-    os: require('node:os'),
+    os: tmpHomeOs(),
     path: require('node:path'),
     log: { info: () => {}, error: () => {} },
   });
@@ -2578,7 +2578,7 @@ test('exec dispatcher: ${CLODEX_BIN}/${CLODEX_HOME} in argv + cwd expand before 
   const m = mk({
     REGISTRY_DIR,
     isFilenameToken, parseAndValidate,
-    os, fs, path,
+    os: tmpHomeOs(), fs, path,
     log: { warn() {}, info() {} },
     getPersistence: () => ({ list: () => [], get: () => ({ execCommands: ['clodex-team'] }) }),
     childProcess: { spawn: (cmd, args, opts) => { spawned.push({ cmd, args, opts }); return fakeChild(); } },
@@ -2635,7 +2635,7 @@ function mkSpawn(templatesList, persistedEntries = {}) {
     ensureDir: () => {},
     fs: fsReal,
     path: pathReal,
-    os: osReal,
+    os: tmpHomeOs(),
     log: { info: () => {}, warn: () => {}, error: () => {} },
   });
   const created = [], replies = [];
@@ -2929,7 +2929,7 @@ function mkLeadSpawn({ leadTemplate = null, ownCopy = null, spawnerCwd = null, e
     teamsDir: tm.teamsDir,
     REGISTRY_DIR: home,
     ensureDir: () => {},
-    fs: fsReal, path: pathReal, os: osReal,
+    fs: fsReal, path: pathReal, os: tmpHomeOs(),
     log: { info: () => {}, warn: () => {}, error: () => {} },
   });
   m._injectText = (_s, text) => replies.push(text);
@@ -5018,7 +5018,7 @@ function mkHintProbe({ proxyBase = 'http://127.0.0.1:7811', ProxyClient, ptySpaw
     REGISTRY_DIR: root,
     MSG_DIR: pathReal.join(root, 'messages'),
     PENDING_DIR: pathReal.join(root, 'pending'),
-    fs: fsReal, path: pathReal, os: osReal,
+    fs: fsReal, path: pathReal, os: tmpHomeOs(),
     pathFor: pathForReal, runDirFor: runDirForReal,
     ensureDir: (d) => fsReal.mkdirSync(d, { recursive: true }),
     // The real hook creates run/<name>/ as a side effect and the bake writes into
@@ -12840,7 +12840,7 @@ function mkExec({ grants = [], entry = null, cmd = 'bridge-reply', childProcess 
   if (entry) fsReal.writeFileSync(pathReal.join(execDir, `${cmd}.json`), JSON.stringify(entry));
   const persistence = { list: () => [], get: (n) => (n === 't2' ? { execCommands: grants } : null) };
   const m = mk({
-    REGISTRY_DIR, fs: fsReal, path: pathReal, os: osReal,
+    REGISTRY_DIR, fs: fsReal, path: pathReal, os: tmpHomeOs(),
     childProcess, isFilenameToken: isFilenameTokenReal, parseAndValidate: parseAndValidateReal,
     clampReplyBody: clampReplyBodyReal,
     getPersistence: () => persistence,
@@ -13306,7 +13306,7 @@ function mkSpawnCreateProbe(spawnerRec = null) {
     getPersistence: () => persistence,
     getTemplates: () => ({ list: () => [] }),
     AGENT_NAME_RE: AGENT_NAME_RE_T, DEFAULT_WORKSPACE_ID: 'default', REGISTRY_DIR: TPL_HOME,
-    ensureDir: () => {}, fs: fsReal, path: pathReal, os: osReal,
+    ensureDir: () => {}, fs: fsReal, path: pathReal, os: tmpHomeOs(),
     log: { info: () => {}, warn: () => {}, error: () => {} },
   });
   m._injectText = () => {}; m._sendToSession = () => {}; m._broadcast = () => {};
@@ -13399,7 +13399,7 @@ function mkBashCreateProbe() {
     resolveProxyBase: () => null,
     lastTranscriptWrite: () => null,
     pty: fakePty,
-    os: osReal,
+    os: tmpHomeOs(),
     log: { info: () => {}, warn: () => {}, error: () => {} },
   });
   m._sendToSession = () => {};
@@ -13480,7 +13480,7 @@ function mkEnvProbe({ global = {}, workspaces = {} } = {}) {
     getUserDataPath: () => userData,
     resolveProxyBase: () => null,
     lastTranscriptWrite: () => null,
-    pty: fakePty, os, path,
+    pty: fakePty, os: tmpHomeOs(), path,
     log: { info: () => {}, warn: () => {}, error: () => {} },
   });
   m._sendToSession = () => {};
@@ -13855,7 +13855,7 @@ function mkExitProbe() {
     resolveProxyBase: () => null,
     lastTranscriptWrite: () => null,
     pty: fakePty,
-    os: osReal,
+    os: tmpHomeOs(),
     log: { info: () => {}, warn: () => {}, error: () => {} },
     setAppQuitting: () => {},
     whichBin: (c) => c || null,
@@ -14773,7 +14773,7 @@ function mkDeliver({ persisted = null, deps = {} } = {}) {
   const PENDING_DIR = mkTmpRoot('clodex-remind-pending-');
   const persistence = { list: () => [], get: (n) => (persisted && persisted.name === n ? persisted : null) };
   const m = mk({
-    PENDING_DIR, parkDelivery, fs: fsReal, path: pathReal, os: osReal,
+    PENDING_DIR, parkDelivery, fs: fsReal, path: pathReal, os: tmpHomeOs(),
     randBase36: () => Math.random().toString(36).slice(2, 7),
     parkIdInUse: () => false,
     MSG_SPILL_THRESHOLD: 500,
@@ -16184,7 +16184,7 @@ function mkOnDataProbe(overrides = {}) {
     resolveProxyBase: () => null,
     lastTranscriptWrite: () => null,
     pty: fakePty,
-    os: osReal,
+    os: tmpHomeOs(),
     log: { info: () => {}, warn: () => {}, error: () => {}, debug: () => {} },
     // T35 gate deps (mk() omits them) — a real InjectQueue for the end-to-end drain.
     InjectQueue: require('../inject-queue').InjectQueue,
@@ -17430,7 +17430,7 @@ function mkAgentCreateProbe(opts = {}) {
     skillDeliveryProviders: () => skillDelivery.providers(),
     REGISTRY_DIR, registry, isAlive,   // the real registry + transport, on a temp dir
     Transport: opts.wrapTransport ? opts.wrapTransport(Transport) : Transport,
-    fs: fsReal, os: osReal, path: pathReal,
+    fs: fsReal, os: tmpHomeOs(), path: pathReal,
     pathFor: pathForReal, runDirFor: runDirForReal,
     ensureDir: require('../fs-util').ensureDir,
     getPersistence: () => ({
@@ -18368,7 +18368,7 @@ function mkWtManager(repo, overrides = {}) {
     getTemplates: () => ({ list: () => [] }),
     gitWorktree: require('../git-worktree'),
     ensureDir: () => {},
-    os: require('node:os'),
+    os: tmpHomeOs(),
     path: require('node:path'),
     log: { info: () => {}, error: () => {} },
     ...overrides,
@@ -18575,7 +18575,7 @@ function mkTicketWt(repo, roleExtra = {}, extraDeps = {}) {
     setAutoCompact: (n, on) => { if (upserted.includes(n)) acCalls.push([n, on]); },
   };
   const m = mkPark({
-    fs: fsReal, path: pathReal, os: osReal, countPending: countPendingReal,
+    fs: fsReal, path: pathReal, os: tmpHomeOs(), countPending: countPendingReal,
     REGISTRY_DIR: home,
     AGENT_NAME_RE: /^[a-zA-Z0-9._-]{1,64}$/,
     resolveTeam: (cwd) => (cwd && cwd.startsWith(repo) ? team : null),
@@ -21174,7 +21174,7 @@ function mkSkillsOffRig(extraDeps = {}) {
   });
   const SessionManager = createSessionManager({
     REGISTRY_DIR: root,
-    fs, path, os, pathFor: pathForReal, runDirFor: runDirForReal,
+    fs, path, os: tmpHomeOs(), pathFor: pathForReal, runDirFor: runDirForReal,
     PENDING_DIR: path.join(root, 'pending'),
     MSG_DIR: path.join(root, 'messages'),
     ensureDir: (d) => fs.mkdirSync(d, { recursive: true }),

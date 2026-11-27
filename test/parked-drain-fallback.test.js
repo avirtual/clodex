@@ -28,7 +28,7 @@ const path = require('node:path');
 const { createSessionManager } = require('../session-manager');
 const { pathFor, runDirFor } = require('../clodex-paths');
 const pendingStore = require('../pending-store');
-const { mkTmpRoot } = require('./lib/tmp-roots');
+const { mkTmpRoot, tmpHomeOs } = require('./lib/tmp-roots');
 
 const CWD = os.tmpdir();
 
@@ -94,7 +94,7 @@ function boot(opts = {}) {
         };
       },
     },
-    os,
+    os: tmpHomeOs(),
     notifyOS: () => {},
     log: { info: () => {}, warn: () => {}, error: () => {}, debug: () => {} },
     // No team: see the header. The seat must be reachable and nothing else.

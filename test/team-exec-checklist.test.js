@@ -9,7 +9,7 @@ const path = require('node:path');
 const { registerIpcHandlers } = require('../ipc-handlers');
 const { createSessionManager } = require('../session-manager');
 const { isFilenameToken, parseAndValidate } = require('../exec-schema');
-const { mkTmpRoot } = require('./lib/tmp-roots');
+const { mkTmpRoot, tmpHomeOs } = require('./lib/tmp-roots');
 
 function mkBox() {
   const tmp = mkTmpRoot('t2229-exec-list-');
@@ -96,7 +96,7 @@ function dispatchHarness({ home, team, repo, grants }) {
     isFilenameToken,
     parseAndValidate,
     resolveTeam: (cwd) => (cwd === repo ? team : null),
-    os, fs, path,
+    os: tmpHomeOs(), fs, path,
     log: { warn() {}, info() {}, error() {} },
     getPersistence: () => ({ list: () => [], get: () => ({ execCommands: grants }) }),
     childProcess: { spawn: (cmd, args) => { spawned.push([cmd, ...args]); throw new Error('spawn stubbed'); } },

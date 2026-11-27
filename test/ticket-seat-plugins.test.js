@@ -42,7 +42,7 @@ const { buildAgentPlugin, parseAgentFrontmatter, qualifiedAgentName, DROPPED_AGE
 const { buildSkillPlugin, unresolvedSubagentRefs } = require('../skills-util');
 const { intentEnabled } = require('../intent-catalog');
 const intentRegistry = require('../intent-registry');
-const { mkTmpRoot } = require('./lib/tmp-roots');
+const { mkTmpRoot, tmpHomeOs } = require('./lib/tmp-roots');
 const { assertTicketDepsCovered } = require('./lib/loop-fixture-deps');
 
 const SKILL_MD = '---\ndescription: Does a thing.\n---\nGo do it.\n';
@@ -163,7 +163,7 @@ function mkWorld({ tplPlugins, tplExtra = {} } = {}) {
   const deps = {
     knownSkillNames: () => [],
     REGISTRY_DIR: home,
-    fs, path, os, pathFor, runDirFor,
+    fs, path, os: tmpHomeOs(), pathFor, runDirFor,
     PENDING_DIR: path.join(home, 'pending'),
     MSG_DIR: path.join(home, 'messages'),
     ensureDir,

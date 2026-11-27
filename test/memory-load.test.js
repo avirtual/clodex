@@ -20,7 +20,7 @@ const assert = require('node:assert');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const { mkTmpRoot } = require('./lib/tmp-roots');
+const { mkTmpRoot, tmpHomeOs } = require('./lib/tmp-roots');
 
 const { digestTiers, composeDigest, createMemoryStore, DIGEST_BUDGET,
   RECENT_BODY_CAP } = require('../memory-store');
@@ -164,7 +164,7 @@ function mkManager({ units = [], extraDeps = {} } = {}) {
       start() {} stop() {}
     },
     pty: { spawn: () => ({ onData() {}, onExit() {}, pid: 999 }) },
-    os,
+    os: tmpHomeOs(),
     notifyOS: () => {},
     log: { info: () => {}, warn: () => {}, error: () => {} },
     setupClaudeHook: () => path.join(root, 'settings.json'),

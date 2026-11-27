@@ -9,7 +9,7 @@ const { createSessionManager } = require('../session-manager');
 const { pathFor, runDirFor } = require('../clodex-paths');
 const { buildIpcPrompt } = require('../ipc-prompt');
 const { intentEnabled } = require('../intent-catalog');
-const { mkTmpRoot } = require('./lib/tmp-roots');
+const { mkTmpRoot, tmpHomeOs } = require('./lib/tmp-roots');
 
 const GRAMMAR = 'A long intent body (dm, sub, shout, task add/respec/reject/done — over 800 bytes) is delivered in full and then filed under';
 
@@ -45,7 +45,7 @@ function mkManager({ spill = false, backend = null } = {}) {
     Transport: class { start() {} stop() {} },
     JsonlWatcher: class { start() {} stop() {} },
     pty: { spawn: () => ({ onData() {}, onExit() {}, pid: 999 }) },
-    os,
+    os: tmpHomeOs(),
     notifyOS: () => {},
     log: { info: () => {}, warn: () => {}, error: () => {} },
     WIRE_SHADOW: true,

@@ -28,7 +28,7 @@ const { createCliHooks } = require('../cli-hooks');
 const { pathFor, runDirFor, claudeProjectSlug } = require('../clodex-paths');
 const { bakePrompt, promptCacheDir, readCache, cachePathFor, ipcDelta } = require('../ipc-prompt-cache');
 const { mergeSessionEnv } = require('../env-scopes');
-const { mkTmpRoot } = require('./lib/tmp-roots');
+const { mkTmpRoot, tmpHomeOs } = require('./lib/tmp-roots');
 
 function tmp() { return mkTmpRoot('clodex-refresh-'); }
 
@@ -42,7 +42,7 @@ function mkManager(root) {
     REGISTRY_DIR: root,
     PENDING_DIR: path.join(root, 'pending'),
     MSG_DIR: path.join(root, 'messages'),
-    fs, path, os,
+    fs, path, os: tmpHomeOs(),
     pathFor, runDirFor,
     // --- the recipe, all real ---
     buildIpcPrompt: require('../ipc-prompt').buildIpcPrompt,

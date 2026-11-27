@@ -32,7 +32,7 @@ const { pathFor: pathForReal, runDirFor: runDirForReal } = require('../clodex-pa
 const { createSessionManager, exitDisposition } = require('../session-manager');
 const { createTeamManifest } = require('../team-manifest');
 const { registerIpcHandlers } = require('../ipc-handlers');
-const { mkTmpRoot } = require('./lib/tmp-roots');
+const { mkTmpRoot, tmpHomeOs } = require('./lib/tmp-roots');
 
 // ---------------------------------------------------------------- the leaf
 
@@ -710,7 +710,7 @@ function mkExitProbe() {
     REGISTRY_DIR: root,
     MSG_DIR: pathReal.join(root, 'messages'),
     PENDING_DIR: pathReal.join(root, 'pending'),
-    fs: fsReal, path: pathReal, os: osReal,
+    fs: fsReal, path: pathReal, os: tmpHomeOs(),
     pathFor: pathForReal, runDirFor: runDirForReal,
     ensureDir: (d) => fsReal.mkdirSync(d, { recursive: true }),
     setupClaudeHook: (n) => {

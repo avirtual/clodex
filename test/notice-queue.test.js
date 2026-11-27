@@ -29,7 +29,7 @@ const { createCliHooks } = require('../cli-hooks');
 const { createSessionManager } = require('../session-manager');
 const { pathFor, runDirFor } = require('../clodex-paths');
 const { promptCacheDir } = require('../ipc-prompt-cache');
-const { mkTmpRoot } = require('./lib/tmp-roots');
+const { mkTmpRoot, tmpHomeOs } = require('./lib/tmp-roots');
 const {
   NOTICE_MAX_DEPTH, NOTICE_MAX_AGE_MS,
   noticeDir, noticePath, enqueueNotice, parseNotices, versionNoticeFor, releaseReviewNoticeFor, releasesClodex, clearNotices,
@@ -410,7 +410,7 @@ function producerHarness({ appVersion, entry = null, resumeId = null, mint = fal
     resolveProxyBase: () => null,
     lastTranscriptWrite: () => null,
     pty: { spawn: () => ({ onData() {}, onExit() {}, pid: 999 }) },
-    os,
+    os: tmpHomeOs(),
     notifyOS: () => {},
     log: { info: () => {}, warn: () => {}, error: () => {} },
   });

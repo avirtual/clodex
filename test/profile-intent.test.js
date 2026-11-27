@@ -11,7 +11,7 @@ const { createMemoryStore } = require('../memory-store');
 const { intentEnabled } = require('../intent-catalog');
 const registry = require('../intent-registry');
 const scanner = require('../intent-scanner');
-const { mkTmpRoot } = require('./lib/tmp-roots');
+const { mkTmpRoot, tmpHomeOs } = require('./lib/tmp-roots');
 
 function mkFixture({ intents = null, cls = 'assistant', agentType = 'claude' } = {}) {
   const home = mkTmpRoot('clodex-t2079-');
@@ -46,7 +46,7 @@ function mkFixture({ intents = null, cls = 'assistant', agentType = 'claude' } =
     path: pathReal,
     pathFor: require('../clodex-paths').pathFor,
     runDirFor: require('../clodex-paths').runDirFor,
-    os: osReal,
+    os: tmpHomeOs(),
     ensureDir: require('../fs-util').ensureDir,
     gitWorktree: require('../git-worktree'),
     childProcess: require('node:child_process'),

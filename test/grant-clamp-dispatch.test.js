@@ -9,7 +9,7 @@ const { createSessionManager } = require('../session-manager');
 const { createTicketMethods } = require('../team-tickets');
 const { teamTemplateSave, mayGrantOf } = require('../team-prompt-dir');
 const registry = require('../intent-registry');
-const { mkTmpRoot } = require('./lib/tmp-roots');
+const { mkTmpRoot, tmpHomeOs } = require('./lib/tmp-roots');
 
 registry.registerIntent({ verb: 'avh-select', label: 'AVH select', parse: () => null }, 'avh-ops');
 after(() => registry.unregisterSource('avh-ops'));
@@ -51,7 +51,7 @@ test('a plugin intent the operator stored stays on the template when a lead with
 
 function shapeManager(leadRec, templatesList) {
   const SessionManager = createSessionManager({
-    knownSkillNames: () => [], os, fs, path,
+    knownSkillNames: () => [], os: tmpHomeOs(), fs, path,
     resolveTeam: () => null,
     log: { warn() {}, info() {}, error() {} },
     getPersistence: () => ({ get: (n) => (n === 'lead' ? leadRec : null), setStripLevel() {}, setAutoCompact() {} }),

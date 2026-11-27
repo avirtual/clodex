@@ -32,7 +32,7 @@ const pathReal = require('node:path');
 const osReal = require('node:os');
 
 const { createSessionManager } = require('../session-manager');
-const { mkTmpRoot } = require('./lib/tmp-roots');
+const { mkTmpRoot, tmpHomeOs } = require('./lib/tmp-roots');
 const ticketsMod = require('../tickets-store');
 const clodexPaths = require('../clodex-paths');
 const teamCost = require('../team-cost');
@@ -96,7 +96,7 @@ function mkFixture(extra = {}) {
     validIntentNames: require('../intent-registry').validIntentNames,
     fs: fsReal,
     path: pathReal,
-    os: osReal,
+    os: tmpHomeOs(),
     ensureDir: require('../fs-util').ensureDir,
     countPending: require('../pending-store').countPending,
     isDraftOpen: require('../proxy-util').isDraftOpen,

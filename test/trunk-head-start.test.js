@@ -9,7 +9,7 @@ const osReal = require('node:os');
 const { createSessionManager } = require('../session-manager');
 const ticketsMod = require('../tickets-store');
 const { intentEnabled } = require('../intent-catalog');
-const { mkTmpRoot } = require('./lib/tmp-roots');
+const { mkTmpRoot, tmpHomeOs } = require('./lib/tmp-roots');
 
 const ACCOUNTS = [{ label: 'default', configDir: '/home/u/.claude' }];
 const HAND_TEMPLATE = { name: 'clodex-team-hand', type: 'claude', systemPromptFile: 'clodex-team-hand' };
@@ -65,7 +65,7 @@ function mkFixture({ trunk, rootBranch }) {
     validIntentNames: require('../intent-registry').validIntentNames,
     fs: fsReal,
     path: pathReal,
-    os: osReal,
+    os: tmpHomeOs(),
     ensureDir: () => {},
     countPending: require('../pending-store').countPending,
     isDraftOpen: require('../proxy-util').isDraftOpen,
