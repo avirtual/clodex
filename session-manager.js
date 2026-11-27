@@ -941,6 +941,7 @@ function createSessionManager(deps) {
   class SessionManager {
     constructor() {
       this.sessions = new Map();
+      this._launchId = randomUUID();
       this._freshBakeOnce = new Set();
       this._spawnIdleClear = new Map();
       this._creating = new Set();
@@ -7492,7 +7493,7 @@ function createSessionManager(deps) {
         return;
       }
 
-      try { store.set({ lastRebootAt: now, pendingRebootNotice: { name: who, at: now, reason } }); }
+      try { store.set({ lastRebootAt: now, pendingRebootNotice: { name: who, at: now, reason, launch: this._launchId } }); }
       catch (e) { log.error('intent', `reboot: settings write failed (proceeding): ${e.message}`); }
       this._broadcast('ipc-message', { type: 'reboot', from: who, to: 'clodex', body: `rebooting${reason ? `: ${reason}` : ''}` });
       log.info('intent', `reboot by ${who}${reason ? `: ${reason}` : ''}`);
@@ -7561,6 +7562,10 @@ function createSessionManager(deps) {
       try { settings = store.get(); } catch { return; }
       const notice = settings && settings.pendingRebootNotice;
       if (!notice || !notice.name) return;
+      if (notice.launch && notice.launch === this._launchId) {
+        log.debug('intent', `reboot notice for ${notice.name} held — this process has not restarted`);
+        return;
+      }
 
       const clear = () => {
         try { store.set({ pendingRebootNotice: null }); }

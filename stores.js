@@ -549,12 +549,14 @@ function sanitizeBoxes(rawBoxes) {
 // every time and turn a bounded retry into an unbounded one.
 function sanitizeRebootNotice(v) {
   if (!v || typeof v !== 'object' || typeof v.name !== 'string' || !v.name) return null;
-  return {
+  const out = {
     name: v.name,
     at: Number.isFinite(v.at) ? v.at : 0,
     reason: (typeof v.reason === 'string' ? v.reason : '').slice(0, 500),
     attempts: Number.isFinite(v.attempts) && v.attempts > 0 ? Math.floor(v.attempts) : 0,
   };
+  if (typeof v.launch === 'string' && v.launch) out.launch = v.launch.slice(0, 64);
+  return out;
 }
 
 // Terminal reporting is a TRI-STATE because the old boolean conflated two
