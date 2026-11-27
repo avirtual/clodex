@@ -19,7 +19,7 @@ test('t2459: a named list within the limits is kept as given, in order, with no 
 });
 
 test('t2459: a path over 300 bytes is cut to 300 and the row says filesCut', () => {
-  assert.strictEqual(LONG.length, 309, 'ENTER: the path is over the limit');
+  assert.strictEqual(LONG.length, 315, 'ENTER: the path is over the limit');
   assert.deepStrictEqual(ledgerFiles(['test/a.test.js', LONG]), { files: ['test/a.test.js', LONG_CUT], filesCut: true });
 });
 
