@@ -25791,7 +25791,7 @@ test('t2443 recovery: an added-folder-trust dialog for the seat messages dir Clo
     target: 'lead', sender: 'clodex-team',
     body: `[team team] seat team-hand-1 is held at a boot dialog (added-folder-trust): ${r.msgDir}. Clodex added that directory at this spawn and its trust entry was lost: re-seeded and respawned once.`,
   }]);
-  assert.ok(r.warns.includes(`team-hand-1: re-seeded trust for ${r.msgDir} (1 key(s) written); respawning once`), JSON.stringify(r.warns));
+  assert.ok(r.warns.includes(`team-hand-1: re-seeded trust for ${r.msgDir} (${fsReal.realpathSync(r.msgDir) === r.msgDir ? 2 : 3} key(s) written); respawning once`), JSON.stringify(r.warns));
 
   const again = r.seat();
   r.f.m._scanBootScreen(again);
