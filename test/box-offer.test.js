@@ -142,7 +142,7 @@ const withRuntime = (runtime) => ({ ...WIRE_OWN, facts: { ...WIRE_OWN.facts, run
 test('wireOffers sends the runtime capacity beside own, and the base validator accepts the bytes unchanged in meaning', () => {
   const facts = { os: 'darwin', arch: 'arm64', cpus: 14, memMb: 49152, runtime: { platforms: ['linux/arm64'], cpus: 8, memMb: 21094 } };
   const bytes = JSON.stringify({ v: 1, from: 'laptop', ...wireOffers(offerEntry(ALWAYS, facts)) });
-  const base = { scope: 'discovery', boxes: 2, open: true, kinds: ['container'], facts: { ...facts, runtime: { platforms: ['linux/arm64'] } } };
+  const base = { scope: 'discovery', boxes: 1, open: true, kinds: ['container'], facts: { ...facts, runtime: { platforms: ['linux/arm64'] } } };
   assert.deepStrictEqual(JSON.parse(bytes), { v: 1, from: 'laptop', own: base, capacity: { cpus: 8, memMb: 21094 } });
   assert.deepStrictEqual(baseSanitizeWireOffers(JSON.parse(bytes)), { own: base });
   assert.deepStrictEqual(sanitizeWireOffers(JSON.parse(bytes)), { own: { ...base, facts } });
