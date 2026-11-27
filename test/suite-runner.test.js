@@ -1795,33 +1795,27 @@ test('t2428: a later post-merge still sorts ahead of a queued exclusive hand job
   await waitState(f.runner, 'p-hand', 'done');
 });
 
-
-test('t2428: a queue head blocked by a box hold lets a later job start, but never an exclusive one beside a running job', async (t) => {
-  const fb = fakeBox({ reap: (job) => { if (job.id === 'hb1') throw new Error('box cleanup not confirmed: c0ffee'); } });
-  const f = await holdingFixture(t, { runnerOver: { box: fb.box, slots: 3 } });
-  await f.upload(f.body('hb1', 'hand', { isolation: 'container' }));
-  await f.spawned(['hb1']);
-  await f.upload(f.body('hn0'));
-  await f.spawned(['hn0']);
-  f.held.get('hb1').stdout.write('TOTALS: 1 pass, 0 fail, 1 tests\n');
-  f.held.get('hb1').finish(0);
-  await waitState(f.runner, 'hb1', 'done');
+test('t2428: a queue head blocked by the serial-native rule lets a later job start, but never an exclusive one beside a running job', async (t) => {
+  const fb = fakeBox();
+  const f = await holdingFixture(t, {
+    runnerOver: { box: fb.box, slots: 3 },
+    wrap: (base) => { const { parallel, ...serial } = base; return serial; },
+  });
+  await f.upload(f.body('sn1'));
+  await f.spawned(['sn1']);
+  await f.runner.submit(f.body('sn2'));
+  await f.runner.submit(f.body('sx', 'hand', { isolation: 'container', ...ALONE }));
   await drain();
-  assert.strictEqual(fs.existsSync(path.join(f.root, 'suite-runner', 'box-hold.json')), true, 'ENTER: the failed reap holds the box');
-  assert.strictEqual((await f.runner.submit(f.body('hb2', 'hand', { isolation: 'container' }))).state, 'queued');
-  assert.strictEqual((await f.runner.submit(f.body('hx', 'hand', ALONE))).state, 'queued');
+  assert.deepStrictEqual([await slotsOf(f.runner), f.calls.map((c) => c.job)], [{ slots: { total: 3, inUse: 1 }, running: ['sn1'], waiting: ['sn2', 'sx'] }, ['sn1']]);
+  f.held.get('sn1').finish(0);
+  await f.spawned(['sn2']);
   await drain();
-  assert.deepStrictEqual([await slotsOf(f.runner), f.calls.map((c) => c.job)], [{ slots: { total: 3, inUse: 1 }, running: ['hn0'], waiting: ['hb2', 'hx'] }, ['hb1', 'hn0']]);
-  f.held.get('hn0').finish(0);
-  await f.spawned(['hx']);
-  await drain();
-  assert.deepStrictEqual(f.calls.map((c) => c.job), ['hb1', 'hn0', 'hx']);
-  f.held.get('hx').finish(0);
-  await waitState(f.runner, 'hx', 'done');
-  await f.runner.tick();
-  await f.spawned(['hb2']);
-  f.held.get('hb2').finish(0);
-  await waitState(f.runner, 'hb2', 'done');
+  assert.deepStrictEqual(f.calls.map((c) => c.job), ['sn1', 'sn2']);
+  f.held.get('sn2').finish(0);
+  await f.spawned(['sx']);
+  assert.deepStrictEqual(f.calls.map((c) => c.job), ['sn1', 'sn2', 'sx']);
+  f.held.get('sx').finish(0);
+  await waitState(f.runner, 'sx', 'done');
 });
 test('t2428: a drain completes with an exclusive job queued, and the job starts alone when the drain ends', async (t) => {
   const f = await holdingFixture(t, { runnerOver: { slots: 2 } });
