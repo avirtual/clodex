@@ -8377,3 +8377,18 @@ test('t2418: a box run killed at the team runMs holds the verify and the lead no
     + 'The run or queue limit was hit; try again with [agent:task verify t1] when the runner has room.',
   ]);
 });
+
+test('t2423: a gate run never carries named files — the local verify spawns runner --reporter=dot alone, and the gate:on box run sends scope full with no files', async () => {
+  const s = shadowLoop(SHADOW_LOCAL.green);
+  const off = await s.run({ peer: 'runner-1', hands: 'all', gate: 'off' }, null);
+  assert.strictEqual(off.spawns.length, 1, 'ENTER: the local gate spawned once');
+  assert.deepStrictEqual(off.spawns[0].args.slice(1), ['--reporter=dot']);
+  assert.match(off.spawns[0].args[0], /scripts[\\/]run-tests\.js$/);
+  assert.strictEqual(off.spawns[0].env.CLODEX_SUITE_NAMED, undefined);
+  const b = boxLoop(SHADOW_LOCAL.green);
+  const r = boxRemote('green', b.events);
+  const sent = [];
+  await b.run(GATE_ON, { ...r.client, run: (o) => { sent.push(o); return r.client.run(o); } });
+  assert.strictEqual(sent.length, 1, 'ENTER: the box run was submitted');
+  assert.deepStrictEqual([sent[0].scope, 'files' in sent[0], 'named' in sent[0]], ['full', false, false]);
+});

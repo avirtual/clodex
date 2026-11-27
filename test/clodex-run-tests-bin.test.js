@@ -1449,3 +1449,103 @@ test('OWN_SCANNERS and LOCK_BOUND name files that exist in THIS repo', () => {
       `${rel} is listed in the shipped bin but no longer exists — every own run would refuse`);
   }
 });
+
+test('files: the argv is exactly the named files in order, duplicates collapsed, no subjects and no scanners', () => {
+  const root = mkRoot();
+  try {
+    mkBranchRepo(root, {
+      extraOnMaster: {
+        'test/b.test.js': EMPTY_TEST,
+        'test/a.test.js': `${EMPTY_TEST}require('../lib/widget');\n`,
+        'lib/widget.js': 'module.exports = 1;\n',
+        'pkg/test/c.test.cjs': EMPTY_TEST,
+      },
+      onBranch: ({ put: p }) => p('lib/widget.js', 'module.exports = 2;\n'),
+    });
+    const r = run(root, JSON.stringify({ files: ['test/b.test.js', 'pkg/test/c.test.cjs', 'test/b.test.js'] }));
+    const rec = stubRecord(root);
+    assert.ok(rec, `ENTER: the runner never ran: ${r.digest}`);
+    assert.deepStrictEqual(rec.argv, ['--reporter=dot', 'test/b.test.js', 'pkg/test/c.test.cjs']);
+    assert.strictEqual(rec.lock, null);
+    assert.strictEqual(rec.advisory, '1');
+    assertDigest(r.digest, `[${path.basename(root)}] named: 2 files: 1/1 green (${WALL})`);
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test('files: a named LOCK_BOUND file takes the suite lock, as an own run reaching it does', () => {
+  const root = mkRoot();
+  try {
+    mkBranchRepo(root, { extraOnMaster: { [LOCK_BOUND[0]]: EMPTY_TEST } });
+    const r = run(root, JSON.stringify({ files: [LOCK_BOUND[0]] }));
+    const rec = stubRecord(root);
+    assert.ok(rec, `ENTER: the runner never ran: ${r.digest}`);
+    assert.deepStrictEqual([rec.argv, rec.lock, rec.advisory], [['--reporter=dot', LOCK_BOUND[0]], '1', null]);
+    assertDigest(r.digest, `[${path.basename(root)}] named: 1 file: 1/1 green (${WALL})`);
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+const NAMED_REFUSALS = [
+  ['files with scope', { files: ['test/a.test.js'], scope: 'own' }, 'files replaces scope — drop "scope" "own"'],
+  ['not an array', { files: 'test/a.test.js' }, 'files must be an array of test file paths — "test/a.test.js"'],
+  ['an empty array', { files: [] }, 'files takes 1 to 20 paths — got 0'],
+  ['21 paths', { files: Array.from({ length: 21 }, () => 'test/a.test.js') }, 'files takes 1 to 20 paths — got 21'],
+  ['a non-string', { files: [7] }, 'files entries must be strings — 7'],
+  ['an empty string', { files: [''] }, 'files entry must be 1 to 300 characters — ""'],
+  ['301 characters', { files: [`test/${'x'.repeat(288)}.test.js`] }, `files entry must be 1 to 300 characters — "test/${'x'.repeat(75)}"`],
+  ['a space', { files: ['test/a b.test.js'] }, 'files entry has whitespace or a control character — "test/a b.test.js"'],
+  ['a control character', { files: ['test/a\u0007.test.js'] }, 'files entry has whitespace or a control character — "test/a\\u0007.test.js"'],
+  ['a leading /', { files: ['/etc/a.test.js'] }, 'files entry must be repo-relative, not starting with / or - — "/etc/a.test.js"'],
+  ['a leading -', { files: ['--require=x.test.js'] }, 'files entry must be repo-relative, not starting with / or - — "--require=x.test.js"'],
+  ['a .. segment', { files: ['test/../a.test.js'] }, 'files entry has a .. segment — "test/../a.test.js"'],
+  ['not a test file', { files: ['lib/widget.js'] }, 'files entry is not a test file (*.test.js, *.test.mjs, *.test.cjs outside fixture, dot and node_modules dirs) — "lib/widget.js"'],
+  ['a fixture test file', { files: ['test/fixtures/f.test.js'] }, 'files entry is not a test file (*.test.js, *.test.mjs, *.test.cjs outside fixture, dot and node_modules dirs) — "test/fixtures/f.test.js"'],
+];
+
+test('files: each bad payload is a one-line refusal naming the value, and the runner never spawns', () => {
+  const root = mkRoot();
+  try {
+    mkBranchRepo(root, { extraOnMaster: { 'test/a.test.js': EMPTY_TEST, 'test/fixtures/f.test.js': EMPTY_TEST, 'lib/widget.js': '1;\n' } });
+    for (const [name, payload, why] of NAMED_REFUSALS) {
+      const r = run(root, JSON.stringify(payload));
+      assert.deepStrictEqual([r.code, r.digest, stubRecord(root)],
+        [1, `[${path.basename(root)}] refused, nothing measured: ${why}`, null], name);
+    }
+    const missing = run(root, JSON.stringify({ files: ['test/gone.test.js'] }));
+    assert.deepStrictEqual([missing.code, missing.digest, stubRecord(root)],
+      [1, `[${path.basename(root)}] refused, nothing measured: files entry does not exist in ${root} — "test/gone.test.js"`, null]);
+    const ok = run(root, JSON.stringify({ files: ['test/a.test.js'] }));
+    assert.strictEqual(ok.code, 0, `ENTER: a good named payload on the same tree runs: ${ok.digest}`);
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test('scope own: a changed *.test.mjs in a nested test directory is in the changed set', () => {
+  const root = mkRoot();
+  try {
+    mkBranchRepo(root, {
+      extraOnMaster: { 'a/b/test/x.test.mjs': 'export {};\n' },
+      onBranch: ({ put: p, git: g }) => {
+        p('a/b/test/x.test.mjs', 'export const edited = 1;\n');
+        g('commit', '-aqm', 'branch work');
+      },
+    });
+    const r = run(root, '{"scope":"own"}');
+    const rec = stubRecord(root);
+    assert.ok(rec, `ENTER: the runner never ran: ${r.digest}`);
+    assert.deepStrictEqual(rec.argv, ['--reporter=dot', 'a/b/test/x.test.mjs', ...OWN_SCANNERS]);
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test('isPoolPath takes .test.js, .test.mjs and .test.cjs, and this repo\'s pool is unchanged by the two new ones', () => {
+  const { isPoolPath, testPool, TEST_ROOTS } = require(SCRIPT);
+  assert.deepStrictEqual(
+    ['t/x.test.js', 't/x.test.mjs', 't/x.test.cjs', 't/x.test.ts', 't/x.mjs', 't/fixtures/x.test.mjs'].map(isPoolPath),
+    [true, true, true, false, false, false],
+  );
+  const repo = path.join(__dirname, '..');
+  const pool = testPool(repo);
+  assert.ok(pool.includes('test/clodex-run-tests-bin.test.js'), 'ENTER: the pool walked this repo');
+  const tracked = execFileSync('git', ['-C', repo, 'ls-files', '--', ...TEST_ROOTS], { encoding: 'utf8' })
+    .split('\n').filter((f) => /\.test\.[cm]js$/.test(f));
+  assert.deepStrictEqual(tracked, [], 'a tracked .test.mjs/.test.cjs here would grow every own run\'s by-subject pool');
+  assert.deepStrictEqual(pool.filter((f) => !f.endsWith('.test.js')), []);
+});
