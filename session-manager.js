@@ -8045,9 +8045,8 @@ function createSessionManager(deps) {
             seat: who,
             listWorktrees: (root) => gitWorktree.listWorktrees(root),
             resolvePeer: (name) => {
-              if (execTeam && execTeam.testRunner && execTeam.testRunner.wire === 'pull') return null;
-              const peer = this._runnerPeerStatus(name);
-              return peer ? peer.id : null;
+              const member = this._runnerMembers(execTeam && execTeam.testRunner).find((m) => m.peer === name);
+              return member ? this._runnerVia(member).via : null;
             },
             pool: () => this._handRunners(execTeam.testRunner),
             send: (m) => { if (child.connected) child.send(m); },

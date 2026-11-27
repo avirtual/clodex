@@ -33,12 +33,14 @@ const ROUTE_ROWS = [
   ['no setting', { team: { name: 'tm', root: '/r' }, scope: 'full' }, { where: 'local', why: 'no test runner' }],
   ['hands:off', { team: teamWith('off'), scope: 'full' }, { where: 'local', why: 'hands:off' }],
   ['local:true under hands:all', { team: teamWith('all'), scope: 'full', local: true }, { where: 'local', why: 'local:true in the call', override: 'call' }],
-  ['hands:full, full scope', { team: teamWith('full'), scope: 'full' }, { where: 'remote', peer: 'runner-1', why: 'hands:full' }],
+  ['hands:full, full scope', { team: teamWith('full'), scope: 'full' }, { where: 'remote', peer: 'runner-1', wire: 'push', why: 'hands:full' }],
   ['hands:full, own scope', { team: teamWith('full'), scope: 'own' }, { where: 'local', why: 'hands:full leaves own scope local' }],
-  ['hands:all, full scope', { team: teamWith('all'), scope: 'full' }, { where: 'remote', peer: 'runner-1', why: 'hands:all' }],
-  ['hands:all, own scope', { team: teamWith('all'), scope: 'own' }, { where: 'remote', peer: 'runner-1', why: 'hands:all' }],
-  ['wire:pull, hands:full', { team: pullTeam('full'), scope: 'full' }, { where: 'local', why: 'wire:pull serves the merge gate only (gate:shadow or gate:on)' }],
-  ['wire:pull, hands:all', { team: pullTeam('all'), scope: 'full' }, { where: 'local', why: 'wire:pull serves the merge gate only (gate:shadow or gate:on)' }],
+  ['hands:all, full scope', { team: teamWith('all'), scope: 'full' }, { where: 'remote', peer: 'runner-1', wire: 'push', why: 'hands:all' }],
+  ['hands:all, own scope', { team: teamWith('all'), scope: 'own' }, { where: 'remote', peer: 'runner-1', wire: 'push', why: 'hands:all' }],
+  ['wire:pull, hands:off', { team: pullTeam('off'), scope: 'full' }, { where: 'local', why: 'hands:off' }],
+  ['wire:pull, hands:full, full scope', { team: pullTeam('full'), scope: 'full' }, { where: 'remote', peer: 'laptop', wire: 'pull', why: 'hands:full' }],
+  ['wire:pull, hands:full, own scope', { team: pullTeam('full'), scope: 'own' }, { where: 'local', why: 'hands:full leaves own scope local' }],
+  ['wire:pull, hands:all, own scope', { team: pullTeam('all'), scope: 'own' }, { where: 'remote', peer: 'laptop', wire: 'pull', why: 'hands:all' }],
 ];
 
 for (const [name, input, want] of ROUTE_ROWS) {
@@ -84,7 +86,7 @@ function hostFor({ team = teamWith('all'), client = null, snapshot = stubSnap(),
     team: team && { ...team, root: dir },
     seat: 'hand-1',
     listWorktrees: async () => ({ ok: true, worktrees: [{ path: dir }] }),
-    resolvePeer: (n) => peers[n] || null,
+    resolvePeer: (n) => (typeof peers[n] === 'string' ? { peer: peers[n], wire: 'push', name: n } : peers[n] || null),
     send: (m) => { sent.push(m); if (m.run) settle(m); },
     notifyLead: (b) => notes.push(b),
     snapshot, pool,
@@ -584,7 +586,7 @@ test('exec: a progress line after the channel closed is not sent', async (t) => 
   assert.deepStrictEqual(child.sends, [{ progress: 'runner runner-1: job queued' }]);
 });
 
-test('t2304: the channel host\'s resolvePeer answers null under a pull runner for a name that resolves to a peer row', async (t) => {
+test('t2416: the channel host\'s resolvePeer answers the member\'s address with its wire, a pull runner by its own name', async (t) => {
   const sc = require('../suite-client');
   const smPath = require.resolve('../session-manager');
   const real = sc.createChannelHost;
@@ -602,8 +604,9 @@ test('t2304: the channel host\'s resolvePeer answers null under a pull runner fo
   execFixture(t, 'clodex-run-tests.js', { team: { ...push, testRunner: { peer: 'runner-1', hands: 'all', wire: 'pull' } } });
   await turns(2);
   assert.strictEqual(seen.length, 2, 'ENTER: both exec children got a channel host');
-  assert.strictEqual(seen[0].resolvePeer('runner-1'), 'p1', 'ENTER: runner-1 resolves to a peer row under push');
-  assert.strictEqual(seen[1].resolvePeer('runner-1'), null);
+  assert.deepStrictEqual(seen[0].resolvePeer('runner-1'), { peer: 'p1', wire: 'push', name: 'runner-1' }, 'ENTER: runner-1 resolves to a peer row under push');
+  assert.deepStrictEqual(seen[1].resolvePeer('runner-1'), { peer: 'runner-1', wire: 'pull', name: 'runner-1' });
+  assert.strictEqual(seen[1].resolvePeer('runner-9'), null);
 });
 
 test('exec: a local:true call under hands:all leaves the lead one ticket-loop traffic row', async (t) => {
@@ -668,13 +671,13 @@ function poolRig(script) {
 
 const posts = (calls) => calls.filter((c) => / POST \/api\/suite\/jobs$/.test(c));
 
-test('t2414: on a two-member pool whose first member is offline the hand run goes to the second, never to a pull member, and the digest names it', async (t) => {
+test('t2414: on a pool whose first member is offline and whose pull member is detached the hand run goes to the push member, and the digest names it', async (t) => {
   const asked = [];
   const client = stubClient({ result: { unknown: null, res: { status: 0, signal: null, ...CAPTURED.green, treeHash: TREE } } });
   client.reachable = async (peer) => { asked.push(peer); return { ok: true, info: { limits: {}, env: {} } }; };
   const team = { ...POOL_TEAM([{ peer: 'laptop', wire: 'pull' }, { peer: 'runner-b', wire: 'push' }]), root: fs.realpathSync(mkTmpRoot('suite-route-tree-')) };
   const peers = { 'runner-a': { id: 'pA', online: false, caps: ['suite'] }, 'runner-b': { id: 'pB', online: true, caps: ['suite'] } };
-  const f = execFixture(t, 'clodex-run-tests.js', { client, team, peers, desk: { attached: () => true } });
+  const f = execFixture(t, 'clodex-run-tests.js', { client, team, peers, desk: { attached: () => false } });
   await turns(2);
   f.children[0].emit('message', ask(team.root));
   await turns(40);
@@ -733,12 +736,109 @@ test('t2414: local:true runs here and never asks the pool', async () => {
   assert.deepStrictEqual([picks, client.runs.length], [0, 0]);
 });
 
-test('t2414: a pull-wire team still answers local with its reason and never asks the pool', async () => {
-  let picks = 0;
-  const f = hostFor({ client: stubClient(), team: pullTeam('all'), pool: async () => { picks += 1; return null; } });
+test('t2416: on a mixed pool whose push member is offline the hand run is picked onto the attached pull member', async (t) => {
+  const asked = [];
+  const client = stubClient({ result: { unknown: null, res: { status: 0, signal: null, ...CAPTURED.green, treeHash: TREE } } });
+  client.reachable = async (peer, wire) => { asked.push(`${peer}/${wire}`); return { ok: true, info: { limits: {}, env: {} } }; };
+  const team = { ...POOL_TEAM([{ peer: 'laptop', wire: 'pull' }]), root: fs.realpathSync(mkTmpRoot('suite-route-tree-')) };
+  const peers = { 'runner-a': { id: 'pA', online: false, caps: ['suite'] } };
+  const f = execFixture(t, 'clodex-run-tests.js', { client, team, peers, desk: { attached: (o) => o === 'laptop' } });
+  await turns(2);
+  f.children[0].emit('message', ask(team.root));
+  await turns(40);
+  assert.strictEqual(client.runs.length, 1, 'ENTER: the run was submitted');
+  assert.deepStrictEqual(asked, ['laptop/pull']);
+  const run = client.runs[0];
+  assert.deepStrictEqual([run.peer, run.wire, run.name, typeof run.repick, typeof run.reroute], ['laptop', 'pull', 'laptop', 'function', 'function']);
+  for (let i = 0; i < 5000 && !f.children[0].sends.some((m) => m.run); i += 1) await turns(1);
+  const reply = f.children[0].sends.find((m) => m.run);
+  assert.deepStrictEqual([reply.run, reply.runner, reply.unknown], ['remote', 'laptop', null]);
+});
+
+function deskRig(script) {
+  const clock = { t: 0 };
+  const calls = [];
+  const bodies = [];
+  const conn = (origin) => ({
+    suiteAsk: async (method, p, body) => {
+      calls.push(`desk:${origin} ${method} ${p.split('?')[0]}`);
+      if (method === 'POST') bodies.push(body);
+      if (script[origin].hold && method === 'POST') await script[origin].hold;
+      if (script[origin].lost && method === 'GET' && !p.startsWith('/api/suite/info')) return { status: 503, body: null, error: `runner ${origin} is not attached` };
+      return jobsAnswer(method, p.startsWith('/api/suite/info') ? '/api/suite/info' : p);
+    },
+  });
+  const ledgerFile = path.join(mkTmpRoot('suite-hand-desk-'), 'suite-runs.jsonl');
+  const client = createSuiteClient({
+    getPeerManager: () => ({ get: () => null }),
+    getSuiteDesk: () => ({ conn: (o) => (script[o] ? conn(o) : null) }),
+    ledgerFile, now: () => clock.t, sleep: async (ms) => { clock.t += ms; }, randomUUID: () => 'run-1', snapshot: stubSnap(),
+  });
+  const ends = () => fs.readFileSync(ledgerFile, 'utf8').trim().split('\n').map((l) => JSON.parse(l)).filter((x) => x.phase === 'end');
+  return { client, calls, bodies, ends };
+}
+
+const PULL_TEAM = (extra = {}) => ({ name: 'tm', lead: 'lead-1', root: '/r', testRunner: { peer: 'laptop', hands: 'all', wire: 'pull', ...extra } });
+const PULL_PEERS = { laptop: { peer: 'laptop', wire: 'pull', name: 'laptop' } };
+
+test('t2416: a hand run on a single pull runner goes through the desk connection and the digest names the runner', async () => {
+  const r = deskRig({ laptop: {} });
+  const f = hostFor({ client: r.client, team: PULL_TEAM(), peers: PULL_PEERS });
   f.host.onMessage(ask(f.dir));
-  assert.deepStrictEqual(await f.done, { run: 'local', why: 'wire:pull serves the merge gate only (gate:shadow or gate:on)', override: null });
-  assert.strictEqual(picks, 0);
+  const m = await f.done;
+  assert.deepStrictEqual([m.run, m.runner, m.unknown, m.status], ['remote', 'laptop', null, 0]);
+  assert.deepStrictEqual(r.calls.filter((c) => c.includes(' POST ')), ['desk:laptop POST /api/suite/jobs']);
+  assert.deepStrictEqual(r.ends().map((x) => [x.kind, x.where, x.wire, x.outcome]), [['hand', 'laptop', 'pull', 'pass']]);
+  const root = mkRoot({ status: m.status, stdout: m.stdout, stderr: m.stderr });
+  const d = await runWithHost(root, '{}', path.join(root, 'h'), () => [m]);
+  assert.match(d.digest, /^\[[^\]]+\] 1\/1 green \(\d+m \d{2}s\) \(runner laptop\)$/);
+});
+
+test('t2416: a single-file hand run on a pull runner carries its files and the team env in the job body', async () => {
+  const r = deskRig({ laptop: {} });
+  const f = hostFor({ client: r.client, team: PULL_TEAM({ env: { FOO: 'bar' } }), peers: PULL_PEERS });
+  f.host.onMessage(ask(f.dir, { scope: 'own', files: ['test/x.test.js'] }));
+  assert.strictEqual((await f.done).unknown, null);
+  assert.deepStrictEqual(r.bodies.map((b) => [b.kind, b.scope, b.files, b.env]), [['hand', 'own', ['test/x.test.js'], { FOO: 'bar' }]]);
+});
+
+test('t2416: a pull runner detached for 150 s after accept is rerouted once to the second member', async () => {
+  const r = deskRig({ laptop: { lost: true }, desktop: {} });
+  const f = hostFor({
+    client: r.client, team: PULL_TEAM({ pool: [{ peer: 'desktop', wire: 'pull' }] }), peers: PULL_PEERS,
+    pool: async () => ({ chosen: null, repick: null, reroute: async (lost) => (lost === 'laptop' ? { peer: 'desktop', wire: 'pull', name: 'desktop' } : null) }),
+  });
+  f.host.onMessage(ask(f.dir));
+  const m = await f.done;
+  assert.deepStrictEqual([m.run, m.runner, m.unknown, m.rerouted], ['remote', 'desktop', null, { from: 'laptop', to: 'desktop' }]);
+  assert.deepStrictEqual(r.calls.filter((c) => c.includes(' POST ')), ['desk:laptop POST /api/suite/jobs', 'desk:desktop POST /api/suite/jobs']);
+});
+
+test('t2416: a pull runner detached for 150 s with no other member ends the hand run unknown and starts no local run', async () => {
+  const r = deskRig({ laptop: { lost: true } });
+  const f = hostFor({ client: r.client, team: PULL_TEAM(), peers: PULL_PEERS, pool: async () => ({ chosen: null, repick: null, reroute: async () => null }) });
+  f.host.onMessage(ask(f.dir));
+  const m = await f.done;
+  assert.deepStrictEqual(m, { run: 'remote', runner: 'laptop', unknown: 'runner unreachable' });
+  assert.deepStrictEqual(r.ends().map((x) => [x.where, x.wire, x.outcome, x.endedAt]), [['laptop', 'pull', 'unknown', '1970-01-01T00:02:30.000Z']]);
+  const root = mkRoot(CAPTURED.green);
+  const d = await runWithHost(root, '{}', path.join(root, 'h'), () => [m]);
+  assert.strictEqual(d.digest, `[${path.basename(root)}] result unknown — the suite did not complete on runner laptop: runner unreachable`);
+  assert.deepStrictEqual([d.code, d.ran], [1, null]);
+});
+
+test('t2416: a cancel from the hand while the submit is in flight reaches the pull runner\'s job through the desk', async () => {
+  let land;
+  const r = deskRig({ laptop: { hold: new Promise((res) => { land = res; }) } });
+  const f = hostFor({ client: r.client, team: PULL_TEAM(), peers: PULL_PEERS });
+  f.host.onMessage(ask(f.dir));
+  await turns();
+  assert.ok(r.calls.includes('desk:laptop POST /api/suite/jobs'), 'ENTER: the submit is in flight');
+  f.host.cancel();
+  await turns();
+  land();
+  await f.done;
+  assert.ok(r.calls.includes('desk:laptop DELETE /api/suite/jobs/run-1'));
 });
 
 const PICK_ROWS = [
