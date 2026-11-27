@@ -25842,8 +25842,6 @@ test('t2443 lead notice: once per seat and dialog class, and a variant dialog is
 });
 
 test('the muse sse rule lives in mcp-plan museExpressible, not as a type literal in session-manager or ipc-handlers', () => {
-
-test('the muse sse rule lives in mcp-plan museExpressible, not as a type literal in session-manager or ipc-handlers', () => {
   const fs = require('node:fs');
   const path = require('node:path');
   for (const f of ['session-manager.js', 'ipc-handlers.js']) {
