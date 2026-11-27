@@ -1138,3 +1138,257 @@ test('t2439: runner rm with one queued hand job cancels exactly that job, tells 
   waits['job1-0000-0000']();
   await kept;
 });
+
+const BUSY_WITH = (queued, extra = {}) => ({ ok: true, limits: {}, env: { envKey: 'k' }, slots: { total: 1, inUse: 1 }, queue: { running: 'long-job', queued }, ...extra });
+const READY_BOX = { box: { state: 'ready', env: { box: { imageId: 'sha256:e', definitionHash: DEF.definitionHash } } } };
+
+function moveRig({ info = {}, poll = {}, del = {}, post = {}, manifestExtra = POOL_OF_TWO } = {}) {
+  const clock = { t: 0 };
+  const events = [];
+  const ledgerFile = path.join(mkTmpRoot('clodex-pool-move-'), 'suite-runs.jsonl');
+  const conn = (peer) => ({ suiteAsk: async (method, p, body) => {
+    if (p.startsWith('/api/suite/info')) {
+      if (p.includes('?')) events.push(`${clock.t} ${peer} pick-info`);
+      return { status: 200, body: info[peer](clock.t) };
+    }
+    if (method === 'POST') {
+      events.push(`${clock.t} ${peer} POST ${body.id}`);
+      return post[peer] ? post[peer]() : { status: 200, body: { ok: true, state: 'queued' } };
+    }
+    if (method === 'DELETE') {
+      events.push(`${clock.t} ${peer} DELETE ${decodeURIComponent(p.split('/').pop())}`);
+      const r = del[peer] ? await del[peer]() : { status: 200, body: { ok: true } };
+      events.push(`${clock.t} ${peer} DELETE answered`);
+      return r;
+    }
+    if (p.includes('/output?')) {
+      const text = p.includes('stream=stdout') ? GREEN : '';
+      return { status: 200, body: { ok: true, text, offset: 0, total: Buffer.byteLength(text) } };
+    }
+    const id = decodeURIComponent(/ids=([^&]+)/.exec(p)[1]);
+    const wait = Number(/wait=(\d+)/.exec(p)[1]);
+    const r = poll[peer](id, clock.t);
+    if (r.body.jobs[0].state !== 'done') clock.t += wait;
+    return r;
+  } });
+  const conns = { p1: conn('p1'), p2: conn('p2') };
+  let n = 0;
+  const client = createSuiteClient({
+    getPeerManager: () => ({ get: (id) => conns[id] || null }), ledgerFile, now: () => clock.t, sleep: async (ms) => { clock.t += ms; },
+    randomUUID: () => `run-${(n += 1)}`,
+    snapshot: { snapshotTree: async () => ({ treeHash: TREE, head: 'b'.repeat(40), headTree: TREE }), releaseSnapshot: () => {} },
+  });
+  const f = mkFixture({ manifestExtra, peers: [R1, R2], client });
+  const tr = () => f.tm.loadManifest('team').testRunner;
+  const asked = [];
+  const requeue = (box = false) => {
+    const real = f.m._runnerMove(tr(), box);
+    return async (where, id) => { asked.push([where, clock.t]); return real(where, id); };
+  };
+  const base = { peer: 'p1', name: 'runner-1', tree: '/w', kind: 'hand', team: 'team', queueBudgetMs: 300000, runBudgetMs: 600000, budgetMs: 900000 };
+  const posts = () => events.filter((e) => / POST /.test(e));
+  return { client, clock, events, posts, asked, requeue, base, f, tr };
+}
+
+const QUEUED_ON_1 = (id) => jobAt(id, 'queued');
+const RAN_ON_2 = (id, t) => (t < 120000 ? jobAt(id, 'running') : jobAt(id, 'done'));
+const BOX_RAN_ON_2 = (id, t) => (t < 120000 ? jobAt(id, 'running', { env: BOX_ENV }) : jobAt(id, 'done', { env: BOX_ENV }));
+const EXCLUSIVE_POOL = { testRunner: { ...POOL_OF_TWO.testRunner, exclusive: true } };
+
+const MOVE_ROWS = [
+  ['the other member idle', {}, false, () => IDLE_ONE(), true],
+  ['the other member busy', {}, false, () => BUSY_WITH([]), false],
+  ['the other member with a free slot and a job pending', {}, false, () => IDLE_ONE({ slots: { total: 2, inUse: 0 }, pending: 1 }), false],
+  ['the other member idle but with no box ready (would build)', {}, true, () => IDLE_ONE({ box: { state: 'can-build', definitionHash: DEF.definitionHash } }), false],
+  ['an exclusive job, the other member honours exclusive but has no box ready (would build)', EXCLUSIVE_POOL, true, () => IDLE_ONE({ exclusive: 'honour', box: { state: 'can-build', definitionHash: DEF.definitionHash } }), false],
+  ['the other member idle with the box ready', {}, true, () => IDLE_ONE(READY_BOX), true],
+  ['an exclusive job, the other member ignores exclusive', EXCLUSIVE_POOL, false, () => IDLE_ONE({ exclusive: 'ignore' }), false],
+  ['an exclusive job, runner-1 too old to say, the other member ignores exclusive', EXCLUSIVE_POOL, false, () => IDLE_ONE({ exclusive: 'ignore' }), false, {}],
+  ['an exclusive job, the other member honours exclusive', EXCLUSIVE_POOL, false, () => IDLE_ONE({ exclusive: 'honour' }), true],
+  ['an exclusive job, the other member honours exclusive with one of two slots in use', EXCLUSIVE_POOL, false, () => IDLE_ONE({ exclusive: 'honour', slots: { total: 2, inUse: 1 } }), false],
+];
+
+for (const [name, manifestExtra, boxed, other, moves, mine = { exclusive: 'honour' }] of MOVE_ROWS) {
+  test(`t2440: a hand job queued behind a long job on runner-1, ${name}: ${moves ? 'moved at the first 60 s check' : 'not moved'}`, async () => {
+    const r = moveRig({
+      manifestExtra: Object.keys(manifestExtra).length ? manifestExtra : POOL_OF_TWO,
+      info: { p1: () => BUSY_WITH(['run-1'], { ...mine, ...(boxed ? READY_BOX : {}) }), p2: other },
+      poll: { p1: QUEUED_ON_1, p2: boxed ? BOX_RAN_ON_2 : RAN_ON_2 },
+    });
+    const out = await r.client.run({ ...r.base, ...(boxed ? { box: DEF } : {}), requeue: r.requeue(boxed ? DEF : false) });
+    assert.deepStrictEqual(r.asked[0], ['runner-1', 60000], 'ENTER: the pick was re-evaluated at 60 s');
+    if (moves) {
+      assert.deepStrictEqual(r.posts(), ['0 p1 POST run-1', '60000 p2 POST run-1-2']);
+      assert.deepStrictEqual([out.record.outcome, out.record.where, out.record.endedAt], ['pass', 'runner-2', '1970-01-01T00:02:15.000Z']);
+      assert.deepStrictEqual(out.record.moved, [{ from: 'runner-1', to: 'runner-2', at: '1970-01-01T00:01:00.000Z' }]);
+    } else {
+      assert.deepStrictEqual(r.posts(), ['0 p1 POST run-1']);
+      assert.deepStrictEqual(r.asked.map(([, t]) => t), [60000, 120000, 180000, 240000]);
+      assert.deepStrictEqual([out.record.outcome, out.record.where, out.record.endedAt, 'moved' in out.record], ['timeout', 'runner-1', '1970-01-01T00:05:00.000Z', false]);
+    }
+  });
+}
+
+const VIA_1 = { peer: 'p1', wire: 'push', name: 'runner-1' };
+const VIA_2 = { peer: 'p2', wire: 'push', name: 'runner-2' };
+const spyMove = (r, pick) => async (where) => { r.asked.push([where, r.clock.t]); return pick(where); };
+const OTHER = (where) => (where === 'runner-1' ? VIA_2 : VIA_1);
+
+test('t2440: a job that has started is never moved, and a job whose box build is in progress is not moved while it builds', async () => {
+  const started = moveRig({ info: { p1: () => BUSY_WITH([]), p2: () => IDLE_ONE() }, poll: { p1: (id, t) => (t < 30000 ? jobAt(id, 'queued') : t < 400000 ? jobAt(id, 'running') : jobAt(id, 'done')) } });
+  const ran = await started.client.run({ ...started.base, requeue: spyMove(started, OTHER) });
+  assert.deepStrictEqual([ran.record.outcome, ran.record.where, started.asked, started.posts()], ['pass', 'runner-1', [], ['0 p1 POST run-1']]);
+  const building = moveRig({ info: { p1: () => BUSY_WITH([]), p2: () => IDLE_ONE() }, poll: { p1: (id, t) => (t < 30000 ? jobAt(id, 'queued') : t < 200000 ? jobAt(id, 'build') : t < 400000 ? jobAt(id, 'running') : jobAt(id, 'done')) } });
+  const built = await building.client.run({ ...building.base, requeue: spyMove(building, OTHER) });
+  assert.deepStrictEqual([built.record.outcome, built.record.where, building.asked, building.posts()], ['pass', 'runner-1', [], ['0 p1 POST run-1']]);
+});
+
+test('t2440: a job moves at most twice; the third check is refused and the queue budget keeps its first clock (literal times)', async () => {
+  const r = moveRig({ info: { p1: () => BUSY_WITH([]), p2: () => BUSY_WITH([]) }, poll: { p1: QUEUED_ON_1, p2: QUEUED_ON_1 } });
+  const out = await r.client.run({ ...r.base, requeue: spyMove(r, OTHER) });
+  assert.deepStrictEqual(r.asked, [['runner-1', 60000], ['runner-2', 120000]]);
+  assert.deepStrictEqual(r.posts(), ['0 p1 POST run-1', '60000 p2 POST run-1-2', '120000 p1 POST run-1-3']);
+  assert.deepStrictEqual(out.record.moved, [
+    { from: 'runner-1', to: 'runner-2', at: '1970-01-01T00:01:00.000Z' },
+    { from: 'runner-2', to: 'runner-1', at: '1970-01-01T00:02:00.000Z' },
+  ]);
+  assert.deepStrictEqual([out.record.outcome, out.record.reason, out.record.endedAt], ['timeout', 'the job did not start within the 300000ms queue budget (cancelled)', '1970-01-01T00:05:00.000Z']);
+});
+
+test('t2440: the submit to the new member waits for the old member\'s cancel to answer, and a cancel that fails leaves the job where it is', async () => {
+  let ticks = 0;
+  const slow = moveRig({
+    info: { p1: () => BUSY_WITH([]), p2: () => IDLE_ONE() }, poll: { p1: QUEUED_ON_1, p2: RAN_ON_2 },
+    del: { p1: async () => { for (; ticks < 20; ticks += 1) await new Promise((res) => setImmediate(res)); return { status: 200, body: { ok: true } }; } },
+  });
+  const moved = await slow.client.run({ ...slow.base, requeue: spyMove(slow, OTHER) });
+  assert.deepStrictEqual(slow.events.slice(0, 4), ['0 p1 POST run-1', '60000 p1 DELETE run-1', '60000 p1 DELETE answered', '60000 p2 POST run-1-2']);
+  assert.strictEqual(moved.record.where, 'runner-2');
+  const stuck = moveRig({
+    info: { p1: () => BUSY_WITH([]), p2: () => IDLE_ONE() }, poll: { p1: QUEUED_ON_1, p2: RAN_ON_2 },
+    del: { p1: async () => ({ status: 0, body: null, error: 'socket closed' }) },
+  });
+  const kept = await stuck.client.run({ ...stuck.base, requeue: spyMove(stuck, OTHER) });
+  assert.deepStrictEqual(stuck.asked.map(([, t]) => t), [60000, 120000, 180000, 240000], 'ENTER: every check found runner-2 idle');
+  assert.deepStrictEqual(stuck.posts(), ['0 p1 POST run-1']);
+  assert.deepStrictEqual([kept.record.where, kept.record.outcome, 'moved' in kept.record], ['runner-1', 'timeout', false]);
+});
+
+test('t2440: a submit the new member refuses falls back to one resubmit on the old member, which then runs it', async () => {
+  const r = moveRig({
+    info: { p1: () => BUSY_WITH([]), p2: () => IDLE_ONE() },
+    poll: { p1: (id, t) => (id === 'run-1' ? jobAt(id, 'queued') : t < 200000 ? jobAt(id, 'running') : jobAt(id, 'done')) },
+    post: { p2: () => ({ status: 503, body: null, error: 'unavailable' }) },
+  });
+  const out = await r.client.run({ ...r.base, requeue: spyMove(r, OTHER) });
+  assert.deepStrictEqual(r.posts(), ['0 p1 POST run-1', '60000 p2 POST run-1-2', '60000 p1 POST run-1-3']);
+  assert.deepStrictEqual(r.asked, [['runner-1', 60000]]);
+  assert.deepStrictEqual(out.record.moved, [
+    { from: 'runner-1', to: 'runner-2', at: '1970-01-01T00:01:00.000Z' },
+    { from: 'runner-2', to: 'runner-1', at: '1970-01-01T00:01:00.000Z' },
+  ]);
+  assert.deepStrictEqual([out.record.outcome, out.record.where, out.res.jobId], ['pass', 'runner-1', 'run-1-3']);
+});
+
+test('t2440: a post-merge job is never moved', async () => {
+  const r = moveRig({ info: { p1: () => BUSY_WITH([]), p2: () => IDLE_ONE() }, poll: { p1: QUEUED_ON_1 } });
+  const out = await r.client.run({ ...r.base, kind: 'post-merge', requeue: spyMove(r, OTHER) });
+  assert.deepStrictEqual([r.asked, r.posts(), out.record.outcome], [[], ['0 p1 POST run-1'], 'timeout']);
+});
+
+test('t2440: a job that starts on runner-1 while the move pick waits on runner-2 is re-read before the cancel and stays: no DELETE, no second POST', async () => {
+  let started = false;
+  const r = moveRig({
+    info: { p1: () => BUSY_WITH(['run-1']), p2: () => { started = true; return IDLE_ONE(); } },
+    poll: { p1: (id, t) => (!started ? jobAt(id, 'queued') : t < 200000 ? jobAt(id, 'running') : jobAt(id, 'done')) },
+  });
+  const out = await r.client.run({ ...r.base, requeue: r.requeue() });
+  assert.deepStrictEqual(r.asked, [['runner-1', 60000]], 'ENTER: the pick ran and found runner-2 idle');
+  assert.deepStrictEqual(r.events.filter((e) => / DELETE /.test(e)), []);
+  assert.deepStrictEqual(r.posts(), ['0 p1 POST run-1']);
+  assert.deepStrictEqual([out.record.outcome, out.record.where, 'moved' in out.record], ['pass', 'runner-1', false]);
+});
+
+test('t2440: two jobs queued on runner-1 whose 60 s checks overlap both see runner-2 idle, and only one moves there', async () => {
+  let busy2 = false;
+  const r = moveRig({
+    info: { p1: () => BUSY_WITH(['run-1', 'run-2']), p2: () => (busy2 ? BUSY_WITH([]) : IDLE_ONE()) },
+    poll: { p1: QUEUED_ON_1, p2: RAN_ON_2 },
+    post: { p2: () => { busy2 = true; return { status: 200, body: { ok: true, state: 'queued' } }; } },
+  });
+  const inner = r.requeue();
+  let open;
+  const both = new Promise((res) => { open = res; });
+  let picks = 0;
+  const requeue = async (where, id) => {
+    const next = await inner(where, id);
+    picks += 1;
+    if (picks === 2) open();
+    if (picks <= 2) await both;
+    return next;
+  };
+  const outs = await Promise.all([r.client.run({ ...r.base, requeue }), r.client.run({ ...r.base, requeue })]);
+  assert.ok(picks >= 2, 'ENTER: both checks picked');
+  assert.deepStrictEqual(r.posts().filter((e) => / p2 POST /.test(e)).length, 1);
+  assert.deepStrictEqual(outs.map((o) => o.record.where).sort(), ['runner-1', 'runner-2']);
+});
+
+test('t2440: a verify shadow and a verify box decide are given a move hook on a pool; their post-merge runs are not', async () => {
+  const shadowSent = [];
+  const sc = { reachable: async () => ({ ok: true, info: IDLE_ONE() }), shadow: async (o) => { shadowSent.push(o); return null; } };
+  const s = mkFixture({ manifestExtra: { testRunner: { peer: 'runner-1', gate: 'shadow', pool: [{ peer: 'runner-2' }] } }, peers: [R1, R2], client: sc });
+  await s.m._shadowSubmit(s.tm.loadManifest('team'), { id: 't1' }, '/w', {});
+  await s.m._shadowSubmit(s.tm.loadManifest('team'), { id: 't1' }, '/w', { merge: true });
+  assert.deepStrictEqual(shadowSent.map((o) => [o.kind, typeof o.requeue]), [['verify', 'function'], ['post-merge', 'undefined']]);
+  const runSent = [];
+  const bc = { reachable: async () => ({ ok: true, info: IDLE_ONE() }), run: async (o) => { runSent.push(o); return { unknown: 'runner unreachable', res: null, record: null }; } };
+  const timers = { setTimeout: () => 1, clearTimeout: () => {} };
+  const b = mkFixture({ manifestExtra: { testRunner: { ...PUSH_ON, pool: [{ peer: 'runner-2' }] } }, peers: [R1, R2], client: bc, extraDeps: { boxDecideTimers: timers } });
+  const team = b.tm.loadManifest('team');
+  require('../team-box').writeBox(team.dir, BOX_TEXT);
+  await b.m._boxDecide(team, { id: 't1' }, '/w', {});
+  await b.m._boxDecide(team, { id: 't1' }, '/w', { merge: true });
+  assert.deepStrictEqual(runSent.map((o) => [o.kind, typeof o.requeue, typeof o.onMove]), [['verify', 'function', 'function'], ['post-merge', 'undefined', 'undefined']]);
+});
+
+test('t2440: while a job waits on its cancel to move to runner-2, a fresh pick counts it as sent to runner-2', async () => {
+  const seen = [];
+  let client = null;
+  const r = moveRig({
+    info: { p1: () => BUSY_WITH(['run-1']), p2: () => IDLE_ONE() },
+    poll: { p1: QUEUED_ON_1, p2: RAN_ON_2 },
+    del: { p1: async () => { seen.push(client.sentTo('runner-2', IDLE_ONE())); return { status: 200, body: { ok: true } }; } },
+  });
+  client = r.client;
+  const before = r.client.sentTo('runner-2', IDLE_ONE());
+  const out = await r.client.run({ ...r.base, requeue: r.requeue() });
+  assert.strictEqual(out.record.where, 'runner-2', 'ENTER: the job moved');
+  assert.deepStrictEqual([before, seen], [0, [1]]);
+});
+
+test('t2440: a cancel that fails releases the move claim, so a fresh pick no longer counts the job on runner-2', async () => {
+  const seen = [];
+  let client = null;
+  const r = moveRig({
+    info: { p1: () => BUSY_WITH(['run-1']), p2: () => IDLE_ONE() },
+    poll: { p1: (id, t) => { if (t > 60000 && t < 120000) seen.push(client.sentTo('runner-2', IDLE_ONE())); return jobAt(id, 'queued'); } },
+    del: { p1: async () => ({ status: 0, body: null, error: 'socket closed' }) },
+  });
+  client = r.client;
+  const out = await r.client.run({ ...r.base, requeue: r.requeue() });
+  assert.ok(seen.length > 0, 'ENTER: a poll ran between the failed cancel and the next check');
+  assert.deepStrictEqual([out.record.where, [...new Set(seen)]], ['runner-1', [0]]);
+});
+
+test('t2440: a caller stop while the moved job is set up on runner-2 ends it with one move recorded and no fallback hop', async () => {
+  let armed = false;
+  let stop = false;
+  const r = moveRig({
+    info: { p1: () => BUSY_WITH(['run-1']), p2: () => { if (armed) stop = true; return IDLE_ONE(); } },
+    poll: { p1: QUEUED_ON_1, p2: RAN_ON_2 },
+    del: { p1: async () => { armed = true; return { status: 200, body: { ok: true } }; } },
+  });
+  const out = await r.client.run({ ...r.base, requeue: r.requeue(), shouldStop: () => stop });
+  assert.ok(stop, 'ENTER: the stop came during the setup on runner-2');
+  assert.deepStrictEqual([r.posts(), out.record.moved], [['0 p1 POST run-1'], [{ from: 'runner-1', to: 'runner-2', at: '1970-01-01T00:01:00.000Z' }]]);
+});

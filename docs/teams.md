@@ -1264,6 +1264,20 @@ reroute repeats. The held-ticket retry sweep does not reroute; its pick may choo
 the lost member again once that member answers info. Compare rows of a pooled team carry `runner: <member>`, the member that
 ran the job, and a superseded job's cancel goes to that member.
 
+On a pool, a hand, verify or shadow job that its runner accepted but has not
+started (state `queued`) re-asks the pick every 60 s (`MOVE_CHECK_MS`,
+`_runnerMove`). When the pick now names another member that is idle — a free
+slot, nothing pending or queued, the box ready for this job's definition (a
+member that would have to build does not count) and, for an exclusive job,
+honouring exclusive with nothing running — the job is cancelled on its member and,
+only once that cancel is confirmed, submitted to the new one under the next
+`<run id>-<attempt>` job id; a cancel that fails leaves it where it is. A job moves
+at most twice, never once it started or while it is in `build`, and keeps its
+original queue clock. If the new member refuses the submit, the job is resubmitted
+once to the member it left and then ends as before. Post-merge jobs never move.
+The run row carries `moved: [{from, to, at}]`, and a hand digest says
+`(runner <new>, moved <old> -> <new>)`.
+
 Reading it: bare `[agent:team runner]` also shows the gate mode and, for the
 runner's current environment key (`envKey`, from its info route), how many
 comparisons ran, how many agreed on the outcome and how many had the same counts
