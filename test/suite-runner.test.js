@@ -1817,6 +1817,31 @@ test('t2428: a queue head blocked by the serial-native rule lets a later job sta
   f.held.get('sx').finish(0);
   await waitState(f.runner, 'sx', 'done');
 });
+test('t2428: an exclusive box job held by the box hold does not hold the native jobs behind it; it runs alone once the hold clears and its recent row keeps the marker', async (t) => {
+  const fb = fakeBox({ reap: (job) => { if (job.id === 'b1') throw new Error('box cleanup not confirmed: c0ffee'); } });
+  const f = await holdingFixture(t, { runnerOver: { box: fb.box, slots: 2 } });
+  await f.upload(f.body('b1', 'hand', { isolation: 'container' }));
+  assert.strictEqual((await f.runner.submit(f.body('n0'))).state, 'queued');
+  await f.spawned(['b1', 'n0']);
+  assert.strictEqual((await f.runner.submit(f.body('bx', 'hand', { isolation: 'container', ...ALONE }))).state, 'queued');
+  f.held.get('b1').finish(0);
+  await waitState(f.runner, 'b1', 'done');
+  await drain();
+  assert.strictEqual(fs.existsSync(path.join(f.root, 'suite-runner', 'box-hold.json')), true, 'ENTER: the failed reap holds the box');
+  assert.strictEqual((await f.runner.submit(f.body('n1'))).state, 'queued');
+  await f.spawned(['n1']);
+  await drain();
+  assert.deepStrictEqual([await slotsOf(f.runner), f.calls.map((c) => c.job)], [{ slots: { total: 2, inUse: 2 }, running: ['n0', 'n1'], waiting: ['bx'] }, ['b1', 'n0', 'n1']]);
+  for (const id of ['n0', 'n1']) f.held.get(id).finish(0);
+  await waitState(f.runner, 'n1', 'done');
+  await f.runner.tick();
+  await f.spawned(['bx']);
+  f.held.get('bx').finish(0);
+  await waitState(f.runner, 'bx', 'done');
+  const recent = (await f.runner.activity()).recent.find((j) => j.id === 'bx');
+  assert.strictEqual(recent.exclusive, 'honoured');
+});
+
 test('t2428: a drain completes with an exclusive job queued, and the job starts alone when the drain ends', async (t) => {
   const f = await holdingFixture(t, { runnerOver: { slots: 2 } });
   await f.upload(f.body('d1'));

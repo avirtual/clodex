@@ -565,7 +565,7 @@ function createSuiteRunner({
   };
   const exclusiveOf = (j) => (j.exclusive === true ? { exclusive: exclusiveMode === 'honour' ? 'honoured' : 'ignored' } : {});
   const activityRow = (j) => { const streams = streamsOf(j.id); return { ...activityJob(j, latestOf(streams), streams), ...exclusiveOf(j) }; };
-  const finishedRow = (j) => { const streams = streamsOf(j.id); return finishedJob(j, outFile(j.id, 'stdout'), latestOf(streams), streams); };
+  const finishedRow = (j) => { const streams = streamsOf(j.id); return { ...finishedJob(j, outFile(j.id, 'stdout'), latestOf(streams), streams), ...exclusiveOf(j) }; };
   const packFile = (id) => path.join(jobStore(id), 'pack');
   const save = (job) => writeJson(path.join(jobStore(job.id), 'job.json'), job);
   const anyLive = () => [...jobs.values()].some((j) => LIVE.has(j.state));
@@ -977,7 +977,8 @@ function createSuiteRunner({
     while (active.size < slotTotal) {
       if (aloneActive()) return;
       const order = queue();
-      if (order.length && alone(order[0]) && active.size) return;
+      const head = order[0];
+      if (head && alone(head) && active.size && !(isBox(head) && boxHold)) return;
       const next = order.find(startable);
       if (!next) return;
       launch(next);
