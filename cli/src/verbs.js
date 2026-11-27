@@ -1317,7 +1317,7 @@ module.exports = {
   info, get, describe, apiResources, version, filterWorkspace,
   logs, query,
   create, createSession, dm, input, exec, execPty, sessionType,
-  delete: del, deleteSession, restart, restartSession, restartNode, patch, patchSession, patchTestjobs,
+  delete: del, deleteSession, restart, restartSession, restartNode, patch, patchSession,
   nodeList, nodeCurrent, nodeDescribe, helloLines, nodeCreate, nodeDelete, nodeUse,
   entryKind, entryTarget,
   requireName, parseIntOr, QUERY_KINDS, SESSION_SUBRESOURCES, takeResourceWord, checkResourceWord, RESOURCE_VERBS, DEPLOYABLE,
