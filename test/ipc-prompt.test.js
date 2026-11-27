@@ -582,16 +582,17 @@ test('the profile row renders only when the caller says the seat is a Claude ass
   assert.ok(!buildIpcPrompt(null, undefined, undefined, { profileSeat: false, teamLead: true }).includes(ROW), 'nor a lead that is not a profile seat');
 });
 
-test('t1407: the lead variant is IPC_PROMPT plus the eleven team rows, first role-add and last runner', () => {
+test('t1407: the lead variant is IPC_PROMPT plus the twelve team rows, first role-add and last runner', () => {
   const lead = leadPrompt(null);
   const rows = lead.split('\n').filter((l) => l.startsWith('  [agent:team '));
-  assert.strictEqual(rows.length, 11, 'role-add, template-save, prompt-save, template-rm, prompt-rm, sandbox, box, bind, trunk, done, runner');
+  assert.strictEqual(rows.length, 12, 'role-add, template-save, prompt-save, template-rm, prompt-rm, sandbox, box, bind, trunk, test-roots, done, runner');
   assert.match(rows[0], /^ {2}\[agent:team role-add <role> \[prompt:<stem>\] \[template:<stem>\]/);
   assert.match(rows[6], /^ {2}\[agent:team box set\|init\|show\|clear\] {2}Keep your team's test-box Dockerfile/);
   assert.match(rows[7], /^ {2}\[agent:team bind <seat> <role>\] {2}Put an existing seat on your team's roster/);
   assert.match(rows[8], /^ {2}\[agent:team trunk <branch>\] {6}Set the branch accepted tickets merge into/);
-  assert.match(rows[9], /^ {2}\[agent:team done code\|report\] {4}How tickets filed from now on close: code \(default\) = branch/);
-  assert.match(rows[10],/^ {2}\[agent:team runner <peer>\|off\] {3}Name a peered node with the suite capability.*; gate:off\|shadow also runs the loop's suites there; run:<minutes>\|off caps a run there \(1-36, default 21\); hand-env:KEY=VALUE adds env to hand runs only\. Bare/);
+  assert.match(rows[9], /^ {2}\[agent:team test-roots <dir> …\] {2}Set the directories where a hand's own test run finds the tests/);
+  assert.match(rows[10], /^ {2}\[agent:team done code\|report\] {4}How tickets filed from now on close: code \(default\) = branch/);
+  assert.match(rows[11],/^ {2}\[agent:team runner <peer>\|off\] {3}Name a peered node with the suite capability.*; gate:off\|shadow also runs the loop's suites there; run:<minutes>\|off caps a run there \(1-36, default 21\); hand-env:KEY=VALUE adds env to hand runs only\. Bare/);
   const permitRows = lead.split('\n').filter((l) => l.startsWith('  [agent:permit '));
   assert.deepStrictEqual(permitRows.map((l) => l.split(/\s{2,}/)[1]), ['[agent:permit <seat> <id> allow]']);
   assert.strictEqual(lead.split('\n').filter((l) => !l.startsWith('  [agent:team ') && !l.startsWith('  [agent:permit ')).join('\n'), IPC_PROMPT,
