@@ -430,7 +430,8 @@ no terminal tabs `no terminal on this host`. The `term_read` MCP tool
   stdio slot and answers its one `{op:'suite', measure, scope, files, flags,
   local}` request through `createChannelHost` (suite-client.js): it re-checks
   the tree against the team's worktrees and each file entry (relative, no `..`,
-  no leading `-`), then answers `{run:'local'}`, `{run:'refused'}` or streams
+  no leading `-`), and `named` (present only for a payload `files` run: `true`,
+  with scope `own` and a non-empty `files`, carried into the ledger rows), then answers `{run:'local'}`, `{run:'refused'}` or streams
   `{progress}` lines and ends with `{run:'remote', status, stdout, stderr,
   unknown, treeHash, note}` (plus `rerouted: {from, to}` after a reroute). The
   runner comes from the deps' `pool` (`_handRunners`), called with the deps' `box` (`_handBox`), which the run also sends with the team's `shares`; a boxed reply adds `box: {isolation, imageId}`. The exec timeout kill and a channel disconnect each

@@ -103,9 +103,10 @@ async function startLead(t) {
 }
 
 function spawner() {
-  const st = { count: 0, hold: false, held: [], children: [] };
+  const st = { count: 0, hold: false, held: [], children: [], argvs: [] };
   st.spawn = (cmd, args, opts) => {
     st.count += 1;
+    st.argvs.push(args);
     const child = new EventEmitter();
     child.pid = 7000 + st.count;
     child.stdout = new PassThrough();
@@ -542,4 +543,19 @@ test('claim status rows: claiming, not connected and runner off, one per ticked 
   ]);
   assert.deepStrictEqual(rows({ ...offer, peers: [{ name: 'murmur' }] }, null), [{ name: 'murmur', state: 'runner-off', lastClaim: null }]);
   assert.deepStrictEqual(rows({ ...offer, scope: 'discovery' }, {}), []);
+});
+
+test('a named hand run on the pull wire runs scripts/run-tests.js --reporter=dot <files> in the given order', async (t) => {
+  const root = mkTmpRoot('pull-wire-');
+  const repo = makeRepo(root);
+  const { runner, sp } = engineAt(t, path.join(root, 'b'));
+  const lead = await startLead(t);
+  await attach(t, lead, { engine: runner });
+  const client = createSuiteClient({ getPeerManager: () => ({ get: () => lead.conn }), randomUUID: () => 'pull-named' });
+  const out = await within(client.run({
+    peer: 'pull:laptop', tree: repo, kind: 'hand', scope: 'own', named: true, files: ['test/b.test.js', 'test/a.test.js'], budgetMs: RUN_BUDGET_MS,
+  }), RUN_MS, 'the pull run to conclude');
+  assert.strictEqual(out.unknown, null, `run unknown: ${out.unknown}`);
+  assert.deepStrictEqual(sp.argvs, [['scripts/run-tests.js', '--reporter=dot', 'test/b.test.js', 'test/a.test.js']]);
+  assert.deepStrictEqual([out.record.scope, out.record.named], ['own', true]);
 });

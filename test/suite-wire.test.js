@@ -67,10 +67,11 @@ async function startServer(t, extra) {
   return { server, port: server.port, seen };
 }
 
-function realRunner(t, root, limits) {
+function realRunner(t, root, limits, argvs = []) {
   const work = path.join(root, 'work');
   fs.mkdirSync(work);
   const spawn = (cmd, args, opts) => {
+    argvs.push(args);
     const child = new EventEmitter();
     child.pid = 5000;
     child.stdout = new PassThrough();
@@ -535,4 +536,20 @@ test('a failed output slice is asked again up to three times within the deadline
     assert.deepStrictEqual([out.unknown || null, out.record.outcome, out.record.pass], want, name);
     server.stop();
   }
+});
+
+test('a named hand run on the push wire runs scripts/run-tests.js --reporter=dot <files> in the given order, and both ledger rows say named', async (t) => {
+  const root = mkTmpRoot('suite-wire-');
+  const repo = makeRepo(root);
+  const argvs = [];
+  const runner = realRunner(t, root, undefined, argvs);
+  const { port } = await startServer(t, { suiteRunner: runner });
+  const { conn } = peerFor(t, port);
+  const ledgerFile = path.join(root, 'logs', 'suite-runs.jsonl');
+  const { client } = clientFor(conn, { ledgerFile, randomUUID: () => 'run-named' });
+  const out = await client.run({ peer: 'runner-1', tree: repo, kind: 'hand', scope: 'own', named: true, files: ['test/b.test.js', 'test/a.test.js'] });
+  assert.strictEqual(out.unknown, null, `run unknown: ${out.unknown}`);
+  assert.deepStrictEqual(argvs, [['scripts/run-tests.js', '--reporter=dot', 'test/b.test.js', 'test/a.test.js']]);
+  const lines = fs.readFileSync(ledgerFile, 'utf8').trim().split('\n').map((l) => JSON.parse(l));
+  assert.deepStrictEqual(lines.map((l) => [l.phase, l.scope, l.named]), [['start', 'own', true], ['end', 'own', true]]);
 });

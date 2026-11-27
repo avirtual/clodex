@@ -1725,6 +1725,14 @@ test('def: the schema admits `tree` and still admits the empty payload', () => {
   assert.strictEqual(parseAndValidate(def, JSON.stringify({ scope: 'full' })).ok, true);
   assert.strictEqual(parseAndValidate(def, JSON.stringify({ scope: 'half' })).ok, false,
     'an unknown scope must bounce at the dispatcher, not reach the bin as a silent full run');
+  assert.deepStrictEqual([
+    { files: ['test/a.test.js'] },
+    { files: [] },
+    { files: Array.from({ length: 21 }, (_, i) => `test/${i}.test.js`) },
+    { files: [7] },
+    { files: ['x'.repeat(301)] },
+    { files: 'test/a.test.js' },
+  ].map((p) => parseAndValidate(def, JSON.stringify(p)).ok), [true, false, false, false, false, false]);
 });
 
 test('def: the description states which tree the grant measures', () => {

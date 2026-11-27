@@ -1163,3 +1163,33 @@ test('t2419: on a pool a box:true hand run is picked onto the member that holds 
   assert.deepStrictEqual(asked, [['pA', want], ['pB', want]]);
   assert.deepStrictEqual([client.runs[0].peer, client.runs[0].name], ['pB', 'runner-b']);
 });
+
+test('host: a named-files call routes exactly as scope own — local under hands:full, local on local:true, remote under hands:all carrying named and the files', async () => {
+  const NAMED = { scope: 'own', files: ['test/b.test.js', 'test/a.test.js'], named: true };
+  const full = hostFor({ client: stubClient(), team: teamWith('full') });
+  full.host.onMessage(ask(full.dir, NAMED));
+  assert.deepStrictEqual(await full.done, { run: 'local', why: 'hands:full leaves own scope local', override: null });
+  const forced = hostFor({ client: stubClient() });
+  forced.host.onMessage(ask(forced.dir, { ...NAMED, local: true }));
+  assert.deepStrictEqual(await forced.done, { run: 'local', why: 'local:true in the call', override: 'call' });
+  const client = stubClient({ result: { unknown: null, res: { status: 0, signal: null, stdout: 'x', stderr: '', treeHash: TREE } } });
+  const all = hostFor({ client });
+  all.host.onMessage(ask(all.dir, NAMED));
+  assert.strictEqual((await all.done).run, 'remote');
+  const o = client.runs[0];
+  assert.deepStrictEqual([o.scope, o.named, o.files, o.route], ['own', true, ['test/b.test.js', 'test/a.test.js'], 'hands:all']);
+});
+
+for (const [name, extra] of [
+  ['named false', { scope: 'own', files: ['test/a.test.js'], named: false }],
+  ['named with scope full', { scope: 'full', files: ['test/a.test.js'], named: true }],
+  ['named with no files', { scope: 'own', files: [], named: true }],
+]) {
+  test(`host re-validation refuses ${name}, and nothing runs`, async () => {
+    const client = stubClient();
+    const f = hostFor({ client });
+    f.host.onMessage(ask(f.dir, extra));
+    assert.deepStrictEqual(await f.done, { run: 'refused', why: 'named must be true, with scope own and files' });
+    assert.strictEqual(client.runs.length, 0);
+  });
+}

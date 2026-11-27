@@ -119,7 +119,7 @@ function createSuiteClient({
     } = opts;
     const ctx = {
       id: opts.runId || randomUUID(), peer, box: box === true || boxDefOf(box) != null, boxDef: boxDefOf(box), wire: opts.wire === 'pull' ? 'pull' : 'push', where: opts.name || peer, route: opts.route || null, override: opts.override || null,
-      tree: typeof tree === 'string' && tree ? path.resolve(tree) : null, kind, scope, team, ticket, seat,
+      tree: typeof tree === 'string' && tree ? path.resolve(tree) : null, kind, scope, named: opts.named === true, team, ticket, seat,
       jobId: null, attempt: 0, treeHash: null, sha: null, dirty: null, queuedAt: null, startedAt: null, env: null, started: false,
       t0: now(), budgetMs, queueBudgetMs, runBudgetMs, buildBudgetMs, buildSince: null, timeoutMs, onSubmitted, onDetach, onState, shouldStop,
       failFast: typeof opts.repick === 'function', submitted: false,
@@ -373,7 +373,7 @@ function createSuiteClient({
     ctx.startedAt = job.state === 'done' && job.queueMs != null ? ctx.queuedAt + job.queueMs : now();
     appendLedger({
       id: ctx.id, phase: 'start', where: ctx.where, runner: ctx.peer, wire: ctx.wire, jobId: ctx.jobId, attempt: ctx.attempt,
-      kind: ctx.kind, scope: ctx.scope, team: ctx.team, ticket: ctx.ticket, seat: ctx.seat,
+      kind: ctx.kind, scope: ctx.scope, ...(ctx.named ? { named: true } : {}), team: ctx.team, ticket: ctx.ticket, seat: ctx.seat,
       tree: ctx.tree, sha: ctx.sha, treeHash: ctx.treeHash, dirty: ctx.dirty, pid: null, route: ctx.route, override: ctx.override,
       queuedAt: iso(ctx.queuedAt), startedAt: iso(ctx.startedAt), env: ctx.env,
     });
@@ -486,7 +486,7 @@ function createSuiteClient({
     const endedAt = now();
     const record = {
       id: ctx.id, phase: 'end', where: ctx.where, runner: ctx.peer, wire: ctx.wire, jobId: ctx.jobId, attempt: ctx.attempt,
-      kind: ctx.kind, scope: ctx.scope, team: ctx.team, ticket: ctx.ticket, seat: ctx.seat,
+      kind: ctx.kind, scope: ctx.scope, ...(ctx.named ? { named: true } : {}), team: ctx.team, ticket: ctx.ticket, seat: ctx.seat,
       tree: ctx.tree, sha: ctx.sha, treeHash: ctx.treeHash, queuedAt: iso(ctx.queuedAt), route: ctx.route, override: ctx.override,
       outcome, reason: unknown, pass: totals ? totals.pass : null, fail: totals ? totals.fail : null, tests: totals ? totals.tests : null,
       endedAt: iso(endedAt), durationMs: ctx.startedAt != null ? endedAt - ctx.startedAt : null,
@@ -941,6 +941,7 @@ function requestError(msg) {
   if (typeof flags !== 'object' || Array.isArray(flags)) return 'flags must be an object';
   for (const [k, v] of Object.entries(flags)) if (!FLAG_KEYS.includes(k) || typeof v !== 'string') return `flag not allowed: ${k}`;
   if (msg.local != null && typeof msg.local !== 'boolean') return 'local must be a boolean';
+  if (msg.named != null && (msg.named !== true || msg.scope !== 'own' || !(msg.files || []).length)) return 'named must be true, with scope own and files';
   return null;
 }
 
@@ -1014,7 +1015,7 @@ function createChannelHost({
     const moved = (next) => { inflight.peer = next.peer; inflight.wire = next.wire === 'pull' ? 'pull' : 'push'; inflight.name = next.name || next.peer; inflight.jobId = null; };
     const tr = team.testRunner;
     const out = await client.run({
-      peer: via.peer, wire, name, tree, kind: 'hand', scope: msg.scope, team: team.name, ticket, seat,
+      peer: via.peer, wire, name, tree, kind: 'hand', scope: msg.scope, ...(msg.named === true ? { named: true } : {}), team: team.name, ticket, seat,
       files: msg.files || [], flags: msg.flags || {}, setup: tr.setup || null, env: { ...(tr.env || {}), ...(tr.handEnv || {}) },
       queueBudgetMs, runBudgetMs: runMs + handSlackMs(tr), timeoutMs: runMs, budgetMs: queueBudgetMs + runMs + handSlackMs(tr), route: d.why,
       ...(box ? { box, ...(tr.shares ? { shares: tr.shares } : {}) } : {}),

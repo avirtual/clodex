@@ -21,6 +21,7 @@ function ledgerEnv(base, keepRoute = false) {
   else delete env.CLODEX_SUITE_SEAT;
   delete env.CLODEX_SUITE_TICKET;
   delete env.CLODEX_SUITE_RUN_ID;
+  delete env.CLODEX_SUITE_NAMED;
   if (!keepRoute) {
     delete env.CLODEX_SUITE_ROUTE;
     delete env.CLODEX_SUITE_OVERRIDE;
@@ -250,8 +251,37 @@ function isPoolDir(rel) {
   return rel.split('/').every((seg) => seg !== 'node_modules' && !seg.startsWith('.') && !/fixture/i.test(seg));
 }
 
+const TEST_FILE_RE = /\.test\.[cm]?js$/;
+
 function isPoolPath(rel) {
-  return rel.endsWith('.test.js') && isPoolDir(path.posix.dirname(rel));
+  return TEST_FILE_RE.test(rel) && isPoolDir(path.posix.dirname(rel));
+}
+
+const NAMED_MAX = 20;
+const NAMED_PATH_MAX = 300;
+
+function namedSet(measure, files) {
+  const refuse = (why) => emit(`[${LEAF}] refused, nothing measured: files ${why}`, 1, 400);
+  if (!Array.isArray(files)) refuse(`must be an array of test file paths — ${JSON.stringify(files).slice(0, 80)}`);
+  if (files.length < 1 || files.length > NAMED_MAX) refuse(`takes 1 to ${NAMED_MAX} paths — got ${files.length}`);
+  const out = [];
+  for (const f of files) {
+    if (typeof f !== 'string') refuse(`entries must be strings — ${JSON.stringify(f).slice(0, 80)}`);
+    const shown = JSON.stringify(f.slice(0, 80));
+    if (!f || f.length > NAMED_PATH_MAX) refuse(`entry must be 1 to ${NAMED_PATH_MAX} characters — ${shown}`);
+    if (/[\s\x00-\x1f\x7f]/.test(f)) refuse(`entry has whitespace or a control character — ${JSON.stringify(f)}`);
+    if (f.startsWith('/') || f.startsWith('-')) refuse(`entry must be repo-relative, not starting with / or - — ${shown}`);
+    if (f.split(/[\\/]/).includes('..')) refuse(`entry has a .. segment — ${shown}`);
+    if (!isPoolPath(f)) refuse(`entry is not a test file (*.test.js, *.test.mjs, *.test.cjs outside fixture, dot and node_modules dirs) — ${shown}`);
+    if (!existsIn(measure, f)) refuse(`entry does not exist in ${measure} — ${shown}`);
+    if (!out.includes(f)) out.push(f);
+  }
+  return {
+    files: out,
+    counts: null,
+    named: true,
+    locked: out.some((f) => LOCK_BOUND.includes(f)),
+  };
 }
 
 function testPool(measure) {
@@ -400,7 +430,7 @@ function lockRefusal(lines) {
   return null;
 }
 
-module.exports = { TEST_ROOTS, failureRows };
+module.exports = { TEST_ROOTS, failureRows, isPoolPath, testPool };
 if (require.main !== module) return;
 
 const CHANNEL = typeof process.send === 'function';
@@ -410,7 +440,12 @@ const measure = resolveMeasure(payload);
 if (!CHANNEL) reexecInMeasured(measure, rawStdin, {});
 const runner = path.join(measure, 'scripts', 'run-tests.js');
 
-const scope = Object.prototype.hasOwnProperty.call(payload, 'scope') ? payload.scope : 'full';
+const hasScope = Object.prototype.hasOwnProperty.call(payload, 'scope');
+const hasFiles = Object.prototype.hasOwnProperty.call(payload, 'files');
+if (hasFiles && hasScope) {
+  emit(`[${LEAF}] refused, nothing measured: files replaces scope — drop "scope" ${JSON.stringify(payload.scope)}`, 1, 180);
+}
+const scope = hasFiles ? 'own' : hasScope ? payload.scope : 'full';
 if (scope !== 'full' && scope !== 'own') {
   emit(
     `[${LEAF}] refused, nothing measured: scope must be "full" or "own" — ${JSON.stringify(scope)}`,
@@ -418,7 +453,7 @@ if (scope !== 'full' && scope !== 'own') {
     180,
   );
 }
-const TAG = scope === 'own' ? 'own: ' : '';
+const named = hasFiles ? namedSet(measure, payload.files) : null;
 
 if (!fs.existsSync(runner)) {
   emit(
@@ -427,7 +462,9 @@ if (!fs.existsSync(runner)) {
   );
 }
 
-const selected = scope === 'own' ? selectSet(measure) : null;
+const selected = named || (scope === 'own' ? selectSet(measure) : null);
+const TAG = named ? `named: ${named.files.length} file${named.files.length === 1 ? '' : 's'}: `
+  : scope === 'own' ? 'own: ' : '';
 
 const headLine = `${gitRead(measure, ['rev-parse', '--abbrev-ref', 'HEAD'])} ${gitRead(measure, ['log', '-1', '--format=%h %s'])}`.trim();
 const headBefore = gitRead(measure, ['rev-parse', 'HEAD']);
@@ -448,6 +485,7 @@ function runLocal(routeEnv) {
   else delete childEnv.CLODEX_TEST_LOCK;
   if (selected && !selected.locked) childEnv.CLODEX_TEST_SLOW_ADVISORY = '1';
   else delete childEnv.CLODEX_TEST_SLOW_ADVISORY;
+  if (named) childEnv.CLODEX_SUITE_NAMED = '1';
   const res = spawnSync(process.execPath, [runner, '--reporter=dot', ...(selected ? selected.files : [])], {
     cwd: measure,
     env: childEnv,
@@ -496,6 +534,7 @@ function askHost() {
   startedAt = Date.now();
   process.send({
     op: 'suite', measure, scope, files: selected ? selected.files : [], flags, local: payload.local === true,
+    ...(named ? { named: true } : {}),
   });
 }
 
@@ -548,7 +587,7 @@ function digest(res, wallMs, note) {
 
   if (code === 0 && fail === 0) {
     retireKeep();
-    const breakdown = selected ? ` — ${selected.counts}` : '';
+    const breakdown = selected && selected.counts ? ` — ${selected.counts}` : '';
     const ADVISORY_RE = /^SLOW \(advisory, unlocked run\): (\d+)ms (.+)$/gm;
     const advised = [];
     for (let m = ADVISORY_RE.exec(stdout); m; m = ADVISORY_RE.exec(stdout)) {

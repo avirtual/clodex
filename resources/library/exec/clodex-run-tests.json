@@ -5,7 +5,7 @@
     "${CLODEX_BIN}/clodex-run-tests.js"
   ],
   "cwd": "${TEAM_ROOT}",
-  "description": "Suite digest: runs scripts/run-tests.js. Measures the TEAM ROOT unless `tree` names a worktree. scope: own = branch tests + repo-wide shape checks, no lock; full (default) = the merge gate's run.",
+  "description": "Suite digest: runs scripts/run-tests.js. Measures the TEAM ROOT unless `tree` names a worktree. scope: own = branch tests + shape checks, no lock; full (default) = the gate run. files: just these.",
   "timeoutMs": 2160000,
   "maxBytes": 1024,
   "replyStderr": true,
@@ -15,7 +15,8 @@
     "properties": {
       "tree": { "type": "string", "minLength": 1, "maxLength": 1000 },
       "scope": { "type": "string", "enum": ["full", "own"] },
-      "local": { "type": "boolean" }
+      "local": { "type": "boolean" },
+      "files": { "type": "array", "minItems": 1, "maxItems": 20, "items": { "type": "string", "minLength": 1, "maxLength": 300 } }
     }
   }
 }

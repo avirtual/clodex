@@ -14,6 +14,8 @@ blocks a release.
 ## Unreleased
 
 - An agent that asks for a restart is no longer told "Clodex restarted" before the restart has happened (seen when the web UI reloaded while the restart was waiting for test jobs); the notice now comes only from the relaunched app.
+- Hands can run named test files: `clodex-run-tests` takes `files` (up to 20 test file paths) and runs exactly those, locally or on the team's runner. The project's `scripts/run-tests.js` receives them as arguments, as it does for an `own` run.
+- `clodex-run-tests` now treats `*.test.mjs` and `*.test.cjs` as test files, not only `*.test.js`.
 
 ## 5.201.0 — 2026-11-27
 
