@@ -22,7 +22,7 @@ arg** (which is why restart paths must re-assert it; kill drops the entry).
 
 **Reserved seat names.** `isReservedSeatName` (pending-store.js) refuses
 `.claims`, the legacy claim shapes, and — case-insensitively, since macOS and
-Windows volumes fold case — `.claude`, `CLAUDE.md` and `.mcp.json`: a seat's
+Windows volumes fold case — `.claude`, `CLAUDE.md`, `CLAUDE.local.md` and `.mcp.json`: a seat's
 messages folder is `<messages root>/<name>`, and those names are what the
 Claude CLI reads as configuration inside the trusted messages root. Every
 creation path refuses them with `reservedSeatError`'s text before writing

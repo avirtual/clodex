@@ -14,6 +14,7 @@ blocks a release.
 ## Unreleased
 
 - Test runners: the record of a hand's named test run now lists the files it named, not only how many.
+- Sessions: a seat can no longer be named `CLAUDE.local.md`, which the Claude CLI would read as instructions from the shared messages folder.
 
 ## 5.212.0 — 2026-11-28
 
