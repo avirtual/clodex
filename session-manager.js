@@ -413,43 +413,76 @@ function realClaudeHomeUnderTest(dir, env = process.env) {
   });
 }
 
-function preseedClaudeOnboarding({ fs, path, homeDir, configDir = null, cwd, addDirs = [] }) {
+const PRESEED_RETRY_MS = [25, 50, 100];
+
+function sleepSync(ms) {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+
+function preseedMissing(j, wantOnboarding, keys) {
+  const missing = keys.filter((k) => ((j.projects || {})[k] || {}).hasTrustDialogAccepted !== true);
+  if (wantOnboarding && j.hasCompletedOnboarding !== true) missing.unshift('hasCompletedOnboarding');
+  return missing;
+}
+
+function preseedClaudeOnboarding({ fs, path, homeDir, configDir = null, cwd, addDirs = [], log = null, sleepFn = sleepSync, out = null }) {
   if (realClaudeHomeUnderTest(configDir || homeDir)) {
     throw new Error(`preseedClaudeOnboarding: refusing to write ${nodePath.join(configDir || homeDir, '.claude.json')} under node --test; give createSessionManager an os whose homedir() is a temp dir (os: { ...os, homedir: () => tmpHome })`);
   }
-  try {
-    const p = path.join(configDir || homeDir, '.claude.json');
-    let j = {};
-    if (fs.existsSync(p)) {
-      j = JSON.parse(fs.readFileSync(p, 'utf8'));
-      if (!j || typeof j !== 'object' || Array.isArray(j)) return false;
+  const p = path.join(configDir || homeDir, '.claude.json');
+  const warn = (msg) => { if (log) log.warn('session', `preseed ${p}: ${msg}`); };
+  const readConfig = () => {
+    if (!fs.existsSync(p)) return {};
+    const j = JSON.parse(fs.readFileSync(p, 'utf8'));
+    return (!j || typeof j !== 'object' || Array.isArray(j)) ? null : j;
+  };
+  const trustKeys = [];
+  if (typeof cwd === 'string' && cwd) trustKeys.push(cwd);
+  for (const d of Array.isArray(addDirs) ? addDirs : []) {
+    if (typeof d !== 'string' || !d) continue;
+    trustKeys.push(d);
+    let real = null;
+    try { real = fs.realpathSync(d); } catch {}
+    if (real && real !== d) trustKeys.push(real);
+  }
+  const keys = [...new Set(trustKeys)];
+  const seeded = new Set();
+  for (let attempt = 0; attempt <= PRESEED_RETRY_MS.length; attempt++) {
+    if (attempt > 0) sleepFn(PRESEED_RETRY_MS[attempt - 1]);
+    try {
+      const j = readConfig();
+      if (!j) { warn('not a JSON object, left untouched'); return false; }
+      const wantOnboarding = !j.hasCompletedOnboarding;
+      const untrusted = preseedMissing(j, false, keys);
+      if (!wantOnboarding && !untrusted.length) {
+        if (out) { out.keys = [...seeded]; out.attempts = attempt; }
+        return seeded.size > 0;
+      }
+      if (wantOnboarding) {
+        j.hasCompletedOnboarding = true;
+        if (!j.theme) j.theme = 'dark';
+      }
+      if (untrusted.length) j.projects = j.projects || {};
+      for (const k of untrusted) {
+        j.projects[k] = { ...(j.projects[k] || {}), hasTrustDialogAccepted: true };
+      }
+      const tmp = `${p}.tmp-${process.pid}`;
+      fs.writeFileSync(tmp, JSON.stringify(j, null, 2) + '\n', { mode: 0o600 });
+      fs.renameSync(tmp, p);
+      for (const k of untrusted) seeded.add(k);
+      const lost = preseedMissing(readConfig() || {}, wantOnboarding, untrusted);
+      if (!lost.length) {
+        if (out) { out.keys = [...seeded]; out.attempts = attempt + 1; }
+        return true;
+      }
+      warn(`attempt ${attempt + 1}: ${lost.join(', ')} missing after the rename (another writer replaced the file)`);
+    } catch (e) {
+      warn(`attempt ${attempt + 1} failed: ${e.message}`);
+      return false;
     }
-    const wantOnboarding = !j.hasCompletedOnboarding;
-    const trustKeys = [];
-    if (typeof cwd === 'string' && cwd) trustKeys.push(cwd);
-    for (const d of Array.isArray(addDirs) ? addDirs : []) {
-      if (typeof d !== 'string' || !d) continue;
-      trustKeys.push(d);
-      let real = null;
-      try { real = fs.realpathSync(d); } catch {}
-      if (real && real !== d) trustKeys.push(real);
-    }
-    const untrusted = [...new Set(trustKeys)]
-      .filter((k) => ((j.projects || {})[k] || {}).hasTrustDialogAccepted !== true);
-    if (!wantOnboarding && !untrusted.length) return false;
-    if (wantOnboarding) {
-      j.hasCompletedOnboarding = true;
-      if (!j.theme) j.theme = 'dark';
-    }
-    if (untrusted.length) j.projects = j.projects || {};
-    for (const k of untrusted) {
-      j.projects[k] = { ...(j.projects[k] || {}), hasTrustDialogAccepted: true };
-    }
-    const tmp = `${p}.tmp-${process.pid}`;
-    fs.writeFileSync(tmp, JSON.stringify(j, null, 2) + '\n', { mode: 0o600 });
-    fs.renameSync(tmp, p);
-    return true;
-  } catch { return false; }
+  }
+  warn(`gave up after ${PRESEED_RETRY_MS.length + 1} attempts`);
+  return false;
 }
 function nearMissFormHint(text) {
   if (!/^\[agent:term[\s\]]/.test(String(text || ''))) return '';
@@ -961,6 +994,7 @@ function createSessionManager(deps) {
       this.sessions = new Map();
       this._launchId = randomUUID();
       this._freshBakeOnce = new Set();
+      this._bootTrustRespawned = new Set();
       this._spawnIdleClear = new Map();
       this._creating = new Set();
       this._clodentVersion = undefined;
@@ -1789,6 +1823,7 @@ function createSessionManager(deps) {
       let seatConfigDir = null;
       let museSid = null;
       let resumedTranscriptAt = null;
+      let bootTrust = null;
       let museData = null;
       let codexLink = null;
       let museSel = null;
@@ -2037,7 +2072,10 @@ function createSessionManager(deps) {
           ensureDir(MSG_DIR);
           if (!args.includes(MSG_DIR)) args.push('--add-dir', MSG_DIR);
           const seatMsgDir = seatPathFor(REGISTRY_DIR, name, 'messages');
-          if (ensureSeatLink({ root: REGISTRY_DIR, name, kind: 'messages', fs, log }) && !args.includes(seatMsgDir) && this._seatMessagesDirTrusted(name, workspaceId)) args.push('--add-dir', seatMsgDir);
+          if (ensureSeatLink({ root: REGISTRY_DIR, name, kind: 'messages', fs, log }) && !args.includes(seatMsgDir) && this._seatMessagesDirTrusted(name, workspaceId)) {
+            args.push('--add-dir', seatMsgDir);
+            bootTrust = { dirs: [seatMsgDir], configDir: null };
+          }
           if (plan.writeConfig) {
             writeMcpConfig(name, mcpSel.servers);
             warnings.push(...mcpSel.warnings);
@@ -2170,9 +2208,11 @@ function createSessionManager(deps) {
           ensureDir(runDirFor(REGISTRY_DIR, name));
           fs.writeFileSync(promptPath, clodentCatalog && clodentCatalog.instructions ? `${baked}\n\n${clodentCatalog.instructions}\n` : baked, { mode: 0o600 });
           args.push('--append-system-prompt-file', promptPath);
-          if (claudeCode && preseedClaudeOnboarding({ fs, path, homeDir: os.homedir(), configDir: mergedEnv.CLAUDE_CONFIG_DIR || null, cwd, addDirs: addDirArgs(args) })) {
-            this._shadowLog({ type: 'claude-onboarding-preseeded', agent: name });
+          const seedOut = {};
+          if (claudeCode && preseedClaudeOnboarding({ fs, path, homeDir: os.homedir(), configDir: mergedEnv.CLAUDE_CONFIG_DIR || null, cwd, addDirs: addDirArgs(args), log, out: seedOut })) {
+            this._shadowLog({ type: 'claude-onboarding-preseeded', agent: name, keys: seedOut.keys || [], attempts: seedOut.attempts || 0 });
           }
+          if (bootTrust) bootTrust = claudeCode ? { ...bootTrust, configDir: mergedEnv.CLAUDE_CONFIG_DIR || null } : null;
           if (resumeId && adapterFor(type).account.defaultDir) {
             try { resumedTranscriptAt = fs.statSync(this._claudeTranscriptPath(cwd || process.env.HOME || os.homedir(), accountDir, resumeId, type)).mtimeMs; } catch {}
           }
@@ -2466,6 +2506,7 @@ function createSessionManager(deps) {
       const session = {
         name, type, cwd, pty: ptyProc, transport, socketPath,
         io: streamIo ? 'stream' : 'pty',
+        _bootTrust: bootTrust,
         _assistant: !!(existingEntry && existingEntry.class === 'assistant'),
         _idleCleared: !!(existingEntry && existingEntry.lastClear && existingEntry.lastClear.pending),
         ...(streamIo ? {
@@ -5983,7 +6024,7 @@ function createSessionManager(deps) {
       }
       if (s && state !== 'idle') s.lastMainStop = null;
       if (s && state !== 'idle') s._awaitingTurnSince = null;
-      if (s && state !== 'idle' && s._bootScreenWatch) { s._bootScreenWatch = false; s._bootDialog = null; s._bootScreenText = null; }
+      if (s && state !== 'idle' && s._bootScreenWatch) { s._bootScreenWatch = false; s._bootDialog = null; s._bootScreenText = null; this._bootTrustRespawned.delete(name); }
       if (s && state !== 'idle' && s._parkedEscalations && s._parkedEscalations.size) this._releaseDrainedEscalations(s);
       // A turn confirms the spec write only if it is attributed to this ticket in the transcript;
       // otherwise the latch stays armed and its deadline redelivers.
@@ -6288,7 +6329,8 @@ function createSessionManager(deps) {
         if (session.needsAttention && session.needsAttention.source === 'screen') this._setAttention(session, null);
         return;
       }
-      if (!session._bootDialog) {
+      const first = !session._bootDialog;
+      if (first) {
         session._bootDialogTs = Date.now();
         log.warn('session', `${session.name}: ${bootDialogNote(dialog)} (${dialog.kind}) — holding every write until it is answered`);
       }
@@ -6296,11 +6338,80 @@ function createSessionManager(deps) {
       session._bootReadySeen = false;
       clearTimeout(session._bootDrainTimer);
       session._bootDrainTimer = null;
+      if (session._bootTrustRecovering) return;
+      if (first && this._recoverBootTrust(session, dialog)) {
+        this._noteBootDialogToLead(session, dialog, true);
+        return;
+      }
+      this._noteBootDialogToLead(session, dialog, false);
       if (session.needsAttention && session.needsAttention.kind === 'permission') return;
       this._setAttention(session, {
         kind: 'permission', source: 'screen', ts: session._bootDialogTs, path: dialog.path,
         message: `Claude Code boot dialog (${dialog.kind})${dialog.path ? `: ${dialog.path}` : ''} — answer it in the seat terminal`,
       });
+    }
+
+    _bootTrustDirFor(session, dialog) {
+      const trust = session._bootTrust;
+      if (!trust || !Array.isArray(trust.dirs) || !dialog || typeof dialog.path !== 'string' || !dialog.path) return null;
+      const canon = (p) => {
+        const abs = path.resolve(p.startsWith('~/') ? path.join(os.homedir(), p.slice(2)) : p);
+        let real = abs;
+        try { real = fs.realpathSync(abs); } catch {}
+        return [abs, real];
+      };
+      const seen = canon(dialog.path);
+      return trust.dirs.find((d) => canon(d).some((c) => seen.includes(c))) || null;
+    }
+
+    _recoverBootTrust(session, dialog) {
+      const name = session.name;
+      if (dialog.kind !== 'added-folder-trust' && dialog.kind !== 'folder-trust') return false;
+      if (session._turnStartedAt || !session._bootScreenWatch || session.io === 'stream') return false;
+      if (this._bootTrustRespawned.has(name)) return false;
+      const dir = this._bootTrustDirFor(session, dialog);
+      if (!dir) return false;
+      const { reason } = seatMessagesDirRefusal({ root: REGISTRY_DIR, name, fs });
+      if (reason) {
+        log.warn('session', `${name}: boot dialog for ${dir} not recovered — ${reason}`);
+        return false;
+      }
+      const entry = getPersistence().get(name);
+      if (!entry) return false;
+      const configDir = session._bootTrust.configDir || null;
+      const reseed = () => {
+        const out = {};
+        const ok = preseedClaudeOnboarding({ fs, path, homeDir: os.homedir(), configDir, cwd: session.cwd, addDirs: [dir], log, out });
+        this._shadowLog({ type: 'boot-trust-reseeded', agent: name, dir, ok, keys: out.keys || [], attempts: out.attempts || 0 });
+        log.warn('session', `${name}: re-seeded trust for ${dir} (${ok ? `${(out.keys || []).length} key(s) written` : 'nothing written'}); respawning once`);
+      };
+      this._bootTrustRespawned.add(name);
+      session._bootTrustRecovering = true;
+      if (!this._coldRespawn(name, entry, session, '', 'boot-trust', { onKilled: reseed })) {
+        session._bootTrustRecovering = false;
+        this._bootTrustRespawned.delete(name);
+        return false;
+      }
+      log.warn('session', `${name}: boot dialog (${dialog.kind}) for ${dir}, a directory Clodex added at this spawn — killing the CLI to re-seed and respawn once`);
+      return true;
+    }
+
+    _noteBootDialogToLead(session, dialog, recovered) {
+      try {
+        const sent = session._bootLeadNoticed || (session._bootLeadNoticed = new Set());
+        if (sent.has(dialog.kind)) return;
+        const team = typeof this._teamOfOrNull === 'function' ? this._teamOfOrNull(session) : null;
+        if (!team || !team.lead || team.lead === session.name) return;
+        sent.add(dialog.kind);
+        const head = `[team ${team.name}] seat ${session.name} is held at a boot dialog (${dialog.kind}): ${dialog.path || '(path not read)'}.`;
+        const body = recovered
+          ? `${head} Clodex added that directory at this spawn and its trust entry was lost: re-seeded and respawned once.`
+          : `${head} Only the operator can answer it; it is in their inbox.`;
+        const r = this._gatedDeliver(team.lead, 'clodex-team', body, false, `[boot-dialog ${session.name}]`);
+        if (r && r.error) log.warn('session', `boot dialog notice for ${session.name} to ${team.lead} failed: ${r.error}`);
+      } catch (e) {
+        this._shadowLog({ type: 'boot-dialog-notice-error', agent: session && session.name, error: e.message });
+      }
     }
 
     _armInjectValve(session) {

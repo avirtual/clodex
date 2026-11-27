@@ -39,6 +39,10 @@ const BOOT_DIALOGS = [
   { kind: 'added-folder-trust', option: 'Yes,addit', title: 'Addinganewdirectory:', body: "Thissessionhasn'tworkedherebefore", footer: 'Adding:' },
   { kind: 'folder-trust', option: 'Yes,Itrustthisfolder', title: 'Accessingworkspace:', body: 'Quicksafetycheck', footer: null },
 ];
+const VARIANT_OPTIONS = ['Yes,addit', 'Yes,movehere', 'Yes,trustitandapplythem', 'Yes,Itrustthisfolder'];
+const VARIANT_NO = ['No,exit', 'No,stayput', 'No,leaveitout', 'No,keepthemoff'];
+const VARIANT_TITLES = ['Nowinanewdirectory:', 'Addinganewdirectory:', 'Movingtoanewdirectory:', 'Accessingworkspace:'];
+const VARIANT_BODIES = ["Thissessionhasn'tworkedherebefore", 'Itssettingsdeclareprojectpermissionrules', 'Quicksafetycheck'];
 const BOOT_FRAME_MAX = 2000;
 const BOOT_TAIL_MAX = 600;
 const BOX_RULE_RE = /─{8}/;
@@ -73,8 +77,11 @@ function classifyBootScreen(text) {
     const at = s.lastIndexOf(d.option);
     if (at >= 0 && (!hit || at > hit.at)) hit = { d, at };
   }
-  if (!hit) return null;
-  const { d, at } = hit;
+  const known = hit && classifyKnown(s, hit);
+  return known || classifyVariant(s);
+}
+
+function classifyKnown(s, { d, at }) {
   const tail = s.slice(at + d.option.length);
   if (tail.length > BOOT_TAIL_MAX || BOX_RULE_RE.test(tail)) return null;
   const head = s.slice(Math.max(0, at - BOOT_FRAME_MAX), at);
@@ -84,6 +91,32 @@ function classifyBootScreen(text) {
   const framed = frame.includes(d.body) || frame.includes(d.title) || (!!d.footer && tail.includes(d.footer));
   if (!framed) return null;
   return { kind: d.kind, path: bootDialogPath(d, frame, tail) || null };
+}
+
+function lastOf(s, list) {
+  let best = null;
+  for (const w of list) {
+    const at = s.lastIndexOf(w);
+    if (at >= 0 && (!best || at > best.at)) best = { w, at };
+  }
+  return best;
+}
+
+function classifyVariant(s) {
+  const opt = lastOf(s, VARIANT_OPTIONS);
+  if (!opt) return null;
+  const tail = s.slice(opt.at + opt.w.length);
+  if (tail.length > BOOT_TAIL_MAX || BOX_RULE_RE.test(tail)) return null;
+  const head = s.slice(Math.max(0, opt.at - BOOT_FRAME_MAX), opt.at);
+  const no = lastOf(head, VARIANT_NO);
+  const noInTail = lastOf(tail, VARIANT_NO);
+  if (!no && !noInTail) return null;
+  const frame = no ? head.slice(0, no.at) : head;
+  const title = lastOf(frame, VARIANT_TITLES);
+  const body = lastOf(frame, VARIANT_BODIES);
+  if (!title && !body) return null;
+  const d = { title: title ? title.w : '\0', body: body ? body.w : '\0', footer: null };
+  return { kind: 'folder-trust-variant', path: bootDialogPath(d, frame, tail) || null };
 }
 
 function bootDialogNote(dialog) {
