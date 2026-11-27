@@ -433,7 +433,7 @@ no terminal tabs `no terminal on this host`. The `term_read` MCP tool
   no leading `-`), then answers `{run:'local'}`, `{run:'refused'}` or streams
   `{progress}` lines and ends with `{run:'remote', status, stdout, stderr,
   unknown, treeHash, note}` (plus `rerouted: {from, to}` after a reroute). The
-  runner comes from the deps' `pool` (`_handRunners`). The exec timeout kill and a channel disconnect each
+  runner comes from the deps' `pool` (`_handRunners`), called with the deps' `box` (`_handBox`), which the run also sends with the team's `shares`; a boxed reply adds `box: {isolation, imageId}`. The exec timeout kill and a channel disconnect each
   cancel the in-flight runner job once. A script with no channel (a shell, an
   older host) runs locally.
 - **`[agent:exec status] {}` is a reserved name, not a registered command.** It

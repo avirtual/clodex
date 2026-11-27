@@ -75,7 +75,7 @@ function stubClient({ hang = false, result = null } = {}) {
   };
 }
 
-function hostFor({ team = teamWith('all'), client = null, snapshot = stubSnap(), peers = { 'runner-1': 'p1' }, pool } = {}) {
+function hostFor({ team = teamWith('all'), client = null, snapshot = stubSnap(), peers = { 'runner-1': 'p1' }, pool, box } = {}) {
   const dir = fs.realpathSync(mkTmpRoot('suite-route-'));
   const sent = [];
   const notes = [];
@@ -89,7 +89,7 @@ function hostFor({ team = teamWith('all'), client = null, snapshot = stubSnap(),
     resolvePeer: (n) => (typeof peers[n] === 'string' ? { peer: peers[n], wire: 'push', name: n } : peers[n] || null),
     send: (m) => { sent.push(m); if (m.run) settle(m); },
     notifyLead: (b) => notes.push(b),
-    snapshot, pool,
+    snapshot, pool, ...(box ? { box } : {}),
   });
   return { host, sent, notes, dir, done };
 }
@@ -1016,4 +1016,150 @@ test('t2418: a failed clodex-run-tests delivers its long last stderr line past 2
   f.children[0].emit('close', 1, null);
   const err = f.broadcasts.filter((b) => b && b.type === 'exec' && String(b.body).startsWith('err: '));
   assert.deepStrictEqual(err.map((b) => b.body), [`err: exit 1: ${line}`]);
+});
+
+const HAND_BOX_TEXT = 'FROM node:24-bookworm\nRUN true\n';
+const HAND_BOX_HASH = require('../team-box').boxFingerprint(HAND_BOX_TEXT);
+const HAND_DEF = { definitionHash: HAND_BOX_HASH, rev: 1, definition: HAND_BOX_TEXT };
+const HAND_SHARES = [{ share: 'assets', version: 'v1' }];
+const BOX_READY = { state: 'ready', env: { isolation: 'container', box: { imageId: 'sha256:0123456789abcdef', definitionHash: HAND_BOX_HASH } } };
+const STAMPED = { platform: 'linux', arch: 'arm64', isolation: 'container', box: { imageId: 'sha256:0123456789abcdef', definitionHash: HAND_BOX_HASH, shares: [{ name: 'assets', version: 'v1' }] } };
+
+function boxRig(wire, { info = {}, jobEnv = STAMPED } = {}) {
+  const calls = [];
+  const bodies = [];
+  const conn = {
+    suiteAsk: async (method, p, body) => {
+      calls.push(`${method} ${p.split('?')[0]}`);
+      if (method === 'POST') bodies.push(body);
+      if (p.startsWith('/api/suite/info')) return { status: 200, body: { ok: true, limits: {}, env: { envKey: 'k' }, ...info } };
+      if (method === 'POST') return { status: 200, body: { ok: true, state: 'queued' } };
+      if (method === 'DELETE') return { status: 200, body: { ok: true } };
+      if (p.includes('/output?')) {
+        const text = p.includes('stream=stdout') ? 'TOTALS: 2 pass, 0 fail, 2 tests\n' : '';
+        return { status: 200, body: { ok: true, text, offset: 0, total: Buffer.byteLength(text) } };
+      }
+      const id = decodeURIComponent(/ids=([^&]+)/.exec(p)[1]);
+      return { status: 200, body: { ok: true, jobs: [{ id, state: 'done', treeHash: TREE, env: jobEnv, exit: { code: 0, signal: null }, reason: null, queueMs: 0, setupMs: 1, runMs: 2, out: {} }] } };
+    },
+  };
+  const ledgerFile = path.join(mkTmpRoot('suite-hand-box-'), 'suite-runs.jsonl');
+  const client = createSuiteClient({
+    getPeerManager: () => ({ get: (id) => (wire === 'push' && id === 'p1' ? conn : null) }),
+    getSuiteDesk: () => ({ conn: (o) => (wire === 'pull' && o === 'laptop' ? conn : null) }),
+    ledgerFile, now: () => 0, sleep: async () => {}, randomUUID: () => 'run-1', snapshot: stubSnap(),
+  });
+  const ends = () => fs.readFileSync(ledgerFile, 'utf8').trim().split('\n').map((l) => JSON.parse(l)).filter((x) => x.phase === 'end');
+  const host = (box, extra = {}) => (wire === 'push'
+    ? hostFor({ client, box, team: { ...teamWith('all'), testRunner: { peer: 'runner-1', hands: 'all', box: true, shares: HAND_SHARES, ...extra } } })
+    : hostFor({ client, box, team: PULL_TEAM({ box: true, shares: HAND_SHARES, ...extra }), peers: PULL_PEERS }));
+  return { client, calls, bodies, ends, host, runner: wire === 'push' ? 'runner-1' : 'laptop' };
+}
+
+test('t2419: a team without box:true sends its hand job with no isolation, box or shares, even with shares set', async () => {
+  const r = boxRig('push');
+  const f = hostFor({ client: r.client, box: () => false, team: { ...teamWith('all'), testRunner: { peer: 'runner-1', hands: 'all', shares: HAND_SHARES } } });
+  f.host.onMessage(ask(f.dir));
+  const m = await f.done;
+  assert.strictEqual(m.box, undefined);
+  assert.deepStrictEqual(r.bodies, [{
+    id: 'run-1', attempt: 1, repoKey: undefined, kind: 'hand', scope: 'full', team: 'tm', ticket: null, seat: 'hand-1',
+    snap: undefined, treeHash: TREE, indexTree: undefined, sha: HEAD, branch: undefined, trunk: undefined, refs: undefined, candidates: undefined,
+    files: [], flags: {}, env: {}, setup: null, timeoutMs: 1260000, full: false,
+  }]);
+});
+
+for (const wire of ['push', 'pull']) {
+  test(`t2419: a box:true team's hand run on a ${wire} runner sends the box definition and shares; the reply, ledger row and digest show the box`, async () => {
+    const r = boxRig(wire, { info: { box: BOX_READY, shares: [{ name: 'assets', version: 'v1' }] } });
+    const f = r.host(() => HAND_DEF);
+    f.host.onMessage(ask(f.dir));
+    const m = await f.done;
+    assert.strictEqual(m.unknown, null, 'ENTER: the boxed run concluded');
+    assert.deepStrictEqual(r.bodies.map((b) => [b.isolation, b.box, b.shares]), [['container', HAND_DEF, HAND_SHARES]]);
+    assert.deepStrictEqual(m.box, { isolation: 'container', imageId: 'sha256:0123456789abcdef' });
+    assert.deepStrictEqual(r.ends().map((x) => [x.kind, x.where, x.wire, x.outcome, x.env]), [['hand', r.runner, wire, 'pass', STAMPED]]);
+    const root = mkRoot({ status: m.status, stdout: m.stdout, stderr: m.stderr });
+    const d = await runWithHost(root, '{}', path.join(root, 'h'), () => [m]);
+    assert.match(d.digest, new RegExp(`^\\[[^\\]]+\\] 2/2 green \\(\\d+m \\d{2}s\\) \\(runner ${r.runner}\\) \\(box container, image 0123456789ab\\)$`));
+  });
+}
+
+const BOX_FAIL_ROWS = [
+  ['a runner with no box under box:true', () => true, { info: { box: { state: 'unavailable', why: 'no container daemon' } } }, 'runner has no box: no container daemon', 0],
+  ['a runner without the share', () => HAND_DEF, { info: { box: BOX_READY, shares: [{ name: 'assets', version: 'v0' }] } }, 'runner has no share assets@v1', 0],
+  ['a runner that ran it native', () => HAND_DEF, { info: { box: BOX_READY, shares: [{ name: 'assets', version: 'v1' }] }, jobEnv: { platform: 'linux', isolation: 'none' } }, 'box mismatch: asked container, runner ran none', 1],
+];
+
+for (const wire of ['push', 'pull']) {
+  for (const [name, box, rig, why, submits] of BOX_FAIL_ROWS) {
+    test(`t2419: ${name} (${wire}) reaches the hand's digest as result unknown naming the runner, never a test result`, async () => {
+      const r = boxRig(wire, rig);
+      const f = r.host(box);
+      f.host.onMessage(ask(f.dir));
+      const m = await f.done;
+      assert.deepStrictEqual(m, { run: 'remote', runner: r.runner, unknown: why });
+      assert.strictEqual(r.bodies.length, submits);
+      const root = mkRoot(CAPTURED.green);
+      const d = await runWithHost(root, '{}', path.join(root, 'h'), () => [m]);
+      assert.strictEqual(d.digest, `[${path.basename(root)}] result unknown — the suite did not complete on runner ${r.runner}: ${why}`);
+      assert.deepStrictEqual([d.code, d.ran], [1, null]);
+    });
+  }
+}
+
+function boxTeam(withDef, extra = {}) {
+  const dir = mkTmpRoot('suite-hand-box-team-');
+  if (withDef) require('../team-box').writeBox(dir, HAND_BOX_TEXT);
+  return { ...teamWith('all'), dir, root: fs.realpathSync(mkTmpRoot('suite-route-tree-')), testRunner: { peer: 'runner-1', hands: 'all', box: true, shares: HAND_SHARES, ...extra } };
+}
+
+test('t2419: a box:true team with a definition sends it from the exec, and the exec ceiling grows by the queue and build budgets', async (t) => {
+  const client = stubClient({ hang: true });
+  const team = boxTeam(true);
+  const f = execFixture(t, 'clodex-run-tests.js', { client, team });
+  await turns(2);
+  const child = f.children[0];
+  child.emit('message', ask(team.root));
+  await turns();
+  assert.strictEqual(client.runs.length, 1, 'ENTER: the job is in flight');
+  assert.deepStrictEqual([client.runs[0].box, client.runs[0].shares], [HAND_DEF, HAND_SHARES]);
+  mock.timers.tick(5000 + 19 * 60 * 1000 + 40 * 60 * 1000 - 1);
+  assert.deepStrictEqual(child.kills, []);
+  mock.timers.tick(1);
+  assert.deepStrictEqual(child.kills, ['SIGKILL']);
+});
+
+test('t2419: a box:true team with no definition sends box:true and keeps the plain hand ceiling', async (t) => {
+  const client = stubClient({ hang: true });
+  const team = boxTeam(false);
+  const f = execFixture(t, 'clodex-run-tests.js', { client, team });
+  await turns(2);
+  const child = f.children[0];
+  child.emit('message', ask(team.root));
+  await turns();
+  assert.strictEqual(client.runs.length, 1, 'ENTER: the job is in flight');
+  assert.deepStrictEqual([client.runs[0].box, client.runs[0].shares], [true, HAND_SHARES]);
+  mock.timers.tick(5000 + 19 * 60 * 1000);
+  assert.deepStrictEqual(child.kills, ['SIGKILL']);
+});
+
+test('t2419: on a pool a box:true hand run is picked onto the member that holds the box and the share, asked with the definition', async (t) => {
+  const asked = [];
+  const client = stubClient({ result: { unknown: null, res: { status: 0, signal: null, ...CAPTURED.green, treeHash: TREE } } });
+  const infos = {
+    pA: { limits: {}, env: {}, box: BOX_READY, shares: [{ name: 'assets', version: 'v0' }] },
+    pB: { limits: {}, env: {}, box: BOX_READY, shares: [{ name: 'assets', version: 'v1' }], queue: { running: 'j', queued: ['q'] } },
+  };
+  client.reachable = async (peer, wire, want) => { asked.push([peer, want]); return { ok: true, info: infos[peer] }; };
+  const team = { ...boxTeam(true, { peer: 'runner-a', pool: [{ peer: 'runner-b', wire: 'push' }] }) };
+  const peers = { 'runner-a': { id: 'pA', online: true, caps: ['suite'] }, 'runner-b': { id: 'pB', online: true, caps: ['suite'] } };
+  const f = execFixture(t, 'clodex-run-tests.js', { client, team, peers });
+  await turns(2);
+  f.children[0].emit('message', ask(team.root));
+  await turns(40);
+  assert.strictEqual(client.runs.length, 1, 'ENTER: the run was submitted');
+  const want = { definitionHash: HAND_BOX_HASH, rev: 1, definition: HAND_BOX_TEXT };
+  assert.deepStrictEqual(asked, [['pA', want], ['pB', want]]);
+  assert.deepStrictEqual([client.runs[0].peer, client.runs[0].name], ['pB', 'runner-b']);
 });

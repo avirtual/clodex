@@ -952,7 +952,7 @@ runner owner's assertion: Clodex does not hash the folder.
 
 `box` is a boolean and reads `false` when absent; any other value drops the
 setting. `box: true` asks the runner for a container box on `gate:shadow` runs
-(hand routing stays native): for a team with no box definition the lead reads
+and on routed hand runs, which send the same box value (`_handBox`) and `shares` as a gate run: for a team with no box definition the lead reads
 the runner's `info.box` first and, unless it is `ready`, ends the run `unknown: runner has no box: <why>` without
 submitting. The submit carries `isolation: 'container'`, and a done job whose
 stamp (`env.isolation === 'container'`) does not match the ask, either way,
@@ -972,7 +972,7 @@ shows the peer, the mode, and whether the runner is reachable, with its queue
 length and environment identity. `full` sends full-scope hand runs
 (`clodex-run-tests`) to the runner and keeps own-scope runs local; `all` sends
 both. The decision is `route()` in suite-client.js. On a pool, a routed run
-picks its member with the gate's pick (`_handRunners`, no box) among every
+picks its member with the gate's pick (`_handRunners`, with the team's box and shares under `box: true`) among every
 member, push or pull (a pull member that is not attached is not live), and goes
 through that member's wire (`_runnerVia`); it is picked again once when
 that member refuses or is unreachable before accepting, and is rerouted once,
@@ -1006,7 +1006,14 @@ counts from `running`, so a killed run comes back with its last output instead
 of being cancelled first. For a call that routes to the runner, the
 `clodex-run-tests` exec ceiling adds that slack plus 2 minutes
 (`handExecSlackMs`) and `runMs` minus 21 minutes; a call that runs here keeps
-the plain ceiling.
+the plain ceiling. A `box: true` team's routed hand run that sends a box
+definition may make the runner build the image, as a gate run does: the
+client's budgets restart once the build ends (the build itself is bounded by
+`BUILD_BUDGET_MS`), and the exec ceiling adds the 15-minute queue budget plus
+the 25-minute build budget. A box hand run that the runner cannot serve in the
+box (`runner has no box: …`, `runner has no share …`, `box mismatch: …`) prints
+`result unknown — …` naming the runner and is never run natively; a boxed
+result's digest appends `(box <isolation>, image <id12>)` after the runner.
 The home suite's kill timer does not change. A runner whose own
 `maxTimeoutMs` is lower refuses the job; that reads `runner refused the job:
 bad timeoutMs — the job asked for <n>ms, the runner's ceiling is <m>ms`, or

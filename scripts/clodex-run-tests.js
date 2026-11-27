@@ -486,9 +486,11 @@ function askHost() {
       emit(`[${LEAF}] ${TAG}result unknown — the suite did not complete on runner ${m.runner || '?'}: ${m.unknown || `unexpected reply ${JSON.stringify(m.run)}`}`, 1, UNKNOWN_DIGEST_MAX);
     }
     const via = m.rerouted && m.rerouted.from ? `(rerouted from ${m.rerouted.from} to ${m.rerouted.to})` : m.runner ? `(runner ${m.runner})` : null;
+    const box = m.box && typeof m.box === 'object'
+      ? `(box ${m.box.isolation || 'unstamped'}${m.box.imageId ? `, image ${String(m.box.imageId).replace(/^sha256:/, '').slice(0, 12)}` : ''})` : null;
     digest({
       status: m.status, signal: m.signal, stdout: m.stdout, stderr: m.stderr, error: null,
-    }, Date.now() - startedAt, [via, m.note].filter(Boolean).join(' ') || null);
+    }, Date.now() - startedAt, [via, box, m.note].filter(Boolean).join(' ') || null);
   });
   startedIso = nowIso();
   startedAt = Date.now();

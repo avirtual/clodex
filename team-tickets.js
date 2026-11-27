@@ -3259,9 +3259,14 @@ function createTicketMethods(deps, shared) {
       };
     },
 
-    async _handRunners(tr) {
-      const chosen = this._runnerMembers(tr).length > 1 ? await this._pickGateRunner(tr, false) : null;
-      return { chosen: chosen ? chosen.peer : null, repick: chosen ? this._runnerRepick(tr, false) : null, reroute: this._runnerReroute(tr, false) };
+    _handBox(team) {
+      const tr = team && team.testRunner;
+      return tr && tr.box === true ? this._shadowBox(team) : false;
+    },
+
+    async _handRunners(tr, box = false) {
+      const chosen = this._runnerMembers(tr).length > 1 ? await this._pickGateRunner(tr, box) : null;
+      return { chosen: chosen ? chosen.peer : null, repick: chosen ? this._runnerRepick(tr, box) : null, reroute: this._runnerReroute(tr, box) };
     },
 
     _runnerInvalid(team) {
