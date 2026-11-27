@@ -14,6 +14,8 @@ blocks a release.
 ## Unreleased
 
 - Browser pane: a download that is refused or lost is reported instead of vanishing, a download that finishes after the action's reply is announced to the agent that started it, and `--to` on a click says it is armed.
+- Browser pane: buttons that share a label are listed with the row they belong to; the prompt names the batched browser tool for bulk work; the docs show quoted flag values.
+- clodexctl: `version` prints the client version even when the node cannot be reached.
 
 ## 5.204.0 — 2026-11-27
 

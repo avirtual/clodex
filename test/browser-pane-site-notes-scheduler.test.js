@@ -31,7 +31,7 @@ function harness() {
     request(op, args) {
       return Promise.resolve().then(() => {
         if (op === 'open') { page.url = args.url; return { status: 200, url: args.url, title: 'eToro', idle: { ok: true, ms: 1000 }, login: {} }; }
-        if (op === 'read') return { url: page.url, title: 'eToro', doc: 1, contentType: 'text/html', text: 'Portfolio', elements: page.elements, truncated: false, frames: [], login: {} };
+        if (op === 'read') return { url: page.url, title: 'eToro', doc: 1, contentType: 'text/html', text: 'Portfolio', elements: page.elements, ...(page.bare ? { bare: page.bare } : {}), truncated: false, frames: [], login: {} };
         if (op === 'click') { page.url = page.next || page.url; return { kind: 'link', label: 'x', navigated: true, url: page.url, title: 'eToro', idle: { ok: true, ms: 900 } }; }
         throw new Error(`unexpected op ${op}`);
       });
@@ -66,6 +66,18 @@ test('note: [n] is rewritten to the label from the seat\'s read of the same page
   assert.strictEqual(note.text, 'type into "Enter destination" (combobox) first');
   assert.strictEqual(note.seat, 'hand-a');
   assert.ok(!r.includes(' — as '), r);
+});
+
+test('note: a duplicate label resolves to its line without the row context, so a row title never reaches the shared note', async () => {
+  const h = harness();
+  h.page.elements = ['[1] button More actions — Contract Smith', '[2] button More actions — Invoice 2026-08.pdf', '[3] button Upload'];
+  h.page.bare = { 1: '[1] button More actions', 2: '[2] button More actions' };
+  await h.run(`[agent:browser open etoro] ${PORTFOLIO}`);
+  await h.run('[agent:browser read etoro]');
+  await h.run('[agent:browser note etoro] @/portfolio path: [1] then [3]');
+  const note = h.notes.load(ORIGIN).notes[0];
+  assert.strictEqual(note.text, '"More actions" (button) then "Upload" (button)');
+  assert.ok(!note.text.includes('Contract Smith'), note.text);
 });
 
 test('note: a note from a subagent handle is stamped with its from label, and --list shows it', async () => {

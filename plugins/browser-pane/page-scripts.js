@@ -634,7 +634,7 @@ const numbering = (state) => {
     }
     return h ? h.innerText || h.textContent || '' : '';
   };
-  const dupContexts = els => {
+  const dupContexts = (els, raw = false) => {
     const blockText = new Map();
     const under = new Map();
     for (const el of els) for (let a = el.parentElement; a; a = a.parentElement) under.set(a, (under.get(a) || 0) + 1);
@@ -644,7 +644,7 @@ const numbering = (state) => {
       if (block && block !== document.body && block !== document.documentElement) {
         if (!blockText.has(block)) {
           const t = flat(block.innerText || block.textContent || '').slice(0, CONTEXT_MAX * 4);
-          blockText.set(block, counterMask(t).replace(${HMS_RE}, '#:##:##'));
+          blockText.set(block, raw ? t : counterMask(t).replace(${HMS_RE}, '#:##:##'));
         }
         if (blockText.get(block)) return blockText.get(block);
       }
@@ -865,7 +865,7 @@ function collect(main) {
     const flags = (disabled ? ' [disabled]' : '') + (sorted === 'ascending' ? ' [sorted ↑]' : sorted === 'descending' ? ' [sorted ↓]' : '')
       + (/^(page|true)$/i.test(el.getAttribute('aria-current') || '') ? ' [current]' : '') + (unread ? ' [unread]' : '');
     const cq = cqOf(el);
-    items.push({ el, full, cq, line: [kind, cq ? '⚠' : '', line].filter(Boolean).join(' ') + flags, sig: sig == null ? null : kind + ' ' + sig + flags });
+    items.push({ el, full, cq, line: [kind, cq ? '⚠' : '', line].filter(Boolean).join(' ') + flags, sig: sig == null ? null : kind + ' ' + sig + flags, flags });
   }
 `;
 }
@@ -884,8 +884,32 @@ function readInteractive(main, state) {
     it.line = it.line.replace(clip(it.full, 60), () => tails[i]);
     if (it.sig != null) it.sig = it.sig.replace(clip(it.full, 60), () => tails[i]);
   });
+  const sameLine = new Map();
+  items.forEach((it, i) => {
+    if (it.line == null) return;
+    if (!sameLine.has(it.line)) sameLine.set(it.line, []);
+    sameLine.get(it.line).push(i);
+  });
+  for (const idx of sameLine.values()) {
+    if (idx.length < 2) continue;
+    const ctx = dupContexts(idx.map(i => items[i].el), true).map((c, j) => {
+      const full = items[idx[j]].full;
+      const t = flat(c);
+      const at = full ? t.lastIndexOf(full) : -1;
+      return clip(at < 0 ? t : t.slice(0, at) + ' ' + t.slice(at + full.length), 60);
+    });
+    if (new Set(ctx).size < 2) continue;
+    idx.forEach((i, j) => {
+      const it = items[i];
+      if (!ctx[j]) return;
+      if (it.sig == null) it.sig = it.line;
+      it.bare = it.line;
+      it.line = it.line.slice(0, it.line.length - it.flags.length) + ' — ' + ctx[j] + it.flags;
+    });
+  }
   const parts = items.map(i => partsOf(i.el));
   const stored = storedKeysOf(items.map(i => i.el), parts.map(keyOf));
+  const bare = {};
   const out = []; const keys = {}; const descs = []; const sigs = {}; const chrome = []; const covered = []; const dialog = []; const rowsOut = {}; const cats = {}; const adKeys = {};${ROW}
   items.forEach((it, i) => {
     const n = place(it.el, stored[i], it.line != null);
@@ -894,6 +918,7 @@ function readInteractive(main, state) {
     if (p.raw.includes('?')) descs.push({ kind: p.kind, label: p.label, href: p.raw });
     if (it.line != null) {
       out.push('[' + n + '] ' + it.line);
+      if (it.bare != null) bare[n] = '[' + n + '] ' + it.bare;
       if (it.cq) cats[n] = it.cq;
       if (it.cq === 'ad') { const k = adKeyOf(it.el); if (k != null) adKeys[n] = k; }
       rowsOut[n] = rowOf(it.el);
@@ -903,7 +928,7 @@ function readInteractive(main, state) {
       if (cover && within(cover, it.el)) dialog.push(n);
     }
   });
-  return { lines: out, truncated, assigned, next, fresh, keys, descs, sigs, rows: rowsOut, chrome, covered, cats, adKeys, dialog, posts: [...(${main ? 'mainRootOf() || document' : 'document'}).querySelectorAll('article')].filter(a => !(a.parentElement && a.parentElement.closest('article'))).length, cloaked: [...(${main ? 'mainRootOf() || document' : 'document'}).querySelectorAll('article, [data-post-number], [id^=post_], .post-stream--cloaked')].filter(a => !(a.parentElement && a.parentElement.closest('article, [data-post-number]')) && (a.innerText || '').trim().length < 40 && a.getBoundingClientRect().height >= 200).length, url: location.href };
+  return { lines: out, bare, truncated, assigned, next, fresh, keys, descs, sigs, rows: rowsOut, chrome, covered, cats, adKeys, dialog, posts: [...(${main ? 'mainRootOf() || document' : 'document'}).querySelectorAll('article')].filter(a => !(a.parentElement && a.parentElement.closest('article'))).length, cloaked: [...(${main ? 'mainRootOf() || document' : 'document'}).querySelectorAll('article, [data-post-number], [id^=post_], .post-stream--cloaked')].filter(a => !(a.parentElement && a.parentElement.closest('article, [data-post-number]')) && (a.innerText || '').trim().length < 40 && a.getBoundingClientRect().height >= 200).length, url: location.href };
 })()`;
 }
 

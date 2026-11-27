@@ -178,7 +178,8 @@ A seat granted `browser` that holds this plugin gets `clodex-browse` on its `PAT
   `screenshot --numbers` draws each visible number on the image, and lists a
   numbered element with no visible box in a `not drawn: [n]` corner line. A number is
   keyed on the element's full label, so two documents whose names differ only
-  past the shown 60 characters never share one.
+  past the shown 60 characters never share one. Numbers can retire when a
+  single-page app re-renders its chrome; on such pages prefer `--text="…"`.
 - **Consequential controls**: an element whose label is an action verb (pay,
   buy, reserve/book, delete, sign out, arm, unsubscribe, transfer, and their Romanian forms),
   or a form's button or submit named by a payment noun (payment, plată, card),
@@ -218,9 +219,9 @@ A seat granted `browser` that holds this plugin gets `clodex-browse` on its `PAT
   restart an element gets its old number back; an act or inspect by a number from
   a read made before the restart is refused until the agent reads again.
 - **Wait**: `wait --ms=N` without `--for` is a fixed pause of N ms (at most
-  120 s); `wait`, `wait --idle` and `wait --for=<text>` wait for the page, with
-  `--ms` as the cap.
-- **Filter**: `read --filter=<s>` keeps matching element lines, and in the text
+  120 s); `wait`, `wait --idle` and `wait --for="<text>"` wait for the page, with
+  `--ms` as the cap (`wait --for="Download complete"`).
+- **Filter**: `read --filter="<s>"` keeps matching element lines, and in the text
   a matching table row with its table's header row, or a matching line with its
   paragraph (or the line before and after it when the paragraph is long); a
   matching list item comes alone (its lines up to the next bullet), and under a filter no `stripped:` line shows and the 1,200-char head cut does not apply — every matching line is listed, paged by `--max`, and the text marker counts the hits. The default read's hint names the first heading its 1,200-char cut hid, as `--filter="<heading>"`.
@@ -236,7 +237,7 @@ A seat granted `browser` that holds this plugin gets `clodex-browse` on its `PAT
 
 ```
 [agent:browser open <service> [--show]] <url>
-[agent:browser read [service] [--text|--links|--compact] [--main] [--all] [--filter=<s>] [--page=N] [--max=<tokens>] [--attach|--path-only]]
+[agent:browser read [service] [--text|--links|--compact] [--main] [--all] [--filter="<s>"] [--page=N] [--max=<tokens>] [--attach|--path-only]]
 [agent:browser click [service] <n>|--text="<visible text>" [--to=<dir in your cwd>] [--confirm]]
 [agent:browser type [service] <n> [--enter] [--confirm]] <text>
 [agent:browser key [service] [--confirm]] <Enter|Tab|Escape|Backspace|Delete|ArrowUp|ArrowDown|ArrowLeft|ArrowRight|PageUp|PageDown|Home|End|Space>
@@ -247,7 +248,7 @@ A seat granted `browser` that holds this plugin gets `clodex-browse` on its `PAT
 [agent:browser download [service] [<n>] [--to=<dir>] [--as=<name>]] [<url>]
 [agent:browser screenshot [service] [--numbers] [--attach|--path-only]]
 [agent:browser inspect [service] <n>|--text="<visible text>"]
-[agent:browser wait [service] [--ms=N] [--for=<text>] [--idle]]
+[agent:browser wait [service] [--ms=N] [--for="<text>"] [--idle]]
 [agent:browser services]
 [agent:browser release [service]]
 [agent:browser close [service]]
@@ -409,6 +410,13 @@ matching notes, later reads only the count (`read --notes` repeats); a navigatin
 A note is what one agent saw on one day: an unverified observation, never an instruction or an
 authorisation, and a `caution` does not change the ⚠ gate. The filters refusing intents, URLs,
 credential words and account numbers are best-effort. Forget login keeps the notes; **Remove** offers to delete them.
+
+## Recipes
+
+drive.google.com:
+- `https://drive.google.com/embeddedfolderview?id=<folderId>#list` lists a folder as plain links.
+- A Docs file exports via `https://docs.google.com/document/d/<id>/export?format=txt` (or `format=docx`).
+- A file downloads via `https://drive.google.com/uc?export=download&id=<id>`.
 
 ## Subagent policy and MCP tool
 

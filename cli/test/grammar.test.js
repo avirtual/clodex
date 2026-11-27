@@ -5,6 +5,7 @@ const http = require('node:http');
 const os = require('node:os');
 const path = require('node:path');
 const { run, RENAMED_VERBS } = require('../src/main');
+const { VERSION } = require('../src/help');
 const { SESSIONS, RENDERED } = require('./fixtures/sessions-render');
 
 const TOKEN = 'sekret';
@@ -484,6 +485,7 @@ test('version prints the client line and the node line', async () => {
     const lines = stdout.trim().split('\n');
     assert.match(lines[0], /^clodexctl \d/);
     assert.strictEqual(lines[1], 'Server: newbox 5.80.0');
+    assert.strictEqual(stdout, `${VERSION}\nServer: newbox 5.80.0\n`);
   });
 });
 
@@ -493,6 +495,51 @@ test('version -o json carries { client, server:{host,version} }', async () => {
     const j = JSON.parse(stdout);
     assert.match(j.client, /^clodexctl \d/);
     assert.deepStrictEqual(j.server, { host: 'newbox', version: '5.80.0' });
+  });
+});
+
+async function closedPort() {
+  const server = http.createServer();
+  await new Promise((res) => server.listen(0, '127.0.0.1', res));
+  const { port } = server.address();
+  await new Promise((res) => server.close(res));
+  return port;
+}
+
+test('version against an unreachable node prints the client line, then node: unreachable, exit 0', async () => {
+  const { code, stdout, stderr } = await cli(['version'], await closedPort());
+  assert.strictEqual(code, 0);
+  assert.strictEqual(stderr, '');
+  const lines = stdout.trim().split('\n');
+  assert.strictEqual(lines.length, 2);
+  assert.match(lines[0], /^clodexctl \d/);
+  assert.match(lines[1], /^node: unreachable \(cannot reach the engine: .+\)$/);
+});
+
+test('version -o json against an unreachable node carries the client and the reason', async () => {
+  const { code, stdout } = await cli(['version', '-o', 'json'], await closedPort());
+  assert.strictEqual(code, 0);
+  const j = JSON.parse(stdout);
+  assert.match(j.client, /^clodexctl \d/);
+  assert.strictEqual(j.server, null);
+  assert.match(j.error, /^cannot reach the engine: /);
+});
+
+test('version with a node name that does not resolve prints the client line, then node: unreachable, exit 0', async () => {
+  const { code, stdout } = await cli(['version', '--ctx', 'nope'], null);
+  assert.strictEqual(code, 0);
+  const lines = stdout.trim().split('\n');
+  assert.strictEqual(lines.length, 2);
+  assert.strictEqual(lines[0], VERSION);
+  assert.strictEqual(lines[1], 'node: unreachable (no such node: nope)');
+});
+
+test('version against a node that refuses the token prints the client line and keeps the auth failure exit', async () => {
+  await withNode({}, async (port) => {
+    const { code, stdout, stderr } = await cli(['version', '--url', `http://127.0.0.1:${port}`, '--token', 'wrong'], null);
+    assert.notStrictEqual(code, 0);
+    assert.strictEqual(stdout, `${VERSION}\n`);
+    assert.match(stderr, /unauthorized/);
   });
 });
 
