@@ -53,7 +53,7 @@
 | `sanitizeSandboxPorts` | an array of container, host, proto, allInterfaces, label rows; a row without a valid container port is dropped | none | none | unpinned |
 | `sanitizeSandboxLimits` | a cpus, memory, pids, shmSize object, each null unless well-typed | none | none | unpinned |
 | `sanitizeBoxes` | the persisted boxes list, deduped by id with malformed and reserved ids dropped; null only for non-array input | none (reads BOX_ID_RE, RESERVED_BOX_IDS) | sanitizeSandbox | unpinned |
-| `sanitizeRebootNotice` | the pending reboot notice normalised to name, at, reason, attempts, or null without a name | none | none | unpinned |
+| `sanitizeRebootNotice` | the pending reboot notice normalised to name, at, reason, attempts and a string launch when present, or null without a name | none | none | stores.test.js |
 | `sanitizeTerminalReports` | the tri-state terminalReports from the current key, the legacy boolean, or neither (absent resolves to off) | none | none | unpinned |
 | `sanitizeSpeakRate` | an integer words-per-minute rate in 80..400, else the shipped 210 | none | none | spoken-replies.test.js |
 
@@ -66,6 +66,7 @@
 - A box-config sub-key that `sanitizeSandbox` does not rebuild vanishes on every round-trip, as mounts once did.
 - BOX_ID_RE and RESERVED_BOX_IDS mirror sandbox.js by hand, so changing one side lets `sanitizeBoxes` persist a colliding or shadowing box id.
 - Dropping attempts from `sanitizeRebootNotice` turns the bounded reboot-notice retry into an unbounded one.
+- Dropping launch from `sanitizeRebootNotice` makes every notice look legacy, so the requesting launch delivers its own reboot notice.
 - The 80 and 400 bounds in `sanitizeSpeakRate` duplicate speaker.js on purpose; changing one side owes the other.
 
 ## Shared primitives: the factory and the unreadable-file refusal — initStores … refuseUnreadable
