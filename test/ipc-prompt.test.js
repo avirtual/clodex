@@ -606,7 +606,7 @@ test('t1407: the team rows sit after team-create and before plugin rows, where t
   const first = lines.findIndex((l) => l.startsWith('  [agent:team role-add '));
   const last = lines.findIndex((l) => l.startsWith('  [agent:team runner '));
   assert.ok(lines[first - 1].startsWith('  [agent:team create <name> root:<abs-path>'), 'team-create is directly above');
-  assert.strictEqual(last - first, 10, 'the eleven rows are contiguous');
+  assert.strictEqual(last - first, 11, 'the twelve rows are contiguous');
   assert.strictEqual(lines[last + 1], plugin, 'the plugin row is directly below');
   const plain = leadPrompt(null).split('\n');
   const at = plain.findIndex((l) => l.startsWith('  [agent:team role-add '));
