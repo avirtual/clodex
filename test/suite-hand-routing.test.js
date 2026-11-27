@@ -704,7 +704,7 @@ test('t2414: on a pool whose first member is offline and whose pull member is de
   assert.deepStrictEqual([reply.run, reply.runner, reply.unknown], ['remote', 'runner-b', null]);
   const root = mkRoot(CAPTURED.green);
   const d = await runWithHost(root, '{}', path.join(root, 'h'), () => [reply]);
-  assert.match(d.digest, /^\[[^\]]+\] 3\/3 green \(\d+m \d{2}s\) \(runner runner-b\)$/);
+  assert.match(d.digest, /^\[[^\]]+\] 3\/3 green \(\d+m \d{2}s\) \(runner runner-b\) \(pool: skipped runner-a: not connected, laptop: not connected\)$/);
 });
 
 test('t2414: a hand run whose runner is lost after accept is rerouted once; the reply, the digest and the ledger row name both runners', async () => {
@@ -1286,3 +1286,19 @@ for (const [name, extra] of [
     assert.strictEqual(client.runs.length, 0);
   });
 }
+
+const SKIPPED_B = { chosen: 'runner-a', skipped: [{ member: 'runner-b', reason: 'no answer' }] };
+
+test('t2439: a hand run whose pick skipped a member ends its digest with the pool note, green or unknown', async () => {
+  const r = poolRig({ pA: {} });
+  const f = hostFor({ client: r.client, team: POOL_TEAM(), peers: POOL_PEERS, pool: async () => ({ chosen: 'runner-a', repick: null, reroute: null, pick: SKIPPED_B }) });
+  f.host.onMessage(ask(f.dir));
+  const m = await f.done;
+  assert.deepStrictEqual([m.runner, m.unknown, m.note], ['runner-a', null, '(pool: skipped runner-b: no answer)']);
+  assert.deepStrictEqual(r.ends().map((x) => x.pick), [SKIPPED_B]);
+  const root = mkRoot({ status: m.status, stdout: m.stdout, stderr: m.stderr });
+  const d = await runWithHost(root, '{}', path.join(root, 'h'), () => [m]);
+  assert.match(d.digest, /^\[[^\]]+\] 4\/4 green \(\d+m \d{2}s\) \(runner runner-a\) \(pool: skipped runner-b: no answer\)$/);
+  const u = await runWithHost(root, '{}', path.join(root, 'h2'), () => [{ run: 'remote', runner: 'runner-a', unknown: 'runner unreachable', note: '(pool: skipped runner-b: no answer)' }]);
+  assert.strictEqual(u.digest.endsWith('runner unreachable (pool: skipped runner-b: no answer)'), true, u.digest);
+});

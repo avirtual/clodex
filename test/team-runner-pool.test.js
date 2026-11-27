@@ -186,9 +186,9 @@ test('t2362: runner rm drops a pool row, promotes the next on rm of the first ke
   });
   assert.deepStrictEqual(await f.verb('[agent:team runner rm runner-9]'), ['[agent:team] error: runner-9 is not a test runner of team']);
   assert.deepStrictEqual(await f.verb('[agent:team runner rm runner-1]'),
-    ['[agent:team] test runner runner-1 removed from team; laptop is now the first runner, wire pull, hands full — 2 left']);
+    ['[agent:team] test runner runner-1 removed from team; laptop is now the first runner, wire pull, hands full — 2 left; stopped 0 jobs bound to it']);
   assert.deepStrictEqual(disk(f.file).testRunner, { peer: 'laptop', hands: 'full', wire: 'pull', pool: [{ peer: 'runner-2', wire: 'push' }] });
-  assert.deepStrictEqual(await f.verb('[agent:team runner rm runner-2]'), ['[agent:team] test runner runner-2 removed from team — 1 left']);
+  assert.deepStrictEqual(await f.verb('[agent:team runner rm runner-2]'), ['[agent:team] test runner runner-2 removed from team — 1 left; stopped 0 jobs bound to it']);
   assert.deepStrictEqual(disk(f.file).testRunner, { peer: 'laptop', hands: 'full', wire: 'pull' });
   const before = fs.readFileSync(f.file, 'utf8');
   assert.deepStrictEqual(await f.verb('[agent:team runner rm laptop]'),
@@ -222,7 +222,7 @@ test('t2362: bare [agent:team runner] on a pool prints one line per member with 
     peers: [R1, R2], desk: ATTACHED, client,
   });
   assert.deepStrictEqual(await f.verb('[agent:team runner]'), [[
-    '[agent:team] test runner of team: 3 runners, hands full (hand runs use runner-1 only), gate on, run 21 min (default), queue 15 min hands, 20 min gate (default)',
+    '[agent:team] test runner of team: 3 runners, hands full (hand runs use the pool), gate on, run 21 min (default), queue 15 min hands, 20 min gate (default)',
     'runner-1, wire push — reachable, suite capability, queue 2, env box linux/arm64 node v22 key k, slots 1/2 in use',
     'laptop, wire pull — attached, queue 0, env box linux/arm64 node v22 key k, slots 0/1 in use',
     'runner-2, wire push — online with the suite capability, but its info route failed: status 0',
@@ -889,10 +889,14 @@ const RA = { id: 'pA', label: 'runner-1', online: true, caps: ['peer', 'suite'] 
 const RB = { id: 'pB', label: 'runner-2', online: true, caps: ['peer', 'suite'] };
 const POOL_ON = { peer: 'runner-1', hands: 'off', gate: 'on', pool: [{ peer: 'runner-2' }] };
 
-function poolDecide(script) {
+function poolDecide(script, { busy = [] } = {}) {
   const r = lostRig(Object.fromEntries(Object.entries(script).map(([k, v]) => [k, { hash: BOX_HASH, ...v }])));
   const runs = [];
-  const client = { ...r.client, run: (o) => { const p = r.client.run(o); runs.push(p); return p; } };
+  const reachable = async (peer, ...rest) => {
+    const got = await r.client.reachable(peer, ...rest);
+    return busy.includes(peer) && got.ok ? { ...got, info: { ...got.info, slots: { total: 1, inUse: 1 } } } : got;
+  };
+  const client = { ...r.client, reachable, run: (o) => { const p = r.client.run(o); runs.push(p); return p; } };
   const f = mkFixture({ manifestExtra: { testRunner: POOL_ON }, peers: [RA, RB], client, extraDeps: { boxDecideTimers: { setTimeout: () => 1, clearTimeout: () => {} } } });
   const team = f.tm.loadManifest('team');
   require('../team-box').writeBox(team.dir, BOX_TEXT);
@@ -916,7 +920,7 @@ test('t2412: a flight stop between the old cancel and the new submit prevents th
 });
 
 test('t2412: two tickets losing the same runner each reroute on their own and neither picks the lost member', async () => {
-  const rig = poolDecide({ pA: { poll: () => DOWN }, pB: { poll: BOX_DONE } });
+  const rig = poolDecide({ pA: { poll: () => DOWN }, pB: { poll: BOX_DONE } }, { busy: ['pB'] });
   const [one, two] = await Promise.all([
     rig.f.m._boxDecide(rig.team, { id: 't1' }, '/w', {}),
     rig.f.m._boxDecide(rig.team, { id: 't2' }, '/w', {}),
@@ -960,3 +964,177 @@ for (const [name, extra, wantTimeout, wantBudget] of RUN_LIMIT_ROWS) {
     assert.deepStrictEqual(guards, [wantBudget + 2 * 60 * 1000 + 5 * 60 * 1000 + 25 * 60 * 1000]);
   });
 }
+
+const { createChannelHost, pickLine, poolNote } = require('../suite-client');
+const { baseRunnerLoad, basePickRunner } = require('./lib/base-suite-pick');
+
+const POOL_OF_TWO = { testRunner: { peer: 'runner-1', hands: 'all', pool: [{ peer: 'runner-2' }] } };
+const IDLE_ONE = (extra = {}) => ({ ok: true, limits: {}, env: { envKey: 'k' }, slots: { total: 1, inUse: 0 }, queue: { running: null, queued: [] }, ...extra });
+const QUIET_LOG = (lines) => ({ info: (tag, m) => lines.push([tag, m]), warn: () => {}, error: () => {}, debug: () => {} });
+
+function infoConn(info, calls = []) {
+  return { suiteAsk: async (method, p) => { calls.push(`${method} ${p.split('?')[0]}`); return { status: 200, body: info() }; } };
+}
+
+function pickRig(conns, extra = {}) {
+  const lines = [];
+  let n = 0;
+  const ledgerFile = path.join(mkTmpRoot('clodex-pool-pick-'), 'suite-runs.jsonl');
+  const client = createSuiteClient({
+    getPeerManager: () => ({ get: (id) => conns[id] || null }), ledgerFile, now: () => 1000, sleep: async () => {},
+    randomUUID: () => `job${(n += 1)}-0000-0000`, snapshot: { snapshotTree: async () => ({ treeHash: TREE, head: 'b'.repeat(40), headTree: TREE }), releaseSnapshot: () => {} },
+  });
+  const f = mkFixture({ manifestExtra: POOL_OF_TWO, peers: [R1, R2], client, extraDeps: { log: QUIET_LOG(lines), ...extra } });
+  const ends = () => (fs.existsSync(ledgerFile) ? fs.readFileSync(ledgerFile, 'utf8').trim().split('\n').map((l) => JSON.parse(l)).filter((r) => r.phase === 'end') : []);
+  return { f, client, lines, ends, tr: () => f.tm.loadManifest('team').testRunner };
+}
+
+test('t2439: three hand picks in one tick against two idle single-slot members whose info never changes go runner-1, runner-2, runner-1', async () => {
+  const r = pickRig({ p1: infoConn(() => IDLE_ONE()), p2: infoConn(() => IDLE_ONE()) });
+  const tr = r.tr();
+  const picks = await Promise.all([r.f.m._handRunners(tr), r.f.m._handRunners(tr), r.f.m._handRunners(tr)]);
+  assert.deepStrictEqual(picks.map((p) => p.chosen), ['runner-1', 'runner-2', 'runner-1']);
+});
+
+test('t2439: an old runner that sends no pending still spreads: a job submitted to runner-1 and not in its queue counts there', async () => {
+  let release;
+  const held = new Promise((res) => { release = res; });
+  const calls = [];
+  const conns = {
+    p1: { suiteAsk: async (method, p) => {
+      calls.push(`${method} ${p.split('?')[0]}`);
+      if (p.startsWith('/api/suite/info')) return { status: 200, body: IDLE_ONE() };
+      if (method === 'POST') return { status: 200, body: { ok: true, state: 'queued' } };
+      await held;
+      return { status: 200, body: { ok: true, jobs: [{ id: 'job1-0000-0000', state: 'done', treeHash: TREE, exit: { code: 0, signal: null }, reason: null, queueMs: 1, setupMs: 1, runMs: 1, out: {} }] } };
+    } },
+    p2: infoConn(() => IDLE_ONE()),
+  };
+  const r = pickRig(conns);
+  const first = await r.f.m._handRunners(r.tr());
+  assert.deepStrictEqual([first.chosen, first.runId], ['runner-1', 'job1-0000-0000']);
+  const run = r.client.run({ peer: 'p1', name: 'runner-1', runId: first.runId, tree: '/w', kind: 'hand', team: 'team', budgetMs: 60000 });
+  for (let i = 0; i < 50 && !calls.includes('POST /api/suite/jobs'); i += 1) await new Promise((res) => setImmediate(res));
+  assert.ok(calls.includes('POST /api/suite/jobs'), 'ENTER: the first job was accepted by runner-1');
+  assert.strictEqual(r.client.sentTo('runner-1', IDLE_ONE()), 1);
+  const second = await r.f.m._handRunners(r.tr());
+  assert.strictEqual(second.chosen, 'runner-2');
+  release();
+  await run;
+});
+
+test('t2439: a sent job is counted once — not again when info lists it queued, or when the runner counts it in pending', async () => {
+  let release;
+  const held = new Promise((res) => { release = res; });
+  const conn = { suiteAsk: async (method, p) => {
+    if (p.startsWith('/api/suite/info')) return { status: 200, body: IDLE_ONE() };
+    if (method === 'POST') return { status: 200, body: { ok: true, state: 'queued' } };
+    await held;
+    return { status: 200, body: { ok: true, jobs: [{ id: 'job1-0000-0000', state: 'done', treeHash: TREE, exit: { code: 0, signal: null }, reason: null, queueMs: 1, setupMs: 1, runMs: 1, out: {} }] } };
+  } };
+  const r = pickRig({ p1: conn });
+  const id = r.client.claim('runner-1');
+  assert.strictEqual(r.client.sentTo('runner-1', IDLE_ONE({ pending: 0 })), 1, 'a claim the runner has not seen counts even beside pending');
+  const run = r.client.run({ peer: 'p1', name: 'runner-1', runId: id, tree: '/w', kind: 'hand', team: 'team', budgetMs: 60000 });
+  for (let i = 0; i < 50 && r.client.sentTo('runner-1', IDLE_ONE({ pending: 1 })) !== 0; i += 1) await new Promise((res) => setImmediate(res));
+  assert.deepStrictEqual([
+    r.client.sentTo('runner-1', IDLE_ONE()),
+    r.client.sentTo('runner-1', IDLE_ONE({ queue: { running: null, queued: ['job1-0000-0000'] } })),
+    r.client.sentTo('runner-1', IDLE_ONE({ pending: 1 })),
+    r.client.sentTo('runner-2', IDLE_ONE()),
+  ], [1, 0, 0, 0]);
+  release();
+  await run;
+  assert.strictEqual(r.client.sentTo('runner-1', IDLE_ONE()), 0, 'an ended run counts nowhere');
+});
+
+test('t2439: pickRunner folds pending into the slots, then the queue', () => {
+  const got = pickRunner([member('a', load(1, 0, 0, { pending: 1 })), member('b', load(1, 0, 0))], { box: false });
+  assert.deepStrictEqual([got.index, got.ranks.map((x) => [x.member, x.load])], [1, [
+    ['a', { total: 1, inUse: 1, free: 0, queue: 0, pending: 1 }],
+    ['b', { total: 1, inUse: 0, free: 1, queue: 0, pending: 0 }],
+  ]]);
+  assert.deepStrictEqual(pickRunner([member('a', load(1, 1, 0, { pending: 2 }))], { box: false }).load, { total: 1, inUse: 1, free: 0, queue: 2, pending: 2 });
+});
+
+test('t2439: a released source ignores info.pending — the base load and pick read the same with and without it', () => {
+  const members = (extra) => [member('a', load(1, 0, 0, extra)), member('b', load(2, 1, 0))];
+  assert.deepStrictEqual(baseRunnerLoad(load(1, 0, 0, { pending: 3 })), baseRunnerLoad(load(1, 0, 0)));
+  assert.deepStrictEqual(basePickRunner(members({ pending: 3 }), { box: false }).index, basePickRunner(members({}), { box: false }).index);
+  assert.strictEqual(basePickRunner(members({ pending: 3 }), { box: false }).index, 0, 'ENTER: the base still picks the member reporting pending');
+});
+
+test('t2439: a member whose info call rejects is skipped as no answer in the log line, the run row and the hand reply', async () => {
+  const calls = [];
+  const conns = {
+    p1: { suiteAsk: async (method, p) => {
+      calls.push(`${method} ${p.split('?')[0]}`);
+      if (p.startsWith('/api/suite/info')) return { status: 200, body: IDLE_ONE() };
+      if (method === 'POST') return { status: 200, body: { ok: true, state: 'queued' } };
+      if (p.includes('/output?')) {
+        const text = p.includes('stream=stdout') ? GREEN : '';
+        return { status: 200, body: { ok: true, text, offset: 0, total: Buffer.byteLength(text) } };
+      }
+      const id = decodeURIComponent(/ids=([^&]+)/.exec(p)[1]);
+      return { status: 200, body: { ok: true, jobs: [{ id, state: 'done', treeHash: TREE, exit: { code: 0, signal: null }, reason: null, queueMs: 1, setupMs: 1, runMs: 1, out: {} }] } };
+    } },
+    p2: { suiteAsk: async () => { throw new Error('socket hang up'); } },
+  };
+  const r = pickRig(conns);
+  const dir = fs.realpathSync(mkTmpRoot('clodex-pool-tree-'));
+  const team = { ...r.f.tm.loadManifest('team'), root: dir };
+  let settle;
+  const done = new Promise((res) => { settle = res; });
+  const host = createChannelHost({
+    client: r.client, team, seat: 'hand-1',
+    listWorktrees: async () => ({ ok: true, worktrees: [{ path: dir }] }),
+    resolvePeer: (n) => r.f.m._runnerVia(r.f.m._runnerMembers(team.testRunner).find((x) => x.peer === n)).via,
+    pool: (box) => r.f.m._handRunners(team.testRunner, box),
+    send: (m) => { if (m.run) settle(m); },
+    snapshot: { snapshotTree: async () => ({ treeHash: TREE }), releaseSnapshot: () => {} },
+  });
+  host.onMessage({ op: 'suite', measure: dir, scope: 'full', files: [], flags: {}, local: false });
+  const reply = await done;
+  const picks = r.lines.filter(([tag]) => tag === 'suite-client');
+  assert.deepStrictEqual(picks, [['suite-client', 'pool pick for job job1-000: chosen runner-1; runner-1 slots 0/1, pending 0, queue 0, box tier 0, exclusive rank 0; runner-2 skipped: no answer']]);
+  assert.deepStrictEqual(r.ends().map((x) => [x.where, x.outcome, x.pick]), [['runner-1', 'pass', { chosen: 'runner-1', skipped: [{ member: 'runner-2', reason: 'no answer' }] }]]);
+  assert.deepStrictEqual([reply.runner, reply.unknown, reply.note], ['runner-1', null, '(pool: skipped runner-2: no answer)']);
+});
+
+test('t2439: the pool note names at most two skipped members, then +N, and a pick record omits an empty skipped list', () => {
+  assert.strictEqual(poolNote({ chosen: 'a', skipped: [{ member: 'b', reason: 'no answer' }, { member: 'c', reason: 'refused' }, { member: 'd', reason: 'not connected' }] }),
+    '(pool: skipped b: no answer, c: refused +1)');
+  assert.strictEqual(poolNote({ chosen: 'a' }), null);
+  const pick = pickRunner([member('a', load(1, 0, 0)), member('b', null, false), { ...member('c', null), why: 'refused' }, member('d', load(1, 0, 0, { box: { state: 'unavailable' } }))], { box: true });
+  assert.strictEqual(pickLine('0123456789', pick), 'pool pick for job 01234567: chosen none; a skipped: no box for this job; b skipped: not connected; c skipped: refused; d skipped: no box for this job');
+});
+
+test('t2439: runner rm with one queued hand job cancels exactly that job, tells its hand to resubmit, and leaves another member\'s job alone', async () => {
+  const waits = {};
+  const calls = { p1: [], p2: [] };
+  const conn = (peer) => ({ suiteAsk: async (method, p) => {
+    calls[peer].push(`${method} ${p.split('?')[0]}`);
+    if (p.startsWith('/api/suite/info')) return { status: 200, body: IDLE_ONE() };
+    if (method === 'POST') return { status: 200, body: { ok: true, state: 'queued' } };
+    if (method === 'DELETE') {
+      const id = decodeURIComponent(p.split('/').pop());
+      if (waits[id]) waits[id]();
+      return { status: 200, body: { ok: true } };
+    }
+    const id = decodeURIComponent(/ids=([^&]+)/.exec(p)[1]);
+    await new Promise((res) => { waits[id] = res; });
+    return { status: 200, body: { ok: true, jobs: [{ id, state: 'done', treeHash: TREE, exit: null, reason: 'cancelled', queueMs: 1, setupMs: null, runMs: null, out: {} }] } };
+  } });
+  const r = pickRig({ p1: conn('p1'), p2: conn('p2') });
+  const kept = r.client.run({ peer: 'p1', name: 'runner-1', tree: '/w', kind: 'hand', team: 'team', budgetMs: 60000 });
+  const gone = r.client.run({ peer: 'p2', name: 'runner-2', tree: '/w', kind: 'hand', team: 'team', budgetMs: 60000 });
+  for (let i = 0; i < 100 && !(waits['job1-0000-0000'] && waits['job2-0000-0000']); i += 1) await new Promise((res) => setImmediate(res));
+  assert.ok(waits['job1-0000-0000'] && waits['job2-0000-0000'], 'ENTER: both jobs are queued and polled');
+  assert.deepStrictEqual(await r.f.verb('[agent:team runner rm runner-2]'), ['[agent:team] test runner runner-2 removed from team — 1 left; stopped 1 job bound to it']);
+  const out = await gone;
+  assert.deepStrictEqual([out.unknown, out.record.where], ['runner removed from the pool: resubmit', 'runner-2']);
+  assert.deepStrictEqual(calls.p2.filter((c) => c.startsWith('DELETE')), ['DELETE /api/suite/jobs/job2-0000-0000']);
+  assert.deepStrictEqual(calls.p1.filter((c) => c.startsWith('DELETE')), []);
+  waits['job1-0000-0000']();
+  await kept;
+});

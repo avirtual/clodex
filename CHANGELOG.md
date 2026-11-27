@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+- Test runners: several jobs sent at once no longer pile onto one pool member while another is free; a run's result says when a pool member was skipped and why; removing a member from a pool stops the jobs bound to it.
+
 ## 5.205.0 — 2026-11-27
 
 - Browser pane: a download that is refused or lost is reported instead of vanishing, a download that finishes after the action's reply is announced to the agent that started it, and `--to` on a click stays armed until the download starts, your next action, or 120 s, and says so. A navigation the pane blocks right after an agent's action is reported to that agent.
