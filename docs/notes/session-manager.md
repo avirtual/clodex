@@ -115,7 +115,3 @@ The DEPLOY OK self-archive sends `session:context-action` `retired` BEFORE `arch
 ## _awakeAssistantRows
 
 An evicted victim needs no exclusion set: `archive` sets `s._archived` synchronously before its first await, and `_sleepNow` reaches `archive` without awaiting anything first, so the `s._archived` test already drops the victim before a second `makeAwakeRoom` counts rows.
-
-## preseedClaudeOnboarding
-
-Claude Code 2.1.332 saves `.claude.json` under a `<config path>.lock` lock taken through a proper-lockfile-shaped API (`lockfilePath`, `realpath`, `onCompromised`, `ELOCKED`); the preseed does not take it, so a CLI that read the file before the preseed's rename and writes after it drops the new keys, which the re-read after the rename detects and retries.

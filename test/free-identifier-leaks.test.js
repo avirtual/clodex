@@ -872,7 +872,7 @@ const BUILTINS = [
   'Object', 'Array', 'String', 'Number', 'Boolean', 'Symbol', 'BigInt', 'Math',
   'JSON', 'Date', 'RegExp', 'Map', 'Set', 'WeakMap', 'WeakSet', 'Promise',
   'Proxy', 'Reflect', 'Error', 'TypeError', 'RangeError', 'SyntaxError',
-  'Function', 'Infinity',
+  'Function', 'Infinity', 'Atomics', 'Int32Array', 'SharedArrayBuffer',
   'NaN', 'undefined', 'globalThis', 'parseInt', 'parseFloat', 'isNaN',
   'isFinite', 'encodeURIComponent', 'decodeURIComponent', 'encodeURI',
   'decodeURI', 'structuredClone', 'btoa', 'atob',
