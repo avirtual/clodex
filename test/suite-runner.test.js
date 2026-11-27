@@ -1739,6 +1739,100 @@ test('ending a drain starts the queued job on the same runner', async (t) => {
   assert.strictEqual(drained, 0);
 });
 
+const ALONE = { exclusive: true };
+const exclusiveRows = async (runner) => {
+  const a = await runner.activity();
+  return [...a.running, ...a.waiting].map((j) => [j.id, j.exclusive || null]);
+};
+
+test('t2428: an exclusive job waits for an idle runner, holds the jobs behind it, then runs alone with the runner reported full', async (t) => {
+  const f = await holdingFixture(t, { runnerOver: { slots: 3 } });
+  await f.upload(f.body('x1'));
+  await f.spawned(['x1']);
+  assert.strictEqual((await f.upload(f.body('x-alone', 'hand', ALONE))).state, 'queued');
+  assert.strictEqual((await f.upload(f.body('x2'))).state, 'queued');
+  await drain();
+  assert.deepStrictEqual([await slotsOf(f.runner), f.calls.map((c) => c.job)], [{ slots: { total: 3, inUse: 1 }, running: ['x1'], waiting: ['x-alone', 'x2'] }, ['x1']]);
+  assert.deepStrictEqual((await f.runner.info()).slots, { total: 3, inUse: 1 });
+  f.held.get('x1').finish(0);
+  await f.spawned(['x-alone']);
+  await drain();
+  assert.deepStrictEqual(await slotsOf(f.runner), { slots: { total: 3, inUse: 1 }, running: ['x-alone'], waiting: ['x2'] });
+  const info = await f.runner.info();
+  assert.deepStrictEqual([info.slots, info.exclusive], [{ total: 3, inUse: 3 }, 'honour']);
+  assert.deepStrictEqual(await exclusiveRows(f.runner), [['x-alone', 'honoured'], ['x2', null]]);
+  const polled = (await f.runner.poll(['x-alone', 'x2'])).jobs.map((j) => [j.id, j.exclusive]);
+  assert.deepStrictEqual(polled, [['x-alone', 'honoured'], ['x2', undefined]]);
+  assert.strictEqual((await f.upload(f.body('x3'))).state, 'queued');
+  await drain();
+  assert.deepStrictEqual(f.calls.map((c) => c.job), ['x1', 'x-alone']);
+  f.held.get('x-alone').finish(0);
+  await f.spawned(['x2', 'x3']);
+  assert.deepStrictEqual(f.calls.map((c) => c.job), ['x1', 'x-alone', 'x2', 'x3']);
+  for (const id of ['x2', 'x3']) f.held.get(id).finish(0);
+  await waitState(f.runner, 'x3', 'done');
+});
+
+test('t2428: a later post-merge still sorts ahead of a queued exclusive hand job and starts beside the running job; the hold then resumes', async (t) => {
+  const f = await holdingFixture(t, { runnerOver: { slots: 3 } });
+  await f.upload(f.body('p1'));
+  await f.spawned(['p1']);
+  await f.upload(f.body('p-alone', 'hand', ALONE));
+  await f.upload(f.body('p-hand'));
+  await f.upload(f.body('p-post', 'post-merge'));
+  await f.spawned(['p-post']);
+  await drain();
+  assert.deepStrictEqual(await slotsOf(f.runner), { slots: { total: 3, inUse: 2 }, running: ['p1', 'p-post'], waiting: ['p-alone', 'p-hand'] });
+  f.held.get('p1').finish(0);
+  f.held.get('p-post').finish(0);
+  await f.spawned(['p-alone']);
+  await drain();
+  assert.deepStrictEqual(f.calls.map((c) => c.job), ['p1', 'p-post', 'p-alone']);
+  f.held.get('p-alone').finish(0);
+  await f.spawned(['p-hand']);
+  f.held.get('p-hand').finish(0);
+  await waitState(f.runner, 'p-hand', 'done');
+});
+
+test('t2428: a drain completes with an exclusive job queued, and the job starts alone when the drain ends', async (t) => {
+  const f = await holdingFixture(t, { runnerOver: { slots: 2 } });
+  await f.upload(f.body('d1'));
+  await f.spawned(['d1']);
+  await f.upload(f.body('d-alone', 'hand', ALONE));
+  let drained = 0;
+  assert.strictEqual(f.runner.drain(() => { drained += 1; }), 1);
+  f.held.get('d1').finish(0);
+  await waitState(f.runner, 'd1', 'done');
+  await f.spawned(['d-alone']);
+  assert.deepStrictEqual([drained, f.calls.map((c) => c.job)], [1, ['d1', 'd-alone']]);
+  f.held.get('d-alone').finish(0);
+  await waitState(f.runner, 'd-alone', 'done');
+});
+
+test('t2428: a runner set to ignore admits an exclusive job as an ordinary one and says so', async (t) => {
+  const f = await holdingFixture(t, { runnerOver: { slots: 2, exclusive: 'ignore' } });
+  await f.upload(f.body('i1'));
+  await f.spawned(['i1']);
+  await f.upload(f.body('i-alone', 'hand', ALONE));
+  await f.spawned(['i-alone']);
+  await drain();
+  const info = await f.runner.info();
+  assert.deepStrictEqual([info.slots, info.exclusive], [{ total: 2, inUse: 2 }, 'ignore']);
+  assert.deepStrictEqual(await exclusiveRows(f.runner), [['i1', null], ['i-alone', 'ignored']]);
+  assert.strictEqual((await f.runner.poll(['i-alone'])).jobs[0].exclusive, 'ignored');
+  for (const id of ['i1', 'i-alone']) f.held.get(id).finish(0);
+  await waitState(f.runner, 'i-alone', 'done');
+});
+
+test('t2428: submit refuses an exclusive that is not a boolean, and an exclusive false is stored as no request', async (t) => {
+  const f = await fixture(t);
+  for (const [i, v] of ['yes', 1, null, {}].entries()) {
+    assert.deepStrictEqual(await f.runner.submit(f.body(`bad-${i}`, 'hand', { exclusive: v })), { ok: false, status: 400, error: 'bad exclusive' }, String(v));
+  }
+  assert.strictEqual((await f.runner.submit(f.body('plain-false', 'hand', { exclusive: false }))).ok, true);
+  assert.strictEqual((await f.runner.poll(['plain-false'])).jobs[0].exclusive, undefined);
+});
+
 test('a drained runner reloaded with slots lowered from 3 to 2 keeps its queue and runs at most 2 at once', async (t) => {
   const f = await holdingFixture(t, { runnerOver: { slots: 3 } });
   for (const id of ['r1', 'r2', 'r3']) await f.upload(f.body(id));

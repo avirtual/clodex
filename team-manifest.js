@@ -225,8 +225,8 @@ const TEST_RUNNER_GATE = ['off', 'shadow', 'on'];
 const TEST_RUNNER_WIRE_PUSH = 'push';
 const TEST_RUNNER_WIRE = [TEST_RUNNER_WIRE_PUSH, 'pull'];
 const TEST_RUNNER_FALLBACK = ['home', 'hold'];
-const TEST_RUNNER_PATCH_KEYS = ['peer', 'hands', 'gate', 'wire', 'pool', 'fallback', 'runMs', 'handEnv', 'queueMs'];
-const TEST_RUNNER_KEYS = ['peer', 'hands', 'gate', 'wire', 'setup', 'env', 'box', 'pool', 'shares', 'fallback', 'runMs', 'handEnv', 'queueMs'];
+const TEST_RUNNER_PATCH_KEYS = ['peer', 'hands', 'gate', 'wire', 'pool', 'fallback', 'runMs', 'handEnv', 'queueMs', 'exclusive'];
+const TEST_RUNNER_KEYS = ['peer', 'hands', 'gate', 'wire', 'setup', 'env', 'box', 'pool', 'shares', 'fallback', 'runMs', 'handEnv', 'queueMs', 'exclusive'];
 const TEST_RUNNER_SHARES_MAX = 8;
 const TEST_RUNNER_SHARE_VERSION_RE = /^[A-Za-z0-9._-]{1,64}$/;
 const TEST_RUNNER_POOL_MAX = 8;
@@ -324,7 +324,7 @@ function normalizeTestRunner(v) {
   const hold = v.fallback === 'hold' && gate === 'on';
   const runMs = normalizeRunMs(v.runMs);
   const queueMs = normalizeQueueMs(v.queueMs);
-  return { peer: v.peer, hands, gate, ...(v.wire !== undefined ? { wire: v.wire } : {}), ...(setup ? { setup } : {}), ...(env ? { env } : {}), ...(v.box !== undefined ? { box: v.box } : {}), ...(pool ? { pool } : {}), ...(shares ? { shares } : {}), ...(hold ? { fallback: 'hold' } : {}), ...(runMs !== undefined ? { runMs } : {}), ...(handEnv ? { handEnv } : {}), ...(queueMs !== undefined ? { queueMs } : {}) };
+  return { peer: v.peer, hands, gate, ...(v.wire !== undefined ? { wire: v.wire } : {}), ...(setup ? { setup } : {}), ...(env ? { env } : {}), ...(v.box !== undefined ? { box: v.box } : {}), ...(pool ? { pool } : {}), ...(shares ? { shares } : {}), ...(hold ? { fallback: 'hold' } : {}), ...(runMs !== undefined ? { runMs } : {}), ...(handEnv ? { handEnv } : {}), ...(queueMs !== undefined ? { queueMs } : {}), ...(v.exclusive === true ? { exclusive: true } : {}) };
 }
 
 function boxCpus(cpuMax, cpus) {
@@ -1829,6 +1829,7 @@ function createTeamManifest({ fs, clodexHome, log = null, now = () => Date.now()
       if (next.runMs === null) delete next.runMs;
       if (next.handEnv === null) delete next.handEnv;
       if (next.queueMs === null) delete next.queueMs;
+      if (next.exclusive !== true) delete next.exclusive;
       const norm = normalizeTestRunner(next);
       if (!norm || (next.pool !== undefined && !norm.pool) || (next.fallback !== undefined && norm.fallback !== next.fallback)
         || (next.runMs !== undefined && norm.runMs !== next.runMs) || (next.queueMs !== undefined && norm.queueMs !== next.queueMs)) throw new Error(`testRunner would be invalid after this patch (${team.file})`);

@@ -3495,12 +3495,12 @@ function createTicketMethods(deps, shared) {
       const keys = Object.entries(cur.handEnv || {});
       const queue = Number.isInteger(cur.queueMs) ? `queue ${cur.queueMs / TEST_RUNNER_RUN_STEP_MS} min`
         : `queue ${HAND_QUEUE_MS / TEST_RUNNER_RUN_STEP_MS} min hands, ${TICKET_SUITE_LOCK_WAIT_MS / TEST_RUNNER_RUN_STEP_MS} min gate (default)`;
-      return `, ${run}, ${queue}${keys.length ? `, hand-env ${keys.map(([k, v]) => `${flat(k)}=${flat(v)}`).join(' ')}` : ''}`;
+      return `, ${run}, ${queue}${cur.exclusive === true ? ', exclusive on' : ''}${keys.length ? `, hand-env ${keys.map(([k, v]) => `${flat(k)}=${flat(v)}`).join(' ')}` : ''}`;
     },
 
     _handleRunnerLimits(team, cur, intent, reply) {
       if (intent.value || intent.hands != null || intent.gate != null || intent.fallback != null) {
-        reply('error: set run:, queue: and hand-env: in their own [agent:team runner] intent, apart from the peer, hands, gate and fallback');
+        reply('error: set run:, queue:, exclusive: and hand-env: in their own [agent:team runner] intent, apart from the peer, hands, gate and fallback');
         return;
       }
       if (!cur) {
@@ -3515,7 +3515,19 @@ function createTicketMethods(deps, shared) {
         reply('error: name queue: once per [agent:team runner] intent');
         return;
       }
+      if (intent.exclusiveRepeated) {
+        reply('error: name exclusive: once per [agent:team runner] intent');
+        return;
+      }
       const patch = {};
+      if (intent.exclusive != null) {
+        if (intent.exclusive === 'on') patch.exclusive = true;
+        else if (intent.exclusive === 'off') patch.exclusive = null;
+        else {
+          reply(`error: exclusive must be on or off — not "${intent.exclusive}"`);
+          return;
+        }
+      }
       if (intent.queue != null) {
         const min = TEST_RUNNER_QUEUE_MIN_MS / TEST_RUNNER_RUN_STEP_MS;
         const max = TEST_RUNNER_QUEUE_MAX_MS / TEST_RUNNER_RUN_STEP_MS;
@@ -3567,7 +3579,7 @@ function createTicketMethods(deps, shared) {
 
     async _handleTeamRunner(team, intent, reply) {
       const cur = team.testRunner || null;
-      if (intent.run != null || intent.queue != null || intent.handEnv) {
+      if (intent.run != null || intent.queue != null || intent.exclusive != null || intent.handEnv) {
         this._handleRunnerLimits(team, cur, intent, reply);
         return;
       }
