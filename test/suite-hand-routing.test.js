@@ -152,7 +152,7 @@ test('host: a remote run goes through the client as kind hand and streams its pr
   assert.deepStrictEqual(opts, {
     peer: 'p1', wire: 'push', name: 'runner-1', tree: f.dir, kind: 'hand', scope: 'own', team: 'tm', ticket: null, seat: 'hand-1',
     files: ['test/a.test.js'], flags: { CLODEX_TEST_LOCK: '1' }, setup: null, env: {},
-    queueBudgetMs: 15 * 60 * 1000, runBudgetMs: 21 * 60 * 1000, timeoutMs: 21 * 60 * 1000, budgetMs: 36 * 60 * 1000, route: 'hands:all',
+    queueBudgetMs: 15 * 60 * 1000, runBudgetMs: 38 * 60 * 1000, timeoutMs: 21 * 60 * 1000, budgetMs: 53 * 60 * 1000, route: 'hands:all',
   });
   assert.deepStrictEqual(f.sent[0], { progress: 'runner runner-1: job queued' });
 });
@@ -254,7 +254,9 @@ async function inflightExec(t) {
 test('exec: the timeout kill cancels the in-flight job once, and the disconnect after it adds none', async (t) => {
   const { client, child } = await inflightExec(t);
   assert.deepStrictEqual(client.cancels, []);
-  mock.timers.tick(5000);
+  mock.timers.tick(5000 + 19 * 60 * 1000 - 1);
+  assert.deepStrictEqual(child.kills, [], 'the suite channel ceiling is the def ceiling plus the 19 min hand slack');
+  mock.timers.tick(1);
   assert.deepStrictEqual(child.kills, ['SIGKILL']);
   assert.deepStrictEqual(client.cancels, [['p1', 'job-1']]);
   child.emit('disconnect');
@@ -901,7 +903,7 @@ test('t2418: a runner refusing the asked timeoutMs reads as one line naming both
   const { conn, calls } = stubConn((m, p) => (m === 'POST' && p === '/api/suite/jobs' ? { status: 400, body: { ok: false, error: 'bad timeoutMs' } } : jobsAnswer(m, p)));
   const { client } = clientWith(conn);
   const out = await client.run({ peer: 'p1', name: 'runner-1', tree: '/w', timeoutMs: 30 * 60 * 1000 });
-  assert.strictEqual(out.unknown, 'runner refused the job: bad timeoutMs — the job asked for 1800000ms, the runner\'s ceiling is not reported (default 2160000ms)');
+  assert.strictEqual(out.unknown, 'runner refused the job: bad timeoutMs — the job asked for 1800000ms, the runner\'s ceiling is lower and its info route does not report it');
   assert.strictEqual(calls.filter((c) => c === 'POST /api/suite/jobs').length, 1);
   assert.deepStrictEqual(boxVerdict(out, null), { fallback: 'outcome unknown', fallbackCode: 'outcome-unknown', fallbackClass: 'unknown' });
 });
@@ -917,14 +919,14 @@ test('t2418: a runner that reports its ceiling has it named in the refusal', asy
   assert.strictEqual(out.unknown, 'runner refused the job: bad timeoutMs — the job asked for 1800000ms, the runner\'s ceiling is 1200000ms');
 });
 
-test('t2418: a hand run sends env with handEnv over it, and its whole budget is queue plus run', async () => {
+test('t2418: a hand run sends env with handEnv over it, and its whole budget is queue plus run plus the setup slack', async () => {
   const client = stubClient({ result: { unknown: null, res: { status: 0, signal: null, stdout: '', stderr: '', treeHash: TREE } } });
   const team = { ...teamWith('all'), testRunner: { peer: 'runner-1', hands: 'all', runMs: 30 * 60 * 1000, env: { A: '1', B: '2' }, handEnv: { B: 'hand', C: '3' } } };
   const f = hostFor({ client, team });
   f.host.onMessage(ask(f.dir));
   await f.done;
   const r = client.runs[0];
-  assert.deepStrictEqual([r.runBudgetMs, r.timeoutMs, r.budgetMs, r.queueBudgetMs, r.env], [1260000, 1260000, 2160000, 900000, { A: '1', B: 'hand', C: '3' }]);
+  assert.deepStrictEqual([r.runBudgetMs, r.timeoutMs, r.budgetMs, r.queueBudgetMs, r.env], [2280000, 1260000, 3180000, 900000, { A: '1', B: 'hand', C: '3' }]);
 });
 
 test('t2418: the hand digest carries the killed run\'s last output whole', async () => {
@@ -936,7 +938,28 @@ test('t2418: the hand digest carries the killed run\'s last output whole', async
   assert.strictEqual(r.digest, `[${leaf}] result unknown — the suite did not complete on runner runner-1: ${why}`);
 });
 
-test('t2418: a team runMs moves the exec ceiling of clodex-run-tests by runMs minus 21 minutes, and the channel host gets it', async (t) => {
+test('t2418: a hand run whose job spends 30 s in setup gets the runner\'s kill and its last output, not the run-budget cancel', async () => {
+  const clock = { t: 0 };
+  const RUN = 21 * 60 * 1000;
+  const { conn, calls } = stubConn((m, p) => {
+    if (m !== 'GET' || !/ids=/.test(p)) return killedAnswer(m, p);
+    const id = decodeURIComponent(/ids=([^&]+)/.exec(p)[1]);
+    const wait = Number((/wait=(\d+)/.exec(p) || [0, 0])[1]);
+    if (clock.t >= 30000 + RUN) return killedAnswer(m, p);
+    const state = clock.t < 30000 ? 'setup' : 'running';
+    clock.t += Math.max(wait, 1000);
+    return { status: 200, body: { ok: true, jobs: [{ id, state, treeHash: TREE, exit: null, reason: null, queueMs: 0, out: {} }] } };
+  });
+  const { client } = clientWith(conn, { now: () => clock.t, sleep: async (ms) => { clock.t += ms; } });
+  const f = hostFor({ client });
+  f.host.onMessage(ask(f.dir));
+  const done = await f.done;
+  assert.ok(calls.includes('GET /api/suite/jobs'), `ENTER: the client polled the job: ${calls.join(', ')}`);
+  assert.strictEqual(done.unknown, `the suite did not finish within 1260000ms (killed)${KILLED_TAIL}`);
+  assert.deepStrictEqual(calls.filter((c) => c.startsWith('DELETE')), []);
+});
+
+test('t2418: a team runMs moves the exec ceiling of clodex-run-tests by runMs minus 21 minutes over the hand slack, and the channel host gets it', async (t) => {
   const client = stubClient({ hang: true });
   const team = { ...teamWith('all'), testRunner: { peer: 'runner-1', hands: 'all', runMs: 30 * 60 * 1000 }, root: fs.realpathSync(mkTmpRoot('suite-route-tree-')) };
   const f = execFixture(t, 'clodex-run-tests.js', { client, team });
@@ -945,10 +968,10 @@ test('t2418: a team runMs moves the exec ceiling of clodex-run-tests by runMs mi
   child.emit('message', ask(team.root));
   await turns();
   assert.strictEqual(client.runs.length, 1, 'ENTER: the job is in flight');
-  assert.deepStrictEqual([client.runs[0].timeoutMs, client.runs[0].runBudgetMs, client.runs[0].budgetMs], [1800000, 1800000, 2700000]);
+  assert.deepStrictEqual([client.runs[0].timeoutMs, client.runs[0].runBudgetMs, client.runs[0].budgetMs], [1800000, 2820000, 3720000]);
   mock.timers.tick(5000);
   assert.deepStrictEqual(child.kills, [], 'not killed at the def ceiling');
-  mock.timers.tick(9 * 60 * 1000 - 1);
+  mock.timers.tick(28 * 60 * 1000 - 1);
   assert.deepStrictEqual(child.kills, []);
   mock.timers.tick(1);
   assert.deepStrictEqual(child.kills, ['SIGKILL']);

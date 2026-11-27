@@ -20,7 +20,7 @@ const { trackedSessionIds: entrySessionIds } = require('./session-info');
 const { hostNotice } = require('./host-stamp');
 const { idleClearAfterMs, IDLE_CLEAR_MIN_MS } = require('./assistant-sleep');
 const { localHalf, failingNames } = require('./suite-client');
-const { boxVerdict, fallbackOf, FALLBACK_CODES, pickRunner, runnerLoad, BUILD_BUDGET_MS } = require('./suite-client');
+const { boxVerdict, fallbackOf, FALLBACK_CODES, pickRunner, runnerLoad, BUILD_BUDGET_MS, HUNG_RE } = require('./suite-client');
 const {
   matchSeatRole, nameRole, defaultLeadSeat, ROLE_RE, RESERVED_ROLE_KEYS, STOCK_ROLE_DEFS,
   DEFAULT_ROLE_DISPATCH, TRUNK_HEAD, effectiveHandCap, DONE_VALUES, normalizeDone, NAME_RE: NODE_NAME_RE, TEST_RUNNER_HANDS, TEST_RUNNER_GATE, TEST_RUNNER_FALLBACK, TEST_RUNNER_WIRE_PUSH: WIRE_PUSH, TEST_RUNNER_POOL_MAX,
@@ -7236,7 +7236,7 @@ function createTicketMethods(deps, shared) {
       const all = [...String(res.stdout || '').matchAll(/TOTALS: (\d+) pass, (\d+) fail, (\d+) tests/g)];
       const totals = all.length ? all[all.length - 1] : null;
       if (!totals) {
-        const hung = String(res.stderr || '').split('\n').filter((l) => /^run-tests: TIMEOUT after .* in .+$/.test(l)).pop();
+        const hung = String(res.stderr || '').split('\n').filter((l) => HUNG_RE.test(l)).pop();
         const last = String(res.stdout || '').trim().split('\n').filter((l) => l.trim()).pop() || '(no stdout)';
         const note = String(res.stderr || '').split('\n').map((l) => l.trim()).filter((l) => /^run-tests: /.test(l)).pop();
         out.error = hung

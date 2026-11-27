@@ -37,7 +37,7 @@ function killedTail(stdout, stderr) {
   return `${last.length ? `; last output: ${last.join(' | ')}` : ''}${hung ? `; ${hung}` : ''}`;
 }
 
-const REPICKABLE =/^(?:runner unreachable|runner refused the (?:job|token)|runner has no box|no peer )/;
+const REPICKABLE = /^(?:runner unreachable|runner refused the (?:job|token)|runner has no box|no peer )/;
 const RESTARTED = Symbol('runner-restart');
 const RESTARTING_REFUSAL = 'runner refused the job: runner is restarting';
 
@@ -289,8 +289,8 @@ function createSuiteClient({
     if (restarted(sub)) return { retry: 'runner-restart' };
     if (sub.body && sub.body.code === 'runner-restarting') return { unknown: RESTARTING_REFUSAL };
     if (sub.body && sub.body.error === 'bad timeoutMs' && ctx.timeoutMs != null) {
-      const ceiling = Number.isFinite(limits.maxTimeoutMs) ? `${limits.maxTimeoutMs}ms` : `not reported (default ${require('./suite-runner').DEFAULT_LIMITS.maxTimeoutMs}ms)`;
-      return { unknown: `runner refused the job: bad timeoutMs — the job asked for ${ctx.timeoutMs}ms, the runner's ceiling is ${ceiling}` };
+      const ceiling = Number.isFinite(limits.maxTimeoutMs) ? `is ${limits.maxTimeoutMs}ms` : 'is lower and its info route does not report it';
+      return { unknown: `runner refused the job: bad timeoutMs — the job asked for ${ctx.timeoutMs}ms, the runner's ceiling ${ceiling}` };
     }
     if (!sub.body || !sub.body.ok) return { unknown: `runner refused the job: ${(sub.body && sub.body.error) || sub.error || `status ${sub.status}`}` };
     ctx.submitted = true;
@@ -909,6 +909,8 @@ function agreement(a, b) {
 
 const HAND_QUEUE_MS = 15 * 60 * 1000;
 const HAND_RUN_MS = 21 * 60 * 1000;
+const HAND_RUN_SLACK_MS = 17 * 60 * 1000;
+const HAND_EXEC_SLACK_MS = HAND_RUN_SLACK_MS + 2 * 60 * 1000;
 const FLAG_KEYS = ['CLODEX_TEST_LOCK', 'CLODEX_TEST_SLOW_ADVISORY'];
 
 function route({ team = null, kind = 'hand', scope = 'full', local = false } = {}) {
@@ -1010,7 +1012,7 @@ function createChannelHost({
     const out = await client.run({
       peer: via.peer, wire, name, tree, kind: 'hand', scope: msg.scope, team: team.name, ticket, seat,
       files: msg.files || [], flags: msg.flags || {}, setup: tr.setup || null, env: { ...(tr.env || {}), ...(tr.handEnv || {}) },
-      queueBudgetMs, runBudgetMs: runMs, timeoutMs: runMs, budgetMs: queueBudgetMs + runMs, route: d.why,
+      queueBudgetMs, runBudgetMs: runMs + HAND_RUN_SLACK_MS, timeoutMs: runMs, budgetMs: queueBudgetMs + runMs + HAND_RUN_SLACK_MS, route: d.why,
       shouldStop: () => wantCancel,
       onSubmitted: ({ jobId }) => { inflight.jobId = jobId; fireCancel(); },
       onProgress: (line) => say({ progress: line }),
@@ -1044,4 +1046,4 @@ function createChannelHost({
   };
 }
 
-module.exports = { createSuiteClient, createChannelHost, route, lastTotals, localHalf, failingNames, agreement, boxVerdict, fallbackOf, FALLBACK_CODES, pickRunner, runnerLoad, HAND_QUEUE_MS, HAND_RUN_MS, BUILD_BUDGET_MS, LOST_AFTER_MS };
+module.exports = { createSuiteClient, createChannelHost, route, lastTotals, localHalf, failingNames, agreement, boxVerdict, fallbackOf, FALLBACK_CODES, pickRunner, runnerLoad, HAND_QUEUE_MS, HAND_RUN_MS, HAND_RUN_SLACK_MS, HAND_EXEC_SLACK_MS, HUNG_RE, BUILD_BUDGET_MS, LOST_AFTER_MS };

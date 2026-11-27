@@ -298,7 +298,7 @@ const { SEAT_KINDS, seatPathFor, legacySeatPathFor, claudeProjectSlug } = requir
 const { LIVING_MARK } = require('./intent-catalog');
 const { resolveSubagent, nameOfSubagent, clearSubq, SUBQ_DM_SUFFIX, SUBQ_NAME_RE } = require('./subq');
 
-const { createChannelHost, HAND_RUN_MS } = require('./suite-client');
+const { createChannelHost, HAND_RUN_MS, HAND_EXEC_SLACK_MS } = require('./suite-client');
 
 const AGENT_SOCK_WRITER_BINS = new Set(['clodex-team.js', 'clodex-monitor.js', 'clodex-ctl-admin.js']);
 const SUITE_CHANNEL_BINS = new Set(['clodex-run-tests.js']);
@@ -8013,7 +8013,7 @@ function createSessionManager(deps) {
       const suiteChannel = suiteChannelArgv(argv, CLODEX_BIN);
       const handRunMs = suiteChannel && execTeam && execTeam.testRunner && Number.isInteger(execTeam.testRunner.runMs) ? execTeam.testRunner.runMs : null;
       const timeoutMs = ((typeof entry.timeoutMs === 'number' && entry.timeoutMs > 0) ? entry.timeoutMs : 10000)
-        + (handRunMs != null ? Math.max(0, handRunMs - HAND_RUN_MS) : 0);
+        + (suiteChannel ? HAND_EXEC_SLACK_MS : 0) + (handRunMs != null ? Math.max(0, handRunMs - HAND_RUN_MS) : 0);
       setImmediate(() => {
         let child;
         try {
