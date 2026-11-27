@@ -235,7 +235,7 @@ function parseTeamCreate(cleaned) {
 }
 
 function parseTeam(cleaned) {
-  const m = cleaned.match(/^\[agent:team\s+(role-add|role-set|role-rm|role-rename|watchdog|gather|set-lead|bind|unbind|roster|template-save|template-rm|prompt-save|prompt-rm|sandbox|box|trunk|done|worktrees|hands|runner)\b([^\]]*)\]\s*(.*)/s);
+  const m = cleaned.match(/^\[agent:team\s+(role-add|role-set|role-rm|role-rename|watchdog|gather|set-lead|bind|unbind|roster|template-save|template-rm|prompt-save|prompt-rm|sandbox|box|trunk|test-roots|done|worktrees|hands|runner)\b([^\]]*)\]\s*(.*)/s);
   if (!m) return null;
   const sub = m[1];
   const argStr = m[2];
@@ -256,6 +256,7 @@ function parseTeam(cleaned) {
   if (sub === 'bind') return { type: 'team', sub, name: positional[0] || null, role: positional[1] || null, body: '' };
   if (sub === 'roster') return { type: 'team', sub, body: '' };
   if (sub === 'trunk') return { type: 'team', sub, branch: positional[0] || null, body: '' };
+  if (sub === 'test-roots') return { type: 'team', sub, roots: argStr.trim().split(/\s+/).filter(Boolean), body: '' };
   if (sub === 'done') return { type: 'team', sub, mode: positional[0] || null, body: '' };
   if (sub === 'worktrees') return { type: 'team', sub, value: positional[0] || null, body: '' };
   if (sub === 'hands') return { type: 'team', sub, value: positional[0] || null, body: '' };

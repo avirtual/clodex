@@ -8040,6 +8040,7 @@ function createSessionManager(deps) {
               CLODEX_CTL: path.join(__dirname, 'cli', 'bin', 'clodexctl.js'),
               CLODEX_TEAM: execTeam ? execTeam.name : '',
               CLODEX_TEAM_ROOT: execTeam ? execTeam.root : '',
+              CLODEX_SUITE_TEST_ROOTS: suiteChannel && execTeam && Array.isArray(execTeam.testRoots) ? JSON.stringify(execTeam.testRoots) : '',
               CLODEX_CLIENT_TOKEN: clientToken,
               CLODEX_AGENT_CRED: agentSockWriterArgv(argv, CLODEX_BIN) ? (AGENT_SOCK_CRED || '') : '',
             },

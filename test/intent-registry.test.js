@@ -180,7 +180,7 @@ function parseIntentLegacy(rawLine) {
     };
   }
 
-  const teamMatch = cleaned.match(/^\[agent:team\s+(role-add|role-set|role-rm|role-rename|watchdog|gather|set-lead|bind|unbind|roster|template-save|template-rm|prompt-save|prompt-rm|sandbox|box|trunk|done|worktrees|hands|runner)\b([^\]]*)\]\s*(.*)/s);
+  const teamMatch = cleaned.match(/^\[agent:team\s+(role-add|role-set|role-rm|role-rename|watchdog|gather|set-lead|bind|unbind|roster|template-save|template-rm|prompt-save|prompt-rm|sandbox|box|trunk|test-roots|done|worktrees|hands|runner)\b([^\]]*)\]\s*(.*)/s);
   if (teamMatch) {
     const sub = teamMatch[1];
     const argStr = teamMatch[2];
@@ -201,6 +201,7 @@ function parseIntentLegacy(rawLine) {
     if (sub === 'bind') return { type: 'team', sub, name: positional[0] || null, role: positional[1] || null, body: '' };
     if (sub === 'roster') return { type: 'team', sub, body: '' };
     if (sub === 'trunk') return { type: 'team', sub, branch: positional[0] || null, body: '' };
+    if (sub === 'test-roots') return { type: 'team', sub, roots: argStr.trim().split(/\s+/).filter(Boolean), body: '' };
     if (sub === 'done') return { type: 'team', sub, mode: positional[0] || null, body: '' };
     if (sub === 'worktrees') return { type: 'team', sub, value: positional[0] || null, body: '' };
     if (sub === 'hands') return { type: 'team', sub, value: positional[0] || null, body: '' };
@@ -466,6 +467,7 @@ const ADVERSARIAL = [
   '[agent:team bind bob hand]', '[agent:team bind bob]', '[agent:team bind]', '[agent:team bindx bob]',
   '[agent:team unbind bob]', '[agent:team unbind]', '[agent:team roster]', '[agent:team roster extra]',
   '[agent:team trunk main]', '[agent:team trunk]',
+  '[agent:team test-roots test app/web/test]', '[agent:team test-roots off]', '[agent:team test-roots]', '[agent:team test-rootsx]',
   '[agent:team done report]', '[agent:team done]', '[agent:team donex]',
   '[agent:team worktrees in-root]', '[agent:team worktrees]', '[agent:team worktreesx]',
   '[agent:team hands 3]', '[agent:team hands off]', '[agent:team hands]', '[agent:team handsx]',

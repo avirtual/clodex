@@ -234,6 +234,20 @@ const LOCK_BOUND = [
 
 const TEST_ROOTS = ['test', 'cli/test'];
 
+function hostTestRoots(raw) {
+  if (!raw) return TEST_ROOTS;
+  let v;
+  try {
+    v = JSON.parse(raw);
+  } catch {
+    return TEST_ROOTS;
+  }
+  const ok = Array.isArray(v) && v.length >= 1 && v.length <= 8 && v.every((r) => typeof r === 'string'
+    && r.length <= 200 && !/[\s\x00-\x1f\x7f]/.test(r) && !r.startsWith('/') && !r.startsWith('-')
+    && r.split('/').every((seg) => seg && seg !== '..' && !seg.startsWith('.')));
+  return ok ? v : TEST_ROOTS;
+}
+
 function gitLines(measure, args) {
   const out = gitRead(measure, args);
   return out ? out.split('\n').map((l) => l.trim()).filter(Boolean) : [];
@@ -284,7 +298,7 @@ function namedSet(measure, files) {
   };
 }
 
-function testPool(measure) {
+function testPool(measure, roots = TEST_ROOTS) {
   const found = [];
   const walk = (rel) => {
     let ents;
@@ -300,7 +314,7 @@ function testPool(measure) {
       } else if (isPoolPath(child)) found.push(child);
     }
   };
-  for (const r of TEST_ROOTS) walk(r);
+  for (const r of roots) walk(r);
   return found.sort();
 }
 
@@ -308,7 +322,7 @@ function subjectMatchers(sources) {
   return sources.map((rel) => ({
     rel,
     stem: rel.endsWith('.js') ? rel.slice(0, -3) : null,
-    literal: rel.endsWith('.js') || rel.includes('/'),
+    literal: /\.[cm]?js$/.test(rel) || rel.includes('/'),
     base: rel.endsWith('.js') || !rel.includes('/') || rel.startsWith('web-dist/')
       ? null : path.posix.basename(rel),
     joined: rel.includes('/')
@@ -326,7 +340,7 @@ function relPathTargets(testRel, text) {
   return out;
 }
 
-function selectSet(measure) {
+function selectSet(measure, roots = TEST_ROOTS) {
   const master = gitRead(measure, ['rev-parse', '--verify', '--quiet', 'master']);
   if (!master) {
     emit(`[${LEAF}] own: nothing measured — \`master\` does not resolve in ${measure}`, 1, 200);
@@ -354,7 +368,7 @@ function selectSet(measure) {
   const matchers = subjectMatchers(sources);
   const bySubject = [];
   if (matchers.length) {
-    for (const t of testPool(measure)) {
+    for (const t of testPool(measure, roots)) {
       if (seen.has(t)) continue;
       let text = '';
       try {
@@ -430,7 +444,7 @@ function lockRefusal(lines) {
   return null;
 }
 
-module.exports = { TEST_ROOTS, failureRows, isPoolPath, testPool };
+module.exports = { TEST_ROOTS, failureRows, isPoolPath, testPool, hostTestRoots };
 if (require.main !== module) return;
 
 const CHANNEL = typeof process.send === 'function';
@@ -462,7 +476,7 @@ if (!fs.existsSync(runner)) {
   );
 }
 
-const selected = named || (scope === 'own' ? selectSet(measure) : null);
+const selected = named || (scope === 'own' ? selectSet(measure, hostTestRoots(process.env.CLODEX_SUITE_TEST_ROOTS)) : null);
 const TAG = named ? `named: ${named.files.length} file${named.files.length === 1 ? '' : 's'}: `
   : scope === 'own' ? 'own: ' : '';
 
