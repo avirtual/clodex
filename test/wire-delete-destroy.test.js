@@ -6,7 +6,7 @@ const path = require('node:path');
 const os = require('node:os');
 const fs = require('node:fs');
 const { mk } = require('./lib/session-fixtures');
-const { mkTmpRoot } = require('./lib/tmp-roots');
+const { mkTmpRoot, tmpHomeOs } = require('./lib/tmp-roots');
 const { createRemoteWiring } = require('../remote-wiring');
 
 const SID = 'aaaaaaaa-1111-4111-8111-111111111111';
@@ -75,7 +75,7 @@ function peerKillSession(manager, persistence, REGISTRY_DIR) {
   };
   let srv = null;
   const known = {
-    path, fs, os, log: QUIET, manager,
+    path, fs, os: tmpHomeOs(), log: QUIET, manager,
     DEFAULT_WORKSPACE_ID: 'default', AGENT_NAME_RE: /^(?!\.+$)[a-zA-Z0-9._-]{1,64}$/,
     REGISTRY_DIR, OUTBOX_DIR: path.join(REGISTRY_DIR, 'outbox'), SELF_LABEL: 't',
     ensureDir: () => {}, claimOutbox: () => [], listOutboxOrigins: () => [],

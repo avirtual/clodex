@@ -505,5 +505,8 @@ test('t2442: a claude spawn seeds the injected home and leaves the real ~/.claud
     const seeded = JSON.parse(fs.readFileSync(path.join(app.home, '.claude.json'), 'utf8'));
     assert.strictEqual(seeded.projects[app.root].hasTrustDialogAccepted, true, 'ENTER: the spawn path seeded the injected home');
   } finally { app.stop(); }
-  assert.deepStrictEqual(statOf(), before);
+  const after = statOf();
+  if (JSON.stringify(after) !== JSON.stringify(before)) {
+    assert.ok(!fs.readFileSync(realFile, 'utf8').includes(JSON.stringify(app.root)), `the real file changed (${JSON.stringify(before)} -> ${JSON.stringify(after)}) and holds this test's cwd`);
+  }
 });

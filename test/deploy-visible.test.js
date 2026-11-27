@@ -9,7 +9,7 @@ const { registerIpcHandlers } = require('../ipc-handlers');
 const { fixDirFor } = require('../clodex-paths');
 const { diagLines } = require('./lib/engine-isolation');
 const { mk } = require('./lib/session-fixtures');
-const { mkTmpRoot } = require('./lib/tmp-roots');
+const { mkTmpRoot, tmpHomeOs } = require('./lib/tmp-roots');
 
 const REPO = path.join(__dirname, '..');
 
@@ -33,7 +33,7 @@ function mkDeployHandlers({ sshRun, log, registryDir = '/nope', manager, fsDep =
     log,
     fs: fsDep,
     path,
-    os: require('node:os'),
+    os: tmpHomeOs(),
     sshRun,
     manager,
     persistence: { list: () => [], get: () => null },

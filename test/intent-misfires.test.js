@@ -6,7 +6,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
 const { mk } = require('./lib/session-fixtures');
-const { mkTmpRoot } = require('./lib/tmp-roots');
+const { mkTmpRoot, tmpHomeOs } = require('./lib/tmp-roots');
 const { parseIntent, looksLikeIntent } = require('../intent-scanner');
 const { parseRemindSpec } = require('../remind-schedule');
 const { isFilenameToken, parseAndValidate, clampReplyBody } = require('../exec-schema');
@@ -90,7 +90,7 @@ function mkSite(extra = {}) {
   fs.writeFileSync(path.join(execDir, 'fails.json'), JSON.stringify({ argv: [process.execPath, '-e', 'process.exit(1)'], schema: { type: 'object' } }));
   const persisted = { intents: ['dm', 'remind', 'exec', 'context', 'task'], execCommands: ['run-tests', 'fails'] };
   const m = mk({
-    REGISTRY_DIR, fs, path, os, childProcess: require('node:child_process'), isFilenameToken, parseAndValidate, clampReplyBody,
+    REGISTRY_DIR, fs, path, os: tmpHomeOs(), childProcess: require('node:child_process'), isFilenameToken, parseAndValidate, clampReplyBody,
     parseIntent, looksLikeIntent, execBodyCap: 64 * 1024, parseRemindSpec,
     getRemindScheduler: () => ({ listForAgent: () => [], cancel: () => false }),
     getCtlService: () => null,

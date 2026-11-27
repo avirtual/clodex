@@ -7,7 +7,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { mk } = require('./lib/session-fixtures');
 const { isFilenameToken, parseAndValidate, clampReplyBody } = require('../exec-schema');
-const { mkTmpRoot } = require('./lib/tmp-roots');
+const { mkTmpRoot, tmpHomeOs } = require('./lib/tmp-roots');
 
 const QUIET = { info() {}, warn() {}, error() {}, debug() {} };
 
@@ -21,7 +21,7 @@ function harness({ remote = null, def } = {}) {
   }));
   const spawned = [];
   const m = mk({
-    log: QUIET, isFilenameToken, fs, path, os, REGISTRY_DIR, clampReplyBody, parseAndValidate,
+    log: QUIET, isFilenameToken, fs, path, os: tmpHomeOs(), REGISTRY_DIR, clampReplyBody, parseAndValidate,
     resolveTeam: () => null,
     getRemoteServer: () => remote,
     getPersistence: () => ({ list: () => [], get: () => ({ name: 'a', execCommands: ['avh-form'] }) }),

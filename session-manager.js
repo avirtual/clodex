@@ -399,8 +399,10 @@ function addDirArgs(args) {
   return out;
 }
 
-function realClaudeHomeUnderTest(dir, env = process.env, realHome = nodeOs.userInfo().homedir) {
+function realClaudeHomeUnderTest(dir, env = process.env) {
   if (!env.NODE_TEST_CONTEXT || typeof dir !== 'string' || !dir) return false;
+  let realHome;
+  try { realHome = nodeOs.userInfo().homedir; } catch { realHome = nodeOs.homedir(); }
   const target = nodePath.resolve(dir);
   const home = nodePath.resolve(realHome);
   if (target === home) return true;

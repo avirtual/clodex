@@ -118,3 +118,6 @@ test/test-digest-lock.test.js, so a wedged run ends in this runner's own
 file named. The file is from node's SIGTERM `# Interrupted while running:` tap
 line, or the given one for a one-file run killed before node wrote it.
 `CLODEX_TEST_RUN_TIMEOUT_MS` overrides it for the runner's own tests.
+
+## childEnv
+`CLAUDE_CONFIG_DIR` is dropped because `preseedClaudeOnboarding` prefers it over the injected home, so an inherited one points every fixture whose `mergeSessionEnv` spreads `process.env` at the host's real Claude config.

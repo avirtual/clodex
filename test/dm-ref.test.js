@@ -8,7 +8,7 @@ const path = require('node:path');
 const { RemoteServer } = require('../remote');
 const { enqueueOutbox, claimOutbox } = require('../peer-outbox');
 const { mk } = require('./lib/session-fixtures');
-const { mkTmpRoot } = require('./lib/tmp-roots');
+const { mkTmpRoot, tmpHomeOs } = require('./lib/tmp-roots');
 
 const PAGE = path.join(__dirname, '..', 'renderer', 'remote.html');
 
@@ -16,7 +16,7 @@ function captureDeliverDm(manager) {
   const { createRemoteWiring } = require('../remote-wiring');
   let srv = null;
   const deps = {
-    path, fs, os: require('node:os'),
+    path, fs, os: tmpHomeOs(),
     log: { info() {}, warn() {}, error() {} },
     DEFAULT_WORKSPACE_ID: 'default',
     AGENT_NAME_RE: /^[a-zA-Z0-9._-]{1,64}$/,

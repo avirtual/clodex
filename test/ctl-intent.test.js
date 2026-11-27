@@ -6,7 +6,7 @@ const path = require('node:path');
 const { mk: mkBase } = require('./lib/session-fixtures');
 const { parseWithRegistry } = require('../intent-registry');
 const { validateExecDef, parseAndValidate, clampReplyBody, isFilenameToken } = require('../exec-schema');
-const { mkTmpRoot } = require('./lib/tmp-roots');
+const { mkTmpRoot, tmpHomeOs } = require('./lib/tmp-roots');
 
 const READ_DEF = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'resources', 'library', 'exec', 'clodex-ctl-read.json'), 'utf-8'));
 const SEATS_DEF = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'resources', 'library', 'exec', 'clodex-ctl-seats.json'), 'utf-8'));
@@ -19,7 +19,7 @@ function fakeCtl(block = { output: 'NAME  STATE\nhand  idle\n', exitCode: 0 }) {
 }
 
 const QUIET = { info() {}, warn() {}, error() {}, debug() {} };
-const mk = (o = {}) => mkBase({ log: QUIET, isFilenameToken, fs, path, os: require('node:os'), ...o });
+const mk = (o = {}) => mkBase({ log: QUIET, isFilenameToken, fs, path, os: tmpHomeOs(), ...o });
 
 const SEAT = { name: 'a', agentType: 'claude', workspaceId: 'ws1', cwd: '/tmp' };
 

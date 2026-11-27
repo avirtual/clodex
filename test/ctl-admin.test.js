@@ -6,7 +6,7 @@ const path = require('node:path');
 const os = require('node:os');
 const net = require('node:net');
 const cp = require('node:child_process');
-const { mkTmpRoot } = require('./lib/tmp-roots');
+const { mkTmpRoot, tmpHomeOs } = require('./lib/tmp-roots');
 const A = require('../scripts/clodex-ctl-admin.js');
 
 const ROOT = path.join(__dirname, '..');
@@ -454,7 +454,7 @@ async function execEnvProbe(deps = {}, { token } = {}) {
   const spawned = [];
   const QUIET = { info() {}, warn() {}, error() {}, debug() {} };
   const m = mkBase({
-    log: QUIET, isFilenameToken, fs, path, os, REGISTRY_DIR, clampReplyBody, parseAndValidate,
+    log: QUIET, isFilenameToken, fs, path, os: tmpHomeOs(), REGISTRY_DIR, clampReplyBody, parseAndValidate,
     resolveTeam: () => null,
     getPersistence: () => ({ list: () => [], get: () => ({ name: 'a', execCommands: ['probe'] }) }),
     childProcess: { spawn: (cmd, args, opts) => { spawned.push(opts); throw new Error('stop'); } },
