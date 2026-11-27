@@ -987,8 +987,46 @@ left) prints `result unknown — …` naming the last runner tried and exits
 non-zero, never a green line and never a local fallback. `{"local": true}`
 in the payload runs it here, records `override:'call'` in the suite ledger and
 leaves a `ticket-loop` traffic row to the lead. A routed hand run waits at most
-15 minutes for the runner to take the job (queue and upload) and at most 21
-minutes for it to run; past either it is cancelled and reported unknown.
+15 minutes for the runner to take the job (queue and upload) and at most its
+run limit (21 minutes unless `run:` sets it) plus the setup slack below for it
+to run; past either it is cancelled and reported unknown.
+
+`[agent:team runner run:<minutes>|off]` (lead only, a runner must be set)
+stores `testRunner.runMs`: how long one suite may run on a runner, whole
+minutes from 1 to 36; anything else is refused naming the range, and `off`
+returns to the 21-minute default. A hand-written value outside that range is
+dropped with a warning and the rest of `testRunner` is kept. Gate runs
+(shadow, box decide and a reroute of either) then send it as the job's
+`timeoutMs` and grow their budget, and the box guard, by `runMs` minus 21
+minutes when it is longer; with no key the job body is unchanged. Hand runs
+send it as `timeoutMs`; their run budget is `runMs` plus the setup slack
+(`handSlackMs`: the team's `setup.timeoutMs`, at least 15 minutes, plus 2),
+because the client counts from the job's `setup` while the runner's kill
+counts from `running`, so a killed run comes back with its last output instead
+of being cancelled first. For a call that routes to the runner, the
+`clodex-run-tests` exec ceiling adds that slack plus 2 minutes
+(`handExecSlackMs`) and `runMs` minus 21 minutes; a call that runs here keeps
+the plain ceiling.
+The home suite's kill timer does not change. A runner whose own
+`maxTimeoutMs` is lower refuses the job; that reads `runner refused the job:
+bad timeoutMs — the job asked for <n>ms, the runner's ceiling is <m>ms`, or
+`… the runner's ceiling is lower and its info route does not report it` when
+the runner's info carries no `maxTimeoutMs`, class `outcome-unknown`.
+`[agent:team runner hand-env:KEY=VALUE]` (repeatable on one head line) merges
+into `testRunner.handEnv`, `hand-env:KEY=` drops one key and `hand-env:off`
+clears all. Names follow `env` (`^[A-Z_][A-Z0-9_]*$`, which the runner
+enforces) and `env` and `handEnv` together hold at most 32 names. Hand runs
+send `{ ...env, ...handEnv }`; gate runs never see `handEnv`. Both may share
+one head line, never with a peer, `hands:`, `gate:` or `fallback:`. Bare
+`[agent:team runner]` shows `run <n> min` (or `run 21 min (default)`) and the
+`hand-env` names and values after the gate mode.
+
+A suite the runner killed at its limit reads `the suite did not finish within
+<n>ms (killed)` followed by `; last output: ` and its last three non-empty
+stdout lines (control characters flattened, each cut to 200 characters,
+joined with ` | `) and the stderr `run-tests: TIMEOUT after … in …` line when
+there is one; it carries no totals. The hand's digest and the lead's hold
+notice carry it whole.
 
 The team popover shows the same setting under the merge-target row
 (`team:runner`, `team:setRunner`): the peer, both modes and the shadow

@@ -260,10 +260,12 @@ function parseTeam(cleaned) {
   if (sub === 'worktrees') return { type: 'team', sub, value: positional[0] || null, body: '' };
   if (sub === 'hands') return { type: 'team', sub, value: positional[0] || null, body: '' };
   if (sub === 'runner') {
-    const handsM = argStr.match(/\bhands:(\S+)/);
-    const gateM = argStr.match(/\bgate:(\S+)/);
-    const fallbackM = argStr.match(/\bfallback:(\S+)/);
-    return { type: 'team', sub, value: positional[0] || null, hands: handsM ? handsM[1] : null, gate: gateM ? gateM[1] : null, ...(fallbackM ? { fallback: fallbackM[1] } : {}), ...(positional[0] === 'add' || positional[0] === 'rm' ? { target: positional[1] || null } : {}), body: '' };
+    const tokens = argStr.trim().split(/\s+/);
+    const flag = (k) => { const t = tokens.find((x) => x.startsWith(`${k}:`) && x.length > k.length + 1); return t ? t.slice(k.length + 1) : null; };
+    const runTs = tokens.filter((t) => t.startsWith('run:'));
+    const handEnv = tokens.filter((t) => t.startsWith('hand-env:')).map((t) => t.slice('hand-env:'.length));
+    const fallback = flag('fallback');
+    return { type: 'team', sub, value: positional[0] || null, hands: flag('hands'), gate: flag('gate'), ...(fallback != null ? { fallback } : {}), ...(runTs.length ? { run: runTs[0].slice('run:'.length) } : {}), ...(runTs.length > 1 ? { runRepeated: true } : {}), ...(handEnv.length ? { handEnv } : {}), ...(positional[0] === 'add' || positional[0] === 'rm' ? { target: positional[1] || null } : {}), body: '' };
   }
   if (sub === 'role-rename') return { type: 'team', sub, name: positional[0] || null, to: positional[1] || null, body: '' };
   if (sub === 'gather') return { type: 'team', sub, dry: positional[0] === 'dry', body: '' };

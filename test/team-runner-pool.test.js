@@ -222,7 +222,7 @@ test('t2362: bare [agent:team runner] on a pool prints one line per member with 
     peers: [R1, R2], desk: ATTACHED, client,
   });
   assert.deepStrictEqual(await f.verb('[agent:team runner]'), [[
-    '[agent:team] test runner of team: 3 runners, hands full (hand runs use runner-1 only), gate on',
+    '[agent:team] test runner of team: 3 runners, hands full (hand runs use runner-1 only), gate on, run 21 min (default)',
     'runner-1, wire push — reachable, suite capability, queue 2, env box linux/arm64 node v22 key k, slots 1/2 in use',
     'laptop, wire pull — attached, queue 0, env box linux/arm64 node v22 key k, slots 0/1 in use',
     'runner-2, wire push — online with the suite capability, but its info route failed: status 0',
@@ -879,3 +879,34 @@ test('t2412: two tickets losing the same runner each reroute on their own and ne
   rig.f.m._boxRow(rig.team, { id: 't1' }, one, null);
   assert.deepStrictEqual(rig.records().map((x) => [x.decidedBy, x.runner, x.attempts.map((a) => a.outcome)]), [['box', 'runner-2', ['lost', 'pass']]]);
 });
+
+const RUN_LIMIT_ROWS = [
+  ['no runMs', {}, {}, 2460000],
+  ['runMs 30 min', { runMs: 1800000 }, { timeoutMs: 1800000 }, 2460000 + 540000],
+  ['runMs 10 min', { runMs: 600000 }, { timeoutMs: 600000 }, 2460000],
+];
+
+for (const [name, extra, wantTimeout, wantBudget] of RUN_LIMIT_ROWS) {
+  test(`t2418: a shadow submit with ${name} sends ${wantTimeout.timeoutMs || 'no'} timeoutMs and a ${wantBudget}ms budget; handEnv stays off the gate`, async () => {
+    const sent = [];
+    const client = { reachable: async () => ({ ok: true, info: {} }), shadow: async (o) => { sent.push(o); return null; } };
+    const f = mkFixture({ manifestExtra: { testRunner: { peer: 'runner-1', gate: 'shadow', env: { A: '1' }, handEnv: { H: '1' }, ...extra } }, peers: [R1], client });
+    await f.m._shadowSubmit(f.tm.loadManifest('team'), { id: 't1' }, '/w', {});
+    assert.strictEqual(sent.length, 1, 'ENTER: the shadow job was submitted');
+    assert.deepStrictEqual([sent[0].budgetMs, 'timeoutMs' in sent[0] ? { timeoutMs: sent[0].timeoutMs } : {}, sent[0].env], [wantBudget, wantTimeout, { A: '1' }]);
+  });
+
+  test(`t2418: a box decide with ${name} sends ${wantTimeout.timeoutMs || 'no'} timeoutMs, a ${wantBudget}ms budget and moves the guard with it`, async () => {
+    const sent = [];
+    const guards = [];
+    const timers = { setTimeout: (fn, ms) => { guards.push(ms); return 1; }, clearTimeout: () => {} };
+    const client = { run: async (o) => { sent.push(o); return { unknown: 'runner unreachable', res: null, record: null }; } };
+    const f = mkFixture({ manifestExtra: { testRunner: { ...PUSH_ON, env: { A: '1' }, handEnv: { H: '1' }, ...extra } }, peers: [R1], client, extraDeps: { boxDecideTimers: timers } });
+    const team = f.tm.loadManifest('team');
+    require('../team-box').writeBox(team.dir, BOX_TEXT);
+    await f.m._boxDecide(team, { id: 't1' }, '/w', {});
+    assert.strictEqual(sent.length, 1, 'ENTER: the box job was submitted');
+    assert.deepStrictEqual([sent[0].budgetMs, 'timeoutMs' in sent[0] ? { timeoutMs: sent[0].timeoutMs } : {}, sent[0].env], [wantBudget, wantTimeout, { A: '1' }]);
+    assert.deepStrictEqual(guards, [wantBudget + 2 * 60 * 1000 + 5 * 60 * 1000 + 25 * 60 * 1000]);
+  });
+}

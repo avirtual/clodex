@@ -171,6 +171,6 @@ test('t2266: paintRunnerState rewrites only the state line', () => {
 test('t2303: the state line of a pull runner names the wire and whether it is attached', () => {
   const { runnerStateLine } = require('../renderer/lib/team-runner-row');
   assert.strictEqual(runnerStateLine({ peer: 'laptop', wire: 'pull', reach: 'not attached (last claim never)', tally: null }),
-    'dials in (wire pull, shadow only): not attached (last claim never)');
+    'dials in (wire pull): not attached (last claim never)');
   assert.strictEqual(runnerStateLine({ peer: 'runner-1', wire: 'push', reach: 'offline', tally: null }), 'offline');
 });

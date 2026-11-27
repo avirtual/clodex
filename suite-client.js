@@ -26,6 +26,17 @@ const RETRY_TEXT = {
   incomplete: 'runner could not complete the pack',
 };
 
+const KILLED_TAIL_LINES = 3;
+const KILLED_LINE_MAX = 200;
+const HUNG_RE = /^run-tests: TIMEOUT after .* in .+$/;
+const flatLine = (l) => l.replace(/[\x00-\x1f\x7f]+/g, ' ').trim().slice(0, KILLED_LINE_MAX);
+
+function killedTail(stdout, stderr) {
+  const last = String(stdout || '').split('\n').map(flatLine).filter(Boolean).slice(-KILLED_TAIL_LINES);
+  const hung = String(stderr || '').split('\n').filter((l) => HUNG_RE.test(l)).map(flatLine).pop();
+  return `${last.length ? `; last output: ${last.join(' | ')}` : ''}${hung ? `; ${hung}` : ''}`;
+}
+
 const REPICKABLE = /^(?:runner unreachable|runner refused the (?:job|token)|runner has no box|no peer )/;
 const RESTARTED = Symbol('runner-restart');
 const RESTARTING_REFUSAL = 'runner refused the job: runner is restarting';
@@ -277,6 +288,10 @@ function createSuiteClient({
     if (sub.unreachable) return { unknown: 'runner unreachable' };
     if (restarted(sub)) return { retry: 'runner-restart' };
     if (sub.body && sub.body.code === 'runner-restarting') return { unknown: RESTARTING_REFUSAL };
+    if (sub.body && sub.body.error === 'bad timeoutMs' && ctx.timeoutMs != null) {
+      const ceiling = Number.isFinite(limits.maxTimeoutMs) ? `is ${limits.maxTimeoutMs}ms` : 'is lower and its info route does not report it';
+      return { unknown: `runner refused the job: bad timeoutMs — the job asked for ${ctx.timeoutMs}ms, the runner's ceiling ${ceiling}` };
+    }
     if (!sub.body || !sub.body.ok) return { unknown: `runner refused the job: ${(sub.body && sub.body.error) || sub.error || `status ${sub.status}`}` };
     ctx.submitted = true;
     ctx.failFast = false;
@@ -465,7 +480,7 @@ function createSuiteClient({
       stdout: out.stdout, stderr: out.stderr, treeHash: ctx.treeHash, jobId: ctx.jobId, attempt: ctx.attempt,
       reason: job.reason, truncated: !!(job.out && job.out.truncated),
     } : null;
-    const unknown = out.unknown || null;
+    const unknown = out.unknown ? `${out.unknown}${out.outcome === 'timeout' && res ? killedTail(res.stdout, res.stderr) : ''}` : null;
     const totals = res && !unknown ? lastTotals(res.stdout) : null;
     const outcome = out.outcome || (unknown ? 'unknown' : !totals ? 'no-summary' : res.status === 0 ? 'pass' : 'fail');
     const endedAt = now();
@@ -894,6 +909,10 @@ function agreement(a, b) {
 
 const HAND_QUEUE_MS = 15 * 60 * 1000;
 const HAND_RUN_MS = 21 * 60 * 1000;
+const HAND_SETUP_MS = 15 * 60 * 1000;
+const HAND_KILL_MS = 2 * 60 * 1000;
+const handSlackMs = (tr) => Math.max((tr && tr.setup && tr.setup.timeoutMs) || 0, HAND_SETUP_MS) + HAND_KILL_MS;
+const handExecSlackMs = (tr) => handSlackMs(tr) + HAND_KILL_MS;
 const FLAG_KEYS = ['CLODEX_TEST_LOCK', 'CLODEX_TEST_SLOW_ADVISORY'];
 
 function route({ team = null, kind = 'hand', scope = 'full', local = false } = {}) {
@@ -994,8 +1013,8 @@ function createChannelHost({
     const tr = team.testRunner;
     const out = await client.run({
       peer: via.peer, wire, name, tree, kind: 'hand', scope: msg.scope, team: team.name, ticket, seat,
-      files: msg.files || [], flags: msg.flags || {}, setup: tr.setup || null, env: tr.env || {},
-      queueBudgetMs, runBudgetMs: runMs, timeoutMs: runMs, route: d.why,
+      files: msg.files || [], flags: msg.flags || {}, setup: tr.setup || null, env: { ...(tr.env || {}), ...(tr.handEnv || {}) },
+      queueBudgetMs, runBudgetMs: runMs + handSlackMs(tr), timeoutMs: runMs, budgetMs: queueBudgetMs + runMs + handSlackMs(tr), route: d.why,
       shouldStop: () => wantCancel,
       onSubmitted: ({ jobId }) => { inflight.jobId = jobId; fireCancel(); },
       onProgress: (line) => say({ progress: line }),
@@ -1029,4 +1048,4 @@ function createChannelHost({
   };
 }
 
-module.exports = { createSuiteClient, createChannelHost, route, lastTotals, localHalf, failingNames, agreement, boxVerdict, fallbackOf, FALLBACK_CODES, pickRunner, runnerLoad, HAND_QUEUE_MS, HAND_RUN_MS, BUILD_BUDGET_MS, LOST_AFTER_MS };
+module.exports = { createSuiteClient, createChannelHost, route, lastTotals, localHalf, failingNames, agreement, boxVerdict, fallbackOf, FALLBACK_CODES, pickRunner, runnerLoad, HAND_QUEUE_MS, HAND_RUN_MS, handSlackMs, handExecSlackMs, HUNG_RE, BUILD_BUDGET_MS, LOST_AFTER_MS };

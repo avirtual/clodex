@@ -33,6 +33,7 @@ const FAIL_CAP = 2000;
 const DIAG_CAP = 400;
 const RAW_CAP = 400;
 const LOCK_WAIT_MS = 15 * 60 * 1000;
+const UNKNOWN_DIGEST_MAX = 1200;
 
 function keepShow() {
   const home = os.homedir();
@@ -482,7 +483,7 @@ function askHost() {
       return;
     }
     if (m.run !== 'remote' || m.unknown) {
-      emit(`[${LEAF}] ${TAG}result unknown — the suite did not complete on runner ${m.runner || '?'}: ${m.unknown || `unexpected reply ${JSON.stringify(m.run)}`}`, 1, 400);
+      emit(`[${LEAF}] ${TAG}result unknown — the suite did not complete on runner ${m.runner || '?'}: ${m.unknown || `unexpected reply ${JSON.stringify(m.run)}`}`, 1, UNKNOWN_DIGEST_MAX);
     }
     const via = m.rerouted && m.rerouted.from ? `(rerouted from ${m.rerouted.from} to ${m.rerouted.to})` : m.runner ? `(runner ${m.runner})` : null;
     digest({

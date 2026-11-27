@@ -205,10 +205,12 @@ function parseIntentLegacy(rawLine) {
     if (sub === 'worktrees') return { type: 'team', sub, value: positional[0] || null, body: '' };
     if (sub === 'hands') return { type: 'team', sub, value: positional[0] || null, body: '' };
     if (sub === 'runner') {
-      const handsM = argStr.match(/\bhands:(\S+)/);
-      const gateM = argStr.match(/\bgate:(\S+)/);
-      const fallbackM = argStr.match(/\bfallback:(\S+)/);
-      return { type: 'team', sub, value: positional[0] || null, hands: handsM ? handsM[1] : null, gate: gateM ? gateM[1] : null, ...(fallbackM ? { fallback: fallbackM[1] } : {}), body: '' };
+      const tokens = argStr.trim().split(/\s+/);
+      const flag = (k) => { const t = tokens.find((x) => x.startsWith(`${k}:`) && x.length > k.length + 1); return t ? t.slice(k.length + 1) : null; };
+      const runTs = tokens.filter((t) => t.startsWith('run:'));
+      const handEnv = tokens.filter((t) => t.startsWith('hand-env:')).map((t) => t.slice('hand-env:'.length));
+      const fallback = flag('fallback');
+      return { type: 'team', sub, value: positional[0] || null, hands: flag('hands'), gate: flag('gate'), ...(fallback != null ? { fallback } : {}), ...(runTs.length ? { run: runTs[0].slice('run:'.length) } : {}), ...(runTs.length > 1 ? { runRepeated: true } : {}), ...(handEnv.length ? { handEnv } : {}), body: '' };
     }
     if (sub === 'role-rename') return { type: 'team', sub, name: positional[0] || null, to: positional[1] || null, body: '' };
     // t701's gather, landed here in the same commit as parseTeam's — the same
@@ -467,7 +469,7 @@ const ADVERSARIAL = [
   '[agent:team done report]', '[agent:team done]', '[agent:team donex]',
   '[agent:team worktrees in-root]', '[agent:team worktrees]', '[agent:team worktreesx]',
   '[agent:team hands 3]', '[agent:team hands off]', '[agent:team hands]', '[agent:team handsx]',
-  '[agent:team runner runner-1]', '[agent:team runner off]', '[agent:team runner hands:full]', '[agent:team runner gate:on]', '[agent:team runner gate:on fallback:hold]', '[agent:team runner]', '[agent:team runnerx]',
+  '[agent:team runner runner-1]', '[agent:team runner off]', '[agent:team runner hands:full]', '[agent:team runner gate:on]', '[agent:team runner gate:on fallback:hold]', '[agent:team runner run:30]', '[agent:team runner run:off]', '[agent:team runner hand-env:A=1 hand-env:B= hand-env:off]', '[agent:team runner]', '[agent:team runnerx]',
   '[agent:team template-save hand-seat] {"type":"claude"}', '[agent:team template-save]',
   '[agent:team template-rm hand-seat]', '[agent:team template-rmx hand-seat]',
   '[agent:team prompt-save system lead] body text', '[agent:team prompt-save append lead] body',
