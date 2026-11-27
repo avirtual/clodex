@@ -817,6 +817,21 @@ test('replies: an idle that ignored a repainting ticker names it', () => {
     '[agent:browser] clicked ebloc [31] clickable "Lista de plată" · same page · idle 2.1s · ticker ignored: span#clock');
 });
 
+test('replies: an idle that ignored repeating requests or ticking elements says so in one short line; a busy reply keeps its text', () => {
+  const cmd = { sub: 'click', n: null, text: 'Files' };
+  const act = (idle) => R.actReply('click', 'drive', cmd, { kind: 'clickable', label: 'Files', navigated: false, n: 4, idle });
+  assert.strictEqual(act({ ok: true, ms: 8400, ignored: { requests: 5, hosts: ['signaler-pa.example.com'], ticking: 12 } }),
+    '[agent:browser] clicked drive [4] clickable "Files" · same page · idle 8.4s (ignoring 5 repeating requests to signaler-pa.example.com and 12 ticking elements)');
+  assert.strictEqual(act({ ok: true, ms: 600, ignored: { requests: 6, hosts: ['a.example', 'b.example', 'c.example', 'd.example', 'e.example'], ticking: 0 } }),
+    '[agent:browser] clicked drive [4] clickable "Files" · same page · idle 0.6s (ignoring 6 repeating requests to a.example, b.example, c.example +2 more)');
+  assert.strictEqual(act({ ok: true, ms: 6600, ignored: { requests: 0, hosts: [], ticking: 12 } }),
+    '[agent:browser] clicked drive [4] clickable "Files" · same page · idle 6.6s (ignoring 12 ticking elements)');
+  assert.strictEqual(R.waitReply('drive', { ok: true, ms: 3100, ignored: { requests: 5, hosts: ['signaler-pa.example.com'], ticking: 0 } }),
+    '[agent:browser] drive idle after 3.1s (ignoring 5 repeating requests to signaler-pa.example.com)');
+  assert.strictEqual(R.waitReply('drive', { ok: false, ms: 15000, inflight: ['https://x.example/a'], ignored: { requests: 5, hosts: ['signaler-pa.example.com'], ticking: 0 } }),
+    '[agent:browser] drive still busy after 15s (1 requests in flight: https://x.example/a)');
+});
+
 test('replies: a churn timeout names the churning nodes unless requests are in flight', () => {
   const cmd = { sub: 'click', n: null, text: 'Lista de plată' };
   const head = '[agent:browser] clicked ebloc [31] clickable "Lista de plată" · same page · ';

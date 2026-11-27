@@ -46,11 +46,20 @@ function withPath(head, tail) {
   return oneLine(head, Math.max(40, room)) + tail;
 }
 
+function ignoredTail(ig) {
+  if (!ig) return '';
+  const hosts = Array.isArray(ig.hosts) ? ig.hosts.map((h) => oneLine(String(h), 60)) : [];
+  const req = ig.requests > 0 ? `${ig.requests} repeating requests${hosts.length ? ` to ${hosts.slice(0, 3).join(', ')}${hosts.length > 3 ? ` +${hosts.length - 3} more` : ''}` : ''}` : '';
+  const tick = ig.ticking > 0 ? `${ig.ticking} ticking elements` : '';
+  const both = [req, tick].filter(Boolean).join(' and ');
+  return both ? ` (ignoring ${both})` : '';
+}
+
 function idleLabel(idle) {
   if (!idle) return '';
   const secs = (Number(idle.ms) / 1000).toFixed(1);
   const polls = idle.polls && Array.isArray(idle.polls.paths) && idle.polls.paths.length ? `${idle.polls.paths.map((p) => oneLine(redactUrl(p), 60)).join(', ')} every ~${(Number(idle.polls.everyMs) / 1000).toFixed(1)} s` : '';
-  if (idle.ok) return `idle ${secs}s${idle.ticker ? ` · ticker ignored: ${idle.ticker}` : ''}${polls ? ` · polls ignored: ${polls}` : ''}`;
+  if (idle.ok) return `idle ${secs}s${ignoredTail(idle.ignored)}${idle.ticker ? ` · ticker ignored: ${idle.ticker}` : ''}${polls ? ` · polls ignored: ${polls}` : ''}`;
   if (idle.stopped) return `stopped a stalled load after ${Math.round(idle.ms / 1000)}s`;
   const n = Array.isArray(idle.inflight) ? idle.inflight.length : 0;
   const pathOnly = (p) => { try { return new URL(p).pathname || '/'; } catch { return redactUrl(p); } };
@@ -607,7 +616,7 @@ function waitReply(service, r, forText) {
     return r.found ? reply(`${service} shows ${JSON.stringify(forText)} after ${secs}s`)
       : reply(`${service} does not show ${JSON.stringify(forText)} after ${Math.round(r.ms / 1000)}s`);
   }
-  if (r.ok) return reply(`${service} idle after ${secs}s`);
+  if (r.ok) return reply(`${service} idle after ${secs}s${ignoredTail(r.ignored)}`);
   return reply(`${service} ${idleLabel(r)}`);
 }
 

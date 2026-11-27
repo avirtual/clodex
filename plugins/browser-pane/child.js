@@ -969,7 +969,7 @@ function run(electron, ctx) {
     }
   }
 
-  const idleOf = (idle) => ({ ok: !!idle.ok, ms: idle.ms, inflight: idle.inflight || [], ...(idle.ticker ? { ticker: idle.ticker } : {}), ...(Array.isArray(idle.churn) && idle.churn.length ? { churn: idle.churn } : {}), ...(idle.polls ? { polls: idle.polls } : {}), ...(idle.held ? { held: idle.held } : {}) });
+  const idleOf = (idle) => ({ ok: !!idle.ok, ms: idle.ms, inflight: idle.inflight || [], ...(idle.ticker ? { ticker: idle.ticker } : {}), ...(Array.isArray(idle.churn) && idle.churn.length ? { churn: idle.churn } : {}), ...(idle.polls ? { polls: idle.polls } : {}), ...(idle.held ? { held: idle.held } : {}), ...(idle.ignored ? { ignored: idle.ignored } : {}) });
   const actOpts = (svc) => ({ timeoutMs: ACT_IDLE_MS, shouldStop: () => svc.lock.takeover });
 
   async function opOpen(name, frame, args) {
