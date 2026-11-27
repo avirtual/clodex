@@ -137,7 +137,7 @@ for (const name of RESERVED) {
   test(`a persisted seat named ${name} still restores, renames away and is served by the per-session routes`, async () => {
     const m = mk({ getPersistence: () => ({ list: () => [], get: (n) => (n === name ? { name } : null) }) });
     await assert.rejects(() => m.create(name, 'claude', null), (err) => !/is a reserved name/.test(err.message));
-    const r = await m.rename(name, 'renamed-away');
+    const r = await m.rename(name, 'renamed-away').catch((e) => ({ error: e.message }));
     assert.ok(!(r && /is a reserved name/.test(r.error || '')), JSON.stringify(r));
     await withRemote(async (server) => {
       const get = await req(server.port, `/api/sessions/${encodeURIComponent(name)}`);

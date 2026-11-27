@@ -463,6 +463,37 @@ test('begin refuses a legacy-claim name with 400 reserved name, before any stagi
   assert.ok(!fs.existsSync(path.join(w.root, 'import')), 'no staging directory was created');
 });
 
+for (const name of ['.claude', 'CLAUDE.md', '.mcp.json', 'claude.md', '.MCP.JSON']) {
+  test(`the wired import begin and createSession refuse ${name} and create nothing of that name`, async () => {
+    const w = mkWiring();
+    await withServer({ seatImport: w.opts.seatImport, importCreate: w.opts.importCreate }, async (s) => {
+      const res = await call(s.port, 'POST', '/api/import/begin',
+        { body: { name, record: record({ cwd: path.join(w.home, 'proj') }) } });
+      assert.strictEqual(res.status, 400);
+      assert.strictEqual(res.body.error, `"${name}" is a reserved name`);
+    });
+    for (const body of [{ name, type: 'claude', cwd: path.join(w.home, 'cwd') }, { name, template: 'tpl', cwd: path.join(w.home, 'cwd') }, { name, team: 'shop' }]) {
+      assert.deepStrictEqual(await w.opts.createSession(body), { ok: false, code: 400, error: `"${name}" is a reserved name` });
+    }
+    assert.deepStrictEqual(w.createCalls, []);
+    assert.ok(!fs.existsSync(path.join(w.home, 'cwd')), 'no cwd was created');
+    for (const root of [w.root, w.home]) {
+      const hits = [];
+      const walk = (d) => { for (const e of fs.readdirSync(d, { withFileTypes: true })) { if (e.name.toLowerCase() === name.toLowerCase()) hits.push(path.join(d, e.name)); if (e.isDirectory()) walk(path.join(d, e.name)); } };
+      walk(root);
+      assert.deepStrictEqual(hits, []);
+    }
+  });
+}
+
+test('the wired createSession accepts the near-miss .claudex', async () => {
+  const w = mkWiring();
+  const r = await w.opts.createSession({ name: '.claudex', type: 'claude', cwd: path.join(w.home, 'cwd') });
+  assert.notStrictEqual(r.error, '".claudex" is a reserved name');
+  assert.strictEqual(w.createCalls.length, 1, JSON.stringify(r));
+  assert.strictEqual(w.createCalls[0][0], '.claudex');
+});
+
 
 test('begin returns the far-cwd refusal as a 400 and stages nothing for it', async () => {
   const w = mkWiring();

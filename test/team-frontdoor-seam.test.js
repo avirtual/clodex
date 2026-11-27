@@ -206,6 +206,24 @@ test('a write refusal surfaces as {ok:false} WITHOUT spawning', async () => {
   assert.strictEqual(created.length, 0, 'a refused write never spawns the session');
 });
 
+for (const name of ['.claude', 'CLAUDE.md', '.mcp.json', 'claude.md', '.MCP.JSON']) {
+  test(`team:create refuses the lead name ${name} before createTeam writes anything`, async () => {
+    const created = [];
+    const writes = [];
+    const handlers = registerWith({
+      manager: fakeManager(created),
+      createTeam: (arg) => { writes.push(arg); return { name: arg.name }; },
+      agentDefaults: { getDefaultDeny: () => [], getDefaultSkillDeny: () => [], getDefaultBuiltinDeny: () => [], getStrip: () => 0 },
+      persistence: { setStripLevel: () => {}, get: () => null },
+      workspaceOfSender: () => 'ws1',
+    });
+    const res = await handlers['team:create']({}, { teamName: 'shop', name, type: 'claude', cwd: '/proj' });
+    assert.deepStrictEqual(res, { ok: false, error: `"${name}" is a reserved name` });
+    assert.deepStrictEqual(writes, []);
+    assert.strictEqual(created.length, 0);
+  });
+}
+
 // --- T29 Layer A Slice 2: the metadata-mutation IPC handlers (GUI backend) ---
 // Operator-driven (no lead-gate here — the renderer IS the operator). removeRole/
 // renameRole run manager._roleInUse (C5) BEFORE the mutator and return
