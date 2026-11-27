@@ -280,3 +280,32 @@ test('the finished section of the activity view ships expanded', () => {
   assert.ok(tag, 'ENTER: the finished section exists');
   assert.match(tag[0], /\sopen[\s>]/);
 });
+
+test('the default timers work where the natives refuse a plain-object receiver, as a browser window does', async () => {
+  const strict = (real) => function (...args) {
+    if (this !== undefined && this !== globalThis) throw new TypeError('Illegal invocation');
+    return real.apply(globalThis, args);
+  };
+  const saved = { setTimeout: globalThis.setTimeout, clearTimeout: globalThis.clearTimeout };
+  const standIn = { setTimeout: strict(saved.setTimeout), clearTimeout: strict(saved.clearTimeout) };
+  assert.throws(() => standIn.setTimeout(() => {}, 0), { name: 'TypeError', message: 'Illegal invocation' });
+  const asked = [];
+  let painted;
+  const done = new Promise((resolve) => { painted = resolve; });
+  globalThis.setTimeout = standIn.setTimeout;
+  globalThis.clearTimeout = standIn.clearTimeout;
+  try {
+    const f = T.createOutputFollower({
+      read: async (q) => { asked.push(q); return page({ live: false, phase: 'done', endedAt: 99000, total: 6, offset: 0, next: 6, text: 'hello\n' }); },
+      onUpdate: (v) => { if (v.text) painted(v.text); },
+    });
+    f.setFollow(true);
+    f.start();
+    assert.strictEqual(await done, 'hello\n');
+    f.close();
+  } finally {
+    globalThis.setTimeout = saved.setTimeout;
+    globalThis.clearTimeout = saved.clearTimeout;
+  }
+  assert.deepStrictEqual(asked, [{ offset: null, length: 262144 }]);
+});

@@ -20,7 +20,7 @@ function fnSource(name) {
   return src.slice(m.index + 1, end + 2);
 }
 
-function harness() {
+function harness({ follower = null } = {}) {
   const events = [];
   const pending = [];
   const timers = {
@@ -72,7 +72,8 @@ function harness() {
     window: { api: { suiteRunnerOutput: async (id, opts) => { reads.push([id, opts]); return answer; } } },
     testOutputPane: ids.get('test-output-pane'),
     testOutputChoice: T.createStreamChoice(),
-    createOutputFollower: (o) => T.createOutputFollower({ ...o, timers }),
+    createOutputFollower: (o) => (follower ? follower(o) : T.createOutputFollower({ ...o, timers })),
+    console: { error: (...a) => events.push(['console.error', ...a.map((x) => (x && x.message) || x)]) },
     streamInfo: T.streamInfo, streamLabel: T.streamLabel, otherStream: T.otherStream, autoOpenJob: T.autoOpenJob,
     testActivityView: (state) => ({ summary: '', box: '', running: [], waiting: [], recent: state.snapshot.recent.map((j) => j.title), empty: null }),
     Date,
@@ -82,7 +83,7 @@ function harness() {
     'let testActivitySnap = null;', 'let testActivityAutoOpen = false;',
     'let testOutputFollower = null;', 'let testOutputJob = null;', 'let testOutputRevealPending = false;',
     ...['testActivityRow', 'testActivityJobRows', 'markTestActivityRows', 'testActivityJob', 'testOutputContext',
-      'paintTestOutputStreams', 'paintTestOutput', 'followTestOutput', 'openTestOutput', 'closeTestOutput',
+      'paintTestOutputStreams', 'paintTestOutput', 'showTestOutputFailure', 'followTestOutput', 'openTestOutput', 'closeTestOutput',
       'closeTestOutputToRow', 'refreshOpenTestOutput', 'paintTestActivity'].map(fnSource),
     'globalThis.ui = { paint: paintTestActivity, closeToRow: closeTestOutputToRow };',
   ].join('\n'), ctx);
@@ -196,4 +197,31 @@ test('the dialog is a 900px flex column; the lists scroll and the output pane ta
   });
   assert.match(css, /#test-activity-dialog \{[^}]*max-height: calc\(100vh - 32px\);\n {2}max-height: calc\(100dvh - 32px\);/);
   assert.match(css, /#test-activity-dialog\.output-open \{ height: calc\(100vh - 32px\); height: calc\(100dvh - 32px\); \}/);
+});
+
+test('an ok read with text is painted into the pre', async () => {
+  const h = harness();
+  h.paint([h.job('a')]);
+  h.setAnswer(page({ text: 'hello', total: 5, next: 5 }));
+  h.row('a').click();
+  await h.fire();
+  assert.strictEqual(h.ids.get('test-output-text').textContent, 'hello');
+});
+
+test('a follower that throws on start, and a paint that throws, each show the error in the status line and log it', async () => {
+  const rows = [
+    ['start throws', () => ({ close() {}, setFollow() {}, start() { throw new Error('boom on start'); } }), 'could not show the output: boom on start'],
+    ['paint throws', (o) => ({
+      close() {}, setFollow() {},
+      start() { o.onUpdate({ get text() { throw new Error('boom in paint'); }, header: 'h', status: '', live: false, follow: false }); },
+    }), 'could not show the output: boom in paint'],
+  ];
+  for (const [name, follower, want] of rows) {
+    const h = harness({ follower });
+    h.paint([h.job('a')]);
+    h.row('a').click();
+    const status = h.ids.get('test-output-status');
+    assert.deepStrictEqual([status.textContent, status.style.display], [want, ''], name);
+    assert.ok(h.events.some((e) => e[0] === 'console.error' && e.includes(want.replace('could not show the output: ', ''))), name);
+  }
 });
