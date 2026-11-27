@@ -797,6 +797,18 @@ an unreached re-send → `{ok:false, kept:true, unknown:true, archived:true}` wi
 the entry archived, unstamped and NOT respawned, since the seat may already run
 on the peer.
 
+A seat's messages dir is an added, pre-trusted directory of its CLI, so the
+import admits under `seat/messages/` only depth-1 names a Clodex writer
+produces (`msg-`, `img-`, `file-`; `isSeatMessageFileName` in
+seat-message-names.js), as regular files: any other entry there (`CLAUDE.md`,
+`.mcp.json`, `.claude/settings.json`, a subdirectory) fails the whole import,
+naming the path. Every spawn and restore re-checks the dir
+(`seatMessagesDirRefusal` in seat-layout.js): a symlink, a foreign owner, a
+realpath outside `sessions/<name>`, or any entry that is not a regular file
+with such a name, and the seat starts without that `--add-dir` and its trust
+entry, with a WARN and one inbox note; a mode wider than 0700 on a dir we own
+is repaired.
+
 The UI half: right-click an agent row ▸ **Move to Peer…**, whose submenu lists
 the peers that are online, carry the `import` cap and are not behind on version —
 no eligible peer leaves the item present but disabled, so the feature is

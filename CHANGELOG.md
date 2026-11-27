@@ -18,6 +18,7 @@ blocks a release.
 - clodexctl: `version` prints the client version even when the node cannot be reached.
 - Test runs: an `own` run on a branch that changes no test-relevant file runs nothing and says so, instead of running the whole suite.
 - Test Box Activity: a job's output opens in view with room to read it, and a read that fails says so instead of showing nothing.
+- Security: a seat import can no longer place configuration files in a seat's messages folder, and that folder is checked before the CLI is told to trust it.
 
 ## 5.204.0 — 2026-11-27
 
