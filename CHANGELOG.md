@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+## 5.208.0 — 2026-11-27
+
 - Test runners: a job waiting in one pool member's queue moves to another member that is idle and ready.
 
 ## 5.207.0 — 2026-11-27
