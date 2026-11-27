@@ -309,7 +309,7 @@ Clodex ships three definitions and seeds them on first run:
 |---|---|
 | `clodex-team` | **Yes** — runs a script Clodex itself ships (`${CLODEX_BIN}`). Roster, ticket list, retire. |
 | `clodex-monitor` | **Yes** — same. Runs a long command in the background and DMs the seat its output. |
-| `clodex-run-tests` | **Yes** — runs `${CLODEX_BIN}/clodex-run-tests.js`, which runs your `scripts/run-tests.js` (the merge gate's runner) and prints a one-line digest. Payload: `tree` picks the worktree to measure; `scope` is `"full"` (default, the merge gate's whole-suite run under the suite lock) or `"own"` (the branch's own tests plus the repo-wide shape checks, no lock unless a selected file binds real ports); `files` (1 to 20 repo-relative test file paths, refused together with `scope`) runs exactly those files and nothing else, routed and locked as an own run, with a digest headed `named: <n> files:` and a ledger start row carrying `named: true`. A test file is `*.test.js`, `*.test.mjs` or `*.test.cjs` outside fixture, dot and `node_modules` directories. For an own or named run your `scripts/run-tests.js` receives the selected files as positional arguments after `--reporter=dot`; a full run passes none. |
+| `clodex-run-tests` | **Yes** — runs `${CLODEX_BIN}/clodex-run-tests.js`, which runs your `scripts/run-tests.js` (the merge gate's runner) and prints a one-line digest. Payload: `tree` picks the worktree to measure; `scope` is `"full"` (default, the merge gate's whole-suite run under the suite lock) or `"own"` (the branch's own tests plus the repo-wide shape checks, no lock unless a selected file binds real ports); `files` (1 to 20 repo-relative test file paths, refused together with `scope`) runs exactly those files and nothing else, routed and locked as an own run, with a digest headed `named: <n> files:` and ledger start and end rows carrying `named: <n>`, the file count. A test file is `*.test.js`, `*.test.mjs` or `*.test.cjs` outside fixture, dot and `node_modules` directories. For an own or named run your `scripts/run-tests.js` receives the selected files as positional arguments after `--reporter=dot`; a full run passes none. |
 
 `clodex-run-tests` is the shape to learn from. The one file it needs from you is
 `${TEAM_ROOT}/scripts/run-tests.js` — the same runner the merge gate below
@@ -1007,7 +1007,7 @@ left) prints `result unknown — …` naming the last runner tried and exits
 non-zero, never a green line and never a local fallback. `{"local": true}`
 in the payload runs it here, records `override:'call'` in the suite ledger and
 leaves a `ticket-loop` traffic row to the lead. A routed hand run waits at most
-15 minutes for the runner to take the job (queue and upload) and at most its
+15 minutes (unless `queue:` sets it) for the runner to take the job (queue and upload) and at most its
 run limit (21 minutes unless `run:` sets it) plus the setup slack below for it
 to run; past either it is cancelled and reported unknown.
 
@@ -1047,6 +1047,30 @@ send `{ ...env, ...handEnv }`; gate runs never see `handEnv`. Both may share
 one head line, never with a peer, `hands:`, `gate:` or `fallback:`. Bare
 `[agent:team runner]` shows `run <n> min` (or `run 21 min (default)`) and the
 `hand-env` names and values after the gate mode.
+
+`[agent:team runner queue:<minutes>|off]` (lead only, a runner must be set)
+stores `testRunner.queueMs`: how long a job may wait for a free slot on a
+runner, whole minutes from 5 to 120; anything else is refused naming the
+range, a repeated `queue:` is refused, and `off` returns to the defaults. A
+hand-written value outside that range is dropped with a warning, as `runMs`
+is. There are three waits, and the key moves two of them:
+
+- hand runs (`HAND_QUEUE_MS`, 15 min): the channel host's queue budget
+  becomes `queueMs`; its whole budget, the `clodex-run-tests` exec ceiling and
+  the box-build term of that ceiling grow by `queueMs` minus 15 minutes when
+  it is longer.
+- shadow gate runs (`TICKET_SUITE_LOCK_WAIT_MS`, 20 min): the queue budget is
+  the larger of 20 minutes and `queueMs`, and the whole budget grows by the
+  same difference. A shadow run never decides a ticket and the loop does not
+  wait for its remote half, so nothing else moves.
+- deciding gate runs (`gate:on`, `BOX_DECIDE_QUEUE_MS`, 5 min): unchanged. A
+  ticket's verdict does not wait up to two hours in a runner's queue.
+
+With no key every budget and timer is today's. Bare `[agent:team runner]`
+shows `queue <n> min` or `queue 15 min hands, 20 min gate (default)` after the
+run limit. The runner keeps a queued job for as long as the source polls it
+(each poll renews its 2-minute lease); on the pull wire each poll is its own
+desk call with its own deadline, so no call ttl caps the wait.
 
 A suite the runner killed at its limit reads `the suite did not finish within
 <n>ms (killed)` followed by `; last output: ` and its last three non-empty
