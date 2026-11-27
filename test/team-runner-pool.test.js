@@ -1191,7 +1191,8 @@ function moveRig({ info = {}, poll = {}, del = {}, post = {}, manifestExtra = PO
 }
 
 const QUEUED_ON_1 = (id) => jobAt(id, 'queued');
-const RAN_ON_2 = (id, t) => (t < 120000 ? jobAt(id, 'running', { env: BOX_ENV }) : jobAt(id, 'done', { env: BOX_ENV }));
+const RAN_ON_2 = (id, t) => (t < 120000 ? jobAt(id, 'running') : jobAt(id, 'done'));
+const BOX_RAN_ON_2 = (id, t) => (t < 120000 ? jobAt(id, 'running', { env: BOX_ENV }) : jobAt(id, 'done', { env: BOX_ENV }));
 const EXCLUSIVE_POOL = { testRunner: { ...POOL_OF_TWO.testRunner, exclusive: true } };
 
 const MOVE_ROWS = [
@@ -1209,13 +1210,13 @@ for (const [name, manifestExtra, boxed, other, moves] of MOVE_ROWS) {
     const r = moveRig({
       manifestExtra: Object.keys(manifestExtra).length ? manifestExtra : POOL_OF_TWO,
       info: { p1: () => BUSY_WITH(['run-1'], { exclusive: 'honour', ...(boxed ? READY_BOX : {}) }), p2: other },
-      poll: { p1: QUEUED_ON_1, p2: RAN_ON_2 },
+      poll: { p1: QUEUED_ON_1, p2: boxed ? BOX_RAN_ON_2 : RAN_ON_2 },
     });
     const out = await r.client.run({ ...r.base, ...(boxed ? { box: DEF } : {}), requeue: r.requeue(boxed ? DEF : false) });
     assert.deepStrictEqual(r.asked[0], ['runner-1', 60000], 'ENTER: the pick was re-evaluated at 60 s');
     if (moves) {
       assert.deepStrictEqual(r.posts(), ['0 p1 POST run-1', '60000 p2 POST run-1-2']);
-      assert.deepStrictEqual([out.record.outcome, out.record.where, out.record.endedAt], ['pass', 'runner-2', '1970-01-01T00:02:25.000Z']);
+      assert.deepStrictEqual([out.record.outcome, out.record.where, out.record.endedAt], ['pass', 'runner-2', '1970-01-01T00:02:15.000Z']);
       assert.deepStrictEqual(out.record.moved, [{ from: 'runner-1', to: 'runner-2', at: '1970-01-01T00:01:00.000Z' }]);
     } else {
       assert.deepStrictEqual(r.posts(), ['0 p1 POST run-1']);

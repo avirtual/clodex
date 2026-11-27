@@ -545,7 +545,7 @@ function createSuiteClient({
   }
 
   async function moveCheck(ctx, jobId) {
-    if (!ctx.requeue || ctx.started || ctx.buildSince != null || ctx.moved.length >= MAX_MOVES || ctx.moveAt == null || now() < ctx.moveAt || now() >= deadlineOf(ctx)) return null;
+    if (!ctx.requeue || ctx.moved.length >= MAX_MOVES || ctx.moveAt == null || now() < ctx.moveAt || now() >= deadlineOf(ctx)) return null;
     ctx.moveAt = now() + MOVE_CHECK_MS;
     const ask = ctx.requeue;
     const next = await Promise.resolve().then(() => ask(ctx.where, ctx.id)).catch(() => null);
