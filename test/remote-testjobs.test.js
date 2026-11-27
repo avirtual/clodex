@@ -180,7 +180,7 @@ test('t2417: POST /api/testjobs/slots hands the body slots to the setter and ret
   }
   assert.deepStrictEqual(asked, [2, 0, 3]);
   const names = (await req(port, '/api/resources')).json.resources.map((x) => x.name);
-  assert.deepStrictEqual(names.filter((n) => n.startsWith('testjobs')), ['testjobs', 'testjobs/slots', 'testjobs/exclusive']);
+  assert.deepStrictEqual(names.filter((n) => n.startsWith('testjobs')), ['testjobs', 'testjobs/slots']);
 });
 
 test('t2417: POST /api/testjobs/slots refuses the suite token, a missing token and a non-JSON content type before the setter', async (t) => {

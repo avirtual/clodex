@@ -83,7 +83,7 @@ test('a JSON null body is a 400 on every body route, never an uncaught throw', a
       ['PUT', '/api/sessions/alpha/client-token'], ['POST', '/api/import/begin'], ['POST', '/api/sessions'],
       ['POST', '/api/inbox/reply/n1'], ['POST', '/api/suite/jobs'], ['POST', '/api/suite/jobs/j1/commit'],
       ['POST', '/api/suite-desk/claim'], ['POST', '/api/suite-desk/calls/0123456789abcdef/reply'], ['POST', '/api/restart'],
-      ['POST', '/api/testjobs/slots'], ['POST', '/api/testjobs/exclusive'],
+      ['POST', '/api/testjobs/slots'],
     ];
     const src = fs.readFileSync(path.join(__dirname, '..', 'remote.js'), 'utf8');
     const suiteRows = rows.filter(([, p]) => p.startsWith('/api/suite/'));

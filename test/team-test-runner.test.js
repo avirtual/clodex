@@ -136,7 +136,7 @@ test('setTeamTestRunner patches one key and leaves a hand-written setup and env 
     },
   });
   assert.throws(() => tm.setTeamTestRunner('team', { hands: 'bogus' }), /testRunner would be invalid after this patch/);
-  assert.throws(() => tm.setTeamTestRunner('team', { env: {} }), /testRunner patch must name peer, hands, gate, wire, pool, fallback, runMs, handEnv or queueMs, or be null for off \(/);
+  assert.throws(() => tm.setTeamTestRunner('team', { env: {} }), /testRunner patch must name peer, hands, gate, wire, pool, fallback, runMs, handEnv, queueMs or exclusive, or be null for off \(/);
   assert.strictEqual(disk(file).testRunner.hands, 'full', 'a refused patch writes nothing');
   assert.strictEqual(tm.setTeamTestRunner('team', null).testRunner, undefined);
   assert.deepStrictEqual(disk(file), { root, lead: 'lead', roles, version: 3 });

@@ -278,6 +278,7 @@ function subresourceFixture() {
       },
       readTestjobOutput: (id) => ({ ok: true, id, text: '' }),
       setTestjobSlots: (slots) => ({ ok: true, slots, applied: 'now', running: 0 }),
+      setTestjobExclusive: (exclusive) => (exclusive === 'honour' || exclusive === 'ignore' ? { ok: true, exclusive, applied: 'now', running: 0 } : { ok: false, status: 400, error: 'exclusive must be honour or ignore' }),
       getAttachInfo: (name) => {
         calls.push({ route: 'attach', name });
         return name === 'ghost' ? { ok: false } : { ok: true, scrollback: Buffer.from('hi'), cols: 100, rows: 30 };
@@ -385,7 +386,7 @@ const SUB_WALK = {
 };
 
 const VERB_WALK = { list: 'GET', get: 'GET', delete: 'DELETE', post: 'POST' };
-const VERB_BODY = { post: JSON.stringify({ slots: 1 }) };
+const VERB_BODY = { post: JSON.stringify({ slots: 1, exclusive: 'honour' }) };
 
 test('RESOURCES: every (resource, verb) answers on a fully-injected node, and every name is a literal path in remote.js', async () => {
   const seen = [];

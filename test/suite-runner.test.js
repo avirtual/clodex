@@ -1768,7 +1768,8 @@ test('t2428: an exclusive job waits for an idle runner, holds the jobs behind it
   assert.deepStrictEqual(f.calls.map((c) => c.job), ['x1', 'x-alone']);
   f.held.get('x-alone').finish(0);
   await f.spawned(['x2', 'x3']);
-  assert.deepStrictEqual(f.calls.map((c) => c.job), ['x1', 'x-alone', 'x2', 'x3']);
+  assert.deepStrictEqual(f.calls.map((c) => c.job).slice(0, 2), ['x1', 'x-alone']);
+  assert.deepStrictEqual(f.calls.map((c) => c.job).sort(), ['x-alone', 'x1', 'x2', 'x3']);
   for (const id of ['x2', 'x3']) f.held.get(id).finish(0);
   await waitState(f.runner, 'x3', 'done');
 });

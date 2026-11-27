@@ -1082,13 +1082,15 @@ test('t2419: a team without box:true sends its hand job with no isolation, box o
 });
 
 
+const NATIVE_RAN = { platform: 'linux', arch: 'arm64', isolation: 'none' };
+
 for (const [said, recorded, note] of [
   [{ exclusive: 'honoured' }, 'honoured', null],
   [{ exclusive: 'ignored' }, 'ignored', '(did not run alone: the runner\'s owner set it to ignore exclusive requests, so other jobs could run beside it)'],
   [{}, 'unsupported', '(did not run alone: the runner is too old to know exclusive jobs, so other jobs could run beside it)'],
 ]) {
   test(`t2428: an exclusive team's hand job carries exclusive: true; a runner answering ${recorded} lands in the end row${note ? ' and the digest says it did not run alone' : ''}`, async () => {
-    const r = boxRig('push', { jobExtra: said });
+    const r = boxRig('push', { jobEnv: NATIVE_RAN, jobExtra: said });
     const f = hostFor({ client: r.client, box: () => false, team: { ...teamWith('all'), testRunner: { peer: 'runner-1', hands: 'all', exclusive: true } } });
     f.host.onMessage(ask(f.dir));
     const m = await f.done;
@@ -1103,7 +1105,7 @@ for (const [said, recorded, note] of [
 }
 
 test('t2428: a team without the key leaves exclusive out of the end row', async () => {
-  const r = boxRig('push', { jobExtra: { exclusive: 'honoured' } });
+  const r = boxRig('push', { jobEnv: NATIVE_RAN, jobExtra: { exclusive: 'honoured' } });
   const f = hostFor({ client: r.client, box: () => false, team: { ...teamWith('all'), testRunner: { peer: 'runner-1', hands: 'all' } } });
   f.host.onMessage(ask(f.dir));
   assert.strictEqual((await f.done).unknown, null, 'ENTER: the run concluded');
