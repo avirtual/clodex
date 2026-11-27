@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+## 5.203.0 — 2026-11-27
+
 - Test runners: a team can set how long its hand and shadow test runs wait for a free slot on a runner: `[agent:team runner queue:<minutes>]`, 5 to 120. The defaults stay 15 minutes for hands and 20 for shadow gate runs.
 - A hand's named-files run is now marked as such, with its file count, in the run records.
 
