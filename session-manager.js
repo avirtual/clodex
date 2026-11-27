@@ -298,7 +298,7 @@ const { SEAT_KINDS, seatPathFor, legacySeatPathFor, claudeProjectSlug } = requir
 const { LIVING_MARK } = require('./intent-catalog');
 const { resolveSubagent, nameOfSubagent, clearSubq, SUBQ_DM_SUFFIX, SUBQ_NAME_RE } = require('./subq');
 
-const { createChannelHost, HAND_RUN_MS, handExecSlackMs, route: suiteRoute } = require('./suite-client');
+const { createChannelHost, HAND_RUN_MS, HAND_QUEUE_MS, BUILD_BUDGET_MS, handExecSlackMs, route: suiteRoute } = require('./suite-client');
 
 const AGENT_SOCK_WRITER_BINS = new Set(['clodex-team.js', 'clodex-monitor.js', 'clodex-ctl-admin.js']);
 const SUITE_CHANNEL_BINS = new Set(['clodex-run-tests.js']);
@@ -8014,8 +8014,10 @@ function createSessionManager(deps) {
       const handRemote = !!suiteChannel && suiteRoute({ team: execTeam, kind: 'hand', scope: v.value && v.value.scope, local: !!(v.value && v.value.local === true) }).where === 'remote';
       const handTr = handRemote ? execTeam.testRunner : null;
       const handRunMs = handTr && Number.isInteger(handTr.runMs) ? handTr.runMs : null;
+      const handBox = handTr ? this._handBox(execTeam) : false;
       const timeoutMs = ((typeof entry.timeoutMs === 'number' && entry.timeoutMs > 0) ? entry.timeoutMs : 10000)
-        + (handTr ? handExecSlackMs(handTr) : 0) + (handRunMs != null ? Math.max(0, handRunMs - HAND_RUN_MS) : 0);
+        + (handTr ? handExecSlackMs(handTr) : 0) + (handRunMs != null ? Math.max(0, handRunMs - HAND_RUN_MS) : 0)
+        + (handBox && typeof handBox.definition === 'string' ? HAND_QUEUE_MS + BUILD_BUDGET_MS : 0);
       setImmediate(() => {
         let child;
         try {
@@ -8053,7 +8055,8 @@ function createSessionManager(deps) {
               const member = this._runnerMembers(execTeam && execTeam.testRunner).find((m) => m.peer === name);
               return member ? this._runnerVia(member).via : null;
             },
-            pool: () => this._handRunners(execTeam.testRunner),
+            pool: (box) => this._handRunners(execTeam.testRunner, box),
+            box: () => this._handBox(execTeam),
             send: (m) => { if (child.connected) child.send(m); },
             notifyLead: (body) => this._broadcast('ipc-message', { type: 'task', from: 'ticket-loop', to: execTeam ? execTeam.lead : null, body }),
             log: (m) => log.warn('intent', m),

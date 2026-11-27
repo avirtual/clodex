@@ -945,7 +945,7 @@ function requestError(msg) {
 }
 
 function createChannelHost({
-  client, team, seat = null, ticket = null, listWorktrees, resolvePeer, send, pool = null,
+  client, team, seat = null, ticket = null, listWorktrees, resolvePeer, send, pool = null, box: boxOf = () => false,
   notifyLead = () => {}, log = () => {}, snapshot = snapshotLib, realpath = fs.realpathSync,
   queueBudgetMs = HAND_QUEUE_MS, runMs = HAND_RUN_MS,
 }) {
@@ -1002,7 +1002,9 @@ function createChannelHost({
       return say({ run: 'local', why: d.why, override: d.override || null });
     }
     if (!client) return say({ run: 'remote', runner: d.peer, unknown: 'no suite client on this node' });
-    const picked = pool ? await Promise.resolve().then(() => pool()).catch(() => null) : null;
+    let box;
+    try { box = boxOf() || false; } catch (e) { return say({ run: 'remote', runner: d.peer, unknown: `the team's box could not be read: ${e.message}` }); }
+    const picked = pool ? await Promise.resolve().then(() => pool(box)).catch(() => null) : null;
     const name = (picked && picked.chosen) || d.peer;
     const via = resolvePeer(name);
     if (!via || !via.peer) return say({ run: 'remote', runner: name, unknown: `runner ${name} is not a known peer` });
@@ -1015,6 +1017,7 @@ function createChannelHost({
       peer: via.peer, wire, name, tree, kind: 'hand', scope: msg.scope, team: team.name, ticket, seat,
       files: msg.files || [], flags: msg.flags || {}, setup: tr.setup || null, env: { ...(tr.env || {}), ...(tr.handEnv || {}) },
       queueBudgetMs, runBudgetMs: runMs + handSlackMs(tr), timeoutMs: runMs, budgetMs: queueBudgetMs + runMs + handSlackMs(tr), route: d.why,
+      ...(box ? { box, ...(tr.shares ? { shares: tr.shares } : {}) } : {}),
       shouldStop: () => wantCancel,
       onSubmitted: ({ jobId }) => { inflight.jobId = jobId; fireCancel(); },
       onProgress: (line) => say({ progress: line }),
@@ -1025,7 +1028,9 @@ function createChannelHost({
     if (out.unknown || !out.res) return say({ run: 'remote', runner: inflight.name, unknown: out.unknown || 'no result' });
     const r = out.res;
     const note = await treeNote(tree, r.treeHash);
+    const ran = (out.record && out.record.env) || {};
     return say({
+      ...(box ? { box: { isolation: ran.isolation || null, imageId: (ran.box && ran.box.imageId) || null } } : {}),
       run: 'remote', runner: inflight.name, status: r.status, signal: r.signal, stdout: r.stdout, stderr: r.stderr,
       error: null, unknown: null, treeHash: r.treeHash, note, ...(out.rerouted ? { rerouted: out.rerouted } : {}),
     });
