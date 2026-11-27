@@ -1829,9 +1829,10 @@ test('t2428: an exclusive box job held by the box hold does not hold the native 
   await drain();
   assert.strictEqual(fs.existsSync(path.join(f.root, 'suite-runner', 'box-hold.json')), true, 'ENTER: the failed reap holds the box');
   assert.strictEqual((await f.runner.submit(f.body('n1'))).state, 'queued');
-  await f.spawned(['n1']);
   await drain();
-  assert.deepStrictEqual([await slotsOf(f.runner), f.calls.map((c) => c.job)], [{ slots: { total: 2, inUse: 2 }, running: ['n0', 'n1'], waiting: ['bx'] }, ['b1', 'n0', 'n1']]);
+  assert.deepStrictEqual(await slotsOf(f.runner), { slots: { total: 2, inUse: 2 }, running: ['n0', 'n1'], waiting: ['bx'] });
+  await f.spawned(['n1']);
+  assert.deepStrictEqual(f.calls.map((c) => c.job), ['b1', 'n0', 'n1']);
   for (const id of ['n0', 'n1']) f.held.get(id).finish(0);
   await waitState(f.runner, 'n1', 'done');
   await f.runner.tick();
