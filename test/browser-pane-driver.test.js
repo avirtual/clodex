@@ -417,3 +417,21 @@ test('driver armIdle: body and a container of churning elements mutated 3 times 
   assert.ok(page.probes >= 2, String(page.probes));
   assert.deepStrictEqual(r.churn, ['div.g-Td-Jb', 'div.g-Td-Jb', 'div.g-Td-Jb']);
 });
+
+test('driver armIdle: a body that is itself the only ticker (attribute every 100 ms) is never learned, so a node added under it later is still busy', async () => {
+  const clk = timeline();
+  const f = fakeWc();
+  const page = fakePage(clk, (ms, pg) => [
+    ...(ms % 100 === 50 ? [{ type: 'attributes', target: pg.body }] : []),
+    ...(pg.probes > 1 && ms === 250 ? [{ type: 'childList', target: pg.body }] : []),
+  ]);
+  f.wc.executeJavaScript = async (code) => page.run(code);
+  const first = await driver.armIdle(f.wc, { now: clk.now, sleepFn: clk.sleepFn });
+  const r1 = await first.wait({ quietMs: 500, timeoutMs: 15000 });
+  assert.strictEqual(r1.ok, true);
+  assert.strictEqual(r1.ticker, 'body');
+  const w = await driver.armIdle(f.wc, { now: clk.now, sleepFn: clk.sleepFn });
+  const r = await w.wait({ quietMs: 500, timeoutMs: 3000 });
+  assert.strictEqual(r.ok, false);
+  assert.ok(!('ignored' in r));
+});
