@@ -418,7 +418,7 @@ test('driver armIdle: body and a container of churning elements mutated 3 times 
   assert.deepStrictEqual(r.churn, ['div.g-Td-Jb', 'div.g-Td-Jb', 'div.g-Td-Jb']);
 });
 
-test('driver armIdle: a body that is itself the only ticker (attribute every 100 ms) is never learned, so a node added under it later is still busy', async () => {
+test('driver armIdle: a body that is itself the only ticker (attribute every 100 ms) is never learned: the next probe, which also adds a node under it, applies the ticker rule instead of ignoring it', async () => {
   const clk = timeline();
   const f = fakeWc();
   const page = fakePage(clk, (ms, pg) => [
@@ -432,6 +432,7 @@ test('driver armIdle: a body that is itself the only ticker (attribute every 100
   assert.strictEqual(r1.ticker, 'body');
   const w = await driver.armIdle(f.wc, { now: clk.now, sleepFn: clk.sleepFn });
   const r = await w.wait({ quietMs: 500, timeoutMs: 3000 });
-  assert.strictEqual(r.ok, false);
+  assert.strictEqual(r.ok, true);
+  assert.strictEqual(r.ticker, 'body');
   assert.ok(!('ignored' in r));
 });
