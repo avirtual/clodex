@@ -101,6 +101,23 @@ Manage Plugins opens it), or in a folder inside the agent's working directory
 when it passes `--to=<folder>`. Each download reply says whether the file really
 is a PDF; a web page saved instead (an expired session) is flagged.
 
+Without `--to`, the `download` verb saves under `downloads/<service>/` (a tab
+such as `ebloc:riot` gets its own `downloads/ebloc:riot/`), while a click's
+download and a download the page or the operator starts save under
+`downloads/<profile>/` (`downloads/ebloc/` for every `ebloc` tab).
+
+`click <n> --to=<folder>` replies `download destination armed: <folder> for 5 s`:
+a download the click starts within that window after the click settles lands
+there. A saved file's reply names the final path and says `name from server`
+when no `--as` named it; an `application/octet-stream` type is read from the
+file's extension. A download that is refused or lost (URL policy, unwritable
+folder, interrupted, too large, too slow) is reported as `download not saved:
+<file name or host> — <reason>` to the agent that last acted on the service,
+inside its pending act or download reply if one is still open, otherwise as a
+follow-up line. A click's download that finishes after the click replied
+`still downloading` is announced to that agent once: `[agent:browser] download
+finished → <path> (<size>, <type>)`. A download started by hand is not announced.
+
 The login persists: the next run, even after a restart, starts signed in until
 the portal's own session timeout. **Forget login** in Manage Plugins deletes a
 service's cookies.
