@@ -749,7 +749,7 @@ const REHOME = [
       underUnreleased(STAMPED, '- **M.** shipped in 5.2'),
       stampRelease(underUnreleased(STAMPED, '- **M.** shipped in 5.2'), '## 5.2.0 — 2026-02-01'),
     ],
-    conflicts: null,
+    conflicts: false,
     lines: 1,
     expect: '# Changelog\n\nintro\n\n## Unreleased\n\n- **B.** the branch bullet\n\n## 5.2.0 — 2026-02-01\n\n- **M.** shipped in 5.2\n## 5.1.0 — 2026-01-01\n\n- old bullet one\n\n## 5.0.0\n',
   },
@@ -757,7 +757,7 @@ const REHOME = [
     name: 'e: two branch bullets keep their order',
     branch: atSectionEnd(CHANGELOG_BASE, ['- **B1.** first branch bullet', '- **B2.** second branch bullet']),
     master: [underUnreleased(STAMPED, '- **A.** the master bullet')],
-    conflicts: null,
+    conflicts: false,
     lines: 2,
     expect: '# Changelog\n\nintro\n\n## Unreleased\n\n- **A.** the master bullet\n- **B1.** first branch bullet\n- **B2.** second branch bullet\n\n## 5.1.0 — 2026-01-01\n\n- old bullet one\n\n## 5.0.0\n',
   },
@@ -766,6 +766,14 @@ const REHOME = [
     branch: underUnreleased(CHANGELOG_BASE, '- **B.** the branch bullet'),
     master: [underUnreleased(STAMPED, '- **B.** the branch bullet')],
     conflicts: true,
+    lines: 0,
+    expect: '# Changelog\n\nintro\n\n## Unreleased\n\n- **B.** the branch bullet\n## 5.1.0 — 2026-01-01\n\n- old bullet one\n\n## 5.0.0\n',
+  },
+  {
+    name: 'idempotent, clean: master\'s Unreleased already holds the bullet git also left under 5.1.0',
+    branch: atSectionEnd(CHANGELOG_BASE, ['- **B.** the branch bullet']),
+    master: [underUnreleased(STAMPED, '- **B.** the branch bullet')],
+    conflicts: false,
     lines: 0,
     expect: '# Changelog\n\nintro\n\n## Unreleased\n\n- **B.** the branch bullet\n## 5.1.0 — 2026-01-01\n\n- old bullet one\n\n## 5.0.0\n',
   },
@@ -778,9 +786,8 @@ for (const row of REHOME) {
     row.master.forEach((body, i) => commitOn(repo, 'master', { 'CHANGELOG.md': body }, `master ${i}`));
     const masterText = row.master[row.master.length - 1];
     const check = await wt.mergeCheck(repo, 'master', 'tl-1');
-    if (row.conflicts !== null) {
-      assert.strictEqual(!!check.changelogOnly, row.conflicts, `ENTER: git ${row.conflicts ? 'conflicts' : 'merges cleanly'} on CHANGELOG.md`);
-    }
+    assert.deepStrictEqual({ clean: check.clean, changelogOnly: !!check.changelogOnly }, { clean: true, changelogOnly: row.conflicts },
+      `ENTER: git ${row.conflicts ? 'conflicts on CHANGELOG.md alone' : 'merges cleanly'}`);
     const before = gitOut(repo, ['rev-parse', 'HEAD']);
 
     const r = await wt.mergeNoFf(repo, 'tl-1', msgFile('Merge t2446: the rehome subject'));

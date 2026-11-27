@@ -515,7 +515,7 @@ path is the root `CHANGELOG.md` and both sides did nothing but insert lines
 (nothing deleted or rewritten, no `## ` heading added on either side), the loop
 keeps both — the trunk's bullet above the branch's — completes the merge commit and
 says so in the `[ticket MERGED]` notice, so you read `## Unreleased` once before
-a release. Any other conflict, in that file or any other, still escalates on the
+a release. Any other conflict except the release-stamp case below, in that file or any other, still escalates on the
 first try.
 
 **A branch cut before a release keeps its CHANGELOG line in Unreleased.** When

@@ -782,23 +782,26 @@ async function rehomeAfterCleanMerge(repo, headBefore, sha) {
   if (!headingsAdded(baseText, oursText).length) return null;
   const ins = await blobInsertions(repo, `${base}:CHANGELOG.md`, `${sha}^2:CHANGELOG.md`, baseText);
   if (!ins.ok || !ins.added.length) return null;
-  const mergedLines = mergedText.split('\n');
-  const mb2 = unreleasedBounds(mergedLines);
-  const underUnreleased = new Set(mb2 ? mergedLines.slice(mb2.h + 1, mb2.n) : []);
-  if (ins.added.every((l) => underUnreleased.has(l))) return null;
+  const released = (t) => {
+    const L = t.split('\n');
+    const b = unreleasedBounds(L);
+    return b ? L.slice(b.n).join('\n') : t;
+  };
+  if (released(mergedText) === released(oursText)) return null;
   const placed = placeUnderUnreleased(oursText, ins.added);
-  if (!placed.ok || placed.text === mergedText) return null;
+  if (!placed.ok) return { sha, rehomeFailed: placed.reason };
+  if (placed.text === mergedText) return null;
   fs.writeFileSync(path.join(repo, 'CHANGELOG.md'), placed.text);
   const add = await git(repo, ['add', 'CHANGELOG.md']);
   const ci = add.ok ? await git(repo, ['commit', '--amend', '--no-edit']) : add;
   if (!ci.ok) {
     await git(repo, ['checkout', 'HEAD', '--', 'CHANGELOG.md']);
-    return null;
+    return { sha, rehomeFailed: `amending the merge commit failed: ${(ci.stderr || ci.stdout || '').trim() || `exit ${ci.code}`}` };
   }
   const after = await git(repo, ['rev-parse', 'HEAD']);
   const newSha = after.ok ? after.stdout.trim() : null;
-  if (!newSha) return null;
-  return { sha: newSha, rehomed: { file: 'CHANGELOG.md', lines: placed.count } };
+  if (!newSha) return { sha, rehomeFailed: 'HEAD could not be read after the amend' };
+  return placed.count ? { sha: newSha, rehomed: { file: 'CHANGELOG.md', lines: placed.count } } : { sha: newSha };
 }
 
 async function commitResolvedMerge(repo, messageFile, headBefore, no) {
@@ -950,7 +953,8 @@ async function mergeNoFf(cwd, branch, messageFile) {
   return {
     ok: true, sha: re ? re.sha : merged, headBefore, moved,
     output: `${r.stdout || ''}${r.stderr || ''}`.trim(),
-    ...(re ? { rehomed: re.rehomed } : {}),
+    ...(re && re.rehomed ? { rehomed: re.rehomed } : {}),
+    ...(re && re.rehomeFailed ? { rehomeFailed: re.rehomeFailed } : {}),
   };
 }
 
