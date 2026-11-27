@@ -14,6 +14,8 @@ const EXPIRED_TEXT = 'output expired';
 const EMPTY_TEXT = 'no output yet';
 const NONE_TEXT = 'no output';
 const UNKNOWN_TEXT = 'job not found';
+const NOT_STARTED_TEXT = 'this job did not start, so it has no output';
+const READ_FAILED_PREFIX = 'could not read the output: ';
 
 const STRING_SEQ = /(?:\x1b[\]P^_X]|[\x90\x98\x9d\x9e\x9f])[\s\S]*?(?:\x07|\x1b\\|\x9c|$)/g;
 const CSI_SEQ = /(?:\x1b\[|\x9b)[0-?]*[ -/]*[@-~]/g;
@@ -78,9 +80,11 @@ function statusText(r, { stream = null, otherBytes = null } = {}) {
   if (!r) return '';
   if (r.unknown) return UNKNOWN_TEXT;
   if (r.expired) return EXPIRED_TEXT;
+  if (r.total === 0 && r.ok && !r.live && r.startedAt === null) return NOT_STARTED_TEXT;
   if (r.total === 0 && stream && otherBytes > 0) {
     return `no ${stream}${r.live ? ' yet' : ''}; ${otherStream(stream)} has ${fmtBytes(otherBytes)}`;
   }
+  if (r.total === 0 && !r.live && stream) return `${stream} is empty`;
   if (r.total === 0) return r.live ? EMPTY_TEXT : NONE_TEXT;
   return '';
 }
@@ -194,12 +198,12 @@ function createOutputFollower({
       const status = r && r.status;
       if (status === 404 || status === 400) {
         last = status === 404 ? { unknown: true } : last;
-        error = status === 404 ? null : (r.error || 'bad request');
+        error = status === 404 ? null : READ_FAILED_PREFIX + (r.error || 'bad request');
         stop();
         emit();
         return;
       }
-      error = `read failed: ${(r && r.error) || 'no answer'}`;
+      error = READ_FAILED_PREFIX + ((r && r.error) || 'no answer');
       delay = Math.min(delay * 2, maxBackoffMs);
       emit();
       schedule(delay);
@@ -250,5 +254,5 @@ module.exports = {
   sanitizeOutput, createOutputBuffer, createOutputFollower, headerText, statusText,
   autoOpenJob, chooseStream, createStreamChoice, streamInfo, streamLabel, otherStream,
   PANE_CAP_CHARS, READ_BYTES, POLL_MS, MAX_BACKOFF_MS, DROPPED_LINE, RESET_LINE,
-  EXPIRED_TEXT, EMPTY_TEXT, NONE_TEXT, UNKNOWN_TEXT,
+  EXPIRED_TEXT, EMPTY_TEXT, NONE_TEXT, UNKNOWN_TEXT, NOT_STARTED_TEXT, READ_FAILED_PREFIX,
 };

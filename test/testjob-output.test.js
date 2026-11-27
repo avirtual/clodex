@@ -115,7 +115,7 @@ test('close stops the timer, an error doubles the delay, two ticks never overlap
   const f = T.createOutputFollower({ read: () => { calls++; return reads.shift()(); }, onUpdate: (v) => { view = v; }, timers });
   f.start();
   await timers.fire();
-  assert.deepStrictEqual([timers.pending.map((h) => h.ms), view.status], [[4000], 'read failed: socket hang up']);
+  assert.deepStrictEqual([timers.pending.map((h) => h.ms), view.status], [[4000], 'could not read the output: socket hang up']);
   await timers.fire();
   assert.deepStrictEqual(timers.pending.map((h) => h.ms), [8000]);
   const first = timers.fire();

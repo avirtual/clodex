@@ -9330,6 +9330,7 @@ const testOutputPane = document.getElementById('test-output-pane');
 let testOutputFollower = null;
 const testOutputChoice = createStreamChoice();
 let testOutputJob = null;
+let testOutputRevealPending = false;
 
 function testOutputContext() {
   const job = testActivityJob(testOutputJob);
@@ -9357,6 +9358,10 @@ function paintTestOutput(view) {
   const pre = document.getElementById('test-output-text');
   pre.textContent = view.text;
   if (view.follow) pre.scrollTop = pre.scrollHeight;
+  if (testOutputRevealPending && view.text) {
+    testOutputRevealPending = false;
+    testOutputPane.scrollIntoView({ block: 'nearest' });
+  }
   document.getElementById('test-output-follow-wrap').style.display = view.live ? '' : 'none';
   paintTestOutputStreams();
 }
@@ -9372,6 +9377,7 @@ function followTestOutput() {
     context: testOutputContext,
   });
   testOutputFollower = follower;
+  testOutputRevealPending = true;
   document.getElementById('test-output-text').textContent = '';
   follower.setFollow(document.getElementById('test-output-follow').checked);
   follower.start();
@@ -9382,22 +9388,36 @@ function openTestOutput(id, title) {
   testOutputChoice.open(id, testActivityJob(id));
   document.getElementById('test-output-title').textContent = title;
   testOutputPane.classList.remove('hidden');
+  document.getElementById('test-activity-dialog').classList.add('output-open');
   markTestActivityRows();
   followTestOutput();
   paintTestOutputStreams();
+  const row = testActivityJobRows().find((r) => r.dataset.jobId === id);
+  if (row) row.scrollIntoView({ block: 'nearest' });
   testOutputPane.scrollIntoView({ block: 'nearest' });
+  document.getElementById('test-output-text').focus({ preventScroll: true });
 }
 
 function closeTestOutput() {
   if (testOutputFollower) testOutputFollower.close();
   testOutputFollower = null;
   testOutputJob = null;
+  testOutputRevealPending = false;
   testOutputChoice.close();
   testOutputPane.classList.add('hidden');
+  document.getElementById('test-activity-dialog').classList.remove('output-open');
   markTestActivityRows();
 }
 
-document.getElementById('test-output-close').addEventListener('click', closeTestOutput);
+function closeTestOutputToRow() {
+  const id = testOutputJob;
+  closeTestOutput();
+  const row = testActivityJobRows().find((r) => r.dataset.jobId === id);
+  const button = row && row.querySelector('.test-activity-output');
+  if (button) button.focus();
+}
+
+document.getElementById('test-output-close').addEventListener('click', closeTestOutputToRow);
 for (const radio of testOutputPane.querySelectorAll('input[name="test-output-stream"]')) {
   radio.addEventListener('change', () => {
     if (!testOutputJob || !radio.checked) return;
@@ -9437,7 +9457,7 @@ function paintTestActivity(state) {
   markTestActivityRows();
   if (refocus) {
     const row = testActivityJobRows().find((r) => r.dataset.jobId === refocus);
-    if (row) row.querySelector('.test-activity-output').focus();
+    if (row) row.querySelector('.test-activity-output').focus({ preventScroll: true });
   }
   refreshOpenTestOutput();
   if (testActivityAutoOpen && snap) {

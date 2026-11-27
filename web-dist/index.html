@@ -10186,9 +10186,21 @@ body:not(.web-frontend):has(#sidebar[data-folded="1"]) #main {
   border-radius: var(--radius-xl);
   padding: var(--sp-5);
   box-shadow: var(--shadow-overlay);
-  width: 680px;
+  width: 900px;
   max-width: calc(100vw - 32px);
   max-height: calc(100vh - 32px);
+  max-height: calc(100dvh - 32px);
+  display: flex;
+  flex-direction: column;
+  overflow: auto;
+}
+#test-activity-dialog.output-open {
+  height: calc(100vh - 32px);
+  height: calc(100dvh - 32px);
+}
+#test-activity-lists {
+  flex: 0 1 auto;
+  min-height: 0;
   overflow: auto;
 }
 #test-activity-dialog .dialog-head h3 {
@@ -10231,6 +10243,10 @@ body:not(.web-frontend):has(#sidebar[data-folded="1"]) #main {
   padding: 0 6px;
 }
 #test-output-pane {
+  flex: 1 0 50%;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
   margin-top: 14px;
   border-top: 1px solid var(--border-strong);
   padding-top: 8px;
@@ -10253,7 +10269,8 @@ body:not(.web-frontend):has(#sidebar[data-folded="1"]) #main {
   font-size: var(--fs-sm);
   white-space: pre-wrap;
   word-break: break-all;
-  max-height: 360px;
+  flex: 1 1 auto;
+  min-height: 200px;
   overflow: auto;
   margin: 0;
   user-select: text;
@@ -11905,12 +11922,14 @@ body:not(.web-frontend):has(#sidebar[data-folded="1"]) #main {
       </div>
       <span id="test-activity-summary" class="hint-text"></span>
       <span id="test-activity-box" class="hint-text"></span>
-      <h5>Running and waiting</h5>
-      <div id="test-activity-live"></div>
-      <details id="test-activity-recent-wrap" open>
-        <summary>Last ten finished</summary>
-        <div id="test-activity-recent"></div>
-      </details>
+      <div id="test-activity-lists">
+        <h5>Running and waiting</h5>
+        <div id="test-activity-live"></div>
+        <details id="test-activity-recent-wrap" open>
+          <summary>Last ten finished</summary>
+          <div id="test-activity-recent"></div>
+        </details>
+      </div>
       <div id="test-output-pane" class="hidden">
         <div class="test-output-head">
           <h5 id="test-output-title"></h5>
@@ -11923,7 +11942,7 @@ body:not(.web-frontend):has(#sidebar[data-folded="1"]) #main {
           <label id="test-output-follow-wrap"><input type="checkbox" id="test-output-follow" checked> Follow</label>
         </div>
         <span id="test-output-status" class="hint-text"></span>
-        <pre id="test-output-text"></pre>
+        <pre id="test-output-text" tabindex="0"></pre>
       </div>
     </div>
   </div>
@@ -30701,6 +30720,8 @@ ${body}`;
       var EMPTY_TEXT = "no output yet";
       var NONE_TEXT = "no output";
       var UNKNOWN_TEXT = "job not found";
+      var NOT_STARTED_TEXT = "this job did not start, so it has no output";
+      var READ_FAILED_PREFIX = "could not read the output: ";
       var STRING_SEQ = /(?:\x1b[\]P^_X]|[\x90\x98\x9d\x9e\x9f])[\s\S]*?(?:\x07|\x1b\\|\x9c|$)/g;
       var CSI_SEQ = /(?:\x1b\[|\x9b)[0-?]*[ -/]*[@-~]/g;
       var ESC_SEQ = /\x1b[ -/]*[0-~]/g;
@@ -30757,9 +30778,11 @@ ${text}` : text;
         if (!r) return "";
         if (r.unknown) return UNKNOWN_TEXT;
         if (r.expired) return EXPIRED_TEXT;
+        if (r.total === 0 && r.ok && !r.live && r.startedAt === null) return NOT_STARTED_TEXT;
         if (r.total === 0 && stream && otherBytes > 0) {
           return `no ${stream}${r.live ? " yet" : ""}; ${otherStream(stream)} has ${fmtBytes(otherBytes)}`;
         }
+        if (r.total === 0 && !r.live && stream) return `${stream} is empty`;
         if (r.total === 0) return r.live ? EMPTY_TEXT : NONE_TEXT;
         return "";
       }
@@ -30876,12 +30899,12 @@ ${text}` : text;
             const status = r && r.status;
             if (status === 404 || status === 400) {
               last = status === 404 ? { unknown: true } : last;
-              error = status === 404 ? null : r.error || "bad request";
+              error = status === 404 ? null : READ_FAILED_PREFIX + (r.error || "bad request");
               stop();
               emit();
               return;
             }
-            error = `read failed: ${r && r.error || "no answer"}`;
+            error = READ_FAILED_PREFIX + (r && r.error || "no answer");
             delay = Math.min(delay * 2, maxBackoffMs);
             emit();
             schedule(delay);
@@ -30964,7 +30987,9 @@ ${text}` : text;
         EXPIRED_TEXT,
         EMPTY_TEXT,
         NONE_TEXT,
-        UNKNOWN_TEXT
+        UNKNOWN_TEXT,
+        NOT_STARTED_TEXT,
+        READ_FAILED_PREFIX
       };
     }
   });
@@ -63542,6 +63567,7 @@ ${res.stderr}` : "");
       var testOutputFollower = null;
       var testOutputChoice = createStreamChoice();
       var testOutputJob = null;
+      var testOutputRevealPending = false;
       function testOutputContext() {
         const job = testActivityJob(testOutputJob);
         return {
@@ -63566,6 +63592,10 @@ ${res.stderr}` : "");
         const pre = document.getElementById("test-output-text");
         pre.textContent = view.text;
         if (view.follow) pre.scrollTop = pre.scrollHeight;
+        if (testOutputRevealPending && view.text) {
+          testOutputRevealPending = false;
+          testOutputPane.scrollIntoView({ block: "nearest" });
+        }
         document.getElementById("test-output-follow-wrap").style.display = view.live ? "" : "none";
         paintTestOutputStreams();
       }
@@ -63582,6 +63612,7 @@ ${res.stderr}` : "");
           context: testOutputContext
         });
         testOutputFollower = follower;
+        testOutputRevealPending = true;
         document.getElementById("test-output-text").textContent = "";
         follower.setFollow(document.getElementById("test-output-follow").checked);
         follower.start();
@@ -63591,20 +63622,33 @@ ${res.stderr}` : "");
         testOutputChoice.open(id, testActivityJob(id));
         document.getElementById("test-output-title").textContent = title;
         testOutputPane.classList.remove("hidden");
+        document.getElementById("test-activity-dialog").classList.add("output-open");
         markTestActivityRows();
         followTestOutput();
         paintTestOutputStreams();
+        const row = testActivityJobRows().find((r) => r.dataset.jobId === id);
+        if (row) row.scrollIntoView({ block: "nearest" });
         testOutputPane.scrollIntoView({ block: "nearest" });
+        document.getElementById("test-output-text").focus({ preventScroll: true });
       }
       function closeTestOutput() {
         if (testOutputFollower) testOutputFollower.close();
         testOutputFollower = null;
         testOutputJob = null;
+        testOutputRevealPending = false;
         testOutputChoice.close();
         testOutputPane.classList.add("hidden");
+        document.getElementById("test-activity-dialog").classList.remove("output-open");
         markTestActivityRows();
       }
-      document.getElementById("test-output-close").addEventListener("click", closeTestOutput);
+      function closeTestOutputToRow() {
+        const id = testOutputJob;
+        closeTestOutput();
+        const row = testActivityJobRows().find((r) => r.dataset.jobId === id);
+        const button = row && row.querySelector(".test-activity-output");
+        if (button) button.focus();
+      }
+      document.getElementById("test-output-close").addEventListener("click", closeTestOutputToRow);
       for (const radio of testOutputPane.querySelectorAll('input[name="test-output-stream"]')) {
         radio.addEventListener("change", () => {
           if (!testOutputJob || !radio.checked) return;
@@ -63639,7 +63683,7 @@ ${res.stderr}` : "");
         markTestActivityRows();
         if (refocus) {
           const row = testActivityJobRows().find((r) => r.dataset.jobId === refocus);
-          if (row) row.querySelector(".test-activity-output").focus();
+          if (row) row.querySelector(".test-activity-output").focus({ preventScroll: true });
         }
         refreshOpenTestOutput();
         if (testActivityAutoOpen && snap) {
