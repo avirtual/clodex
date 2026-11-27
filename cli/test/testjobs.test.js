@@ -145,3 +145,15 @@ test('describe testjobs is refused with a usage error and sends no request', asy
     assert.deepStrictEqual(seen, []);
   });
 });
+
+test('t2428: get testjobs marks a running exclusive job, a queued one waiting for an idle runner, and an ignored request', () => {
+  const { renderTestjobs } = require('../src/output');
+  const text = renderTestjobs({ enabled: true, snapshot: {
+    ...SNAPSHOT, slots: { total: 2, inUse: 1 },
+    running: [{ ...RUNNING, exclusive: 'honoured' }],
+    waiting: [{ ...WAITING, exclusive: 'honoured' }, { ...WAITING, id: 'j4', ticket: 't10', exclusive: 'ignored' }, { ...WAITING, id: 'j5', ticket: 't11' }],
+    recent: [],
+  } });
+  const states = text.split('\n').slice(2).map((l) => l.split(/\s{2,}/)[0]);
+  assert.deepStrictEqual(states, ['run exclusive', 'waiting for an idle runner (exclusive)', 'queued (exclusive ignored)', 'queued']);
+});

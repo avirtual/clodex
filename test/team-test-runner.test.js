@@ -1156,3 +1156,54 @@ test('t2425: a gate:on box decide keeps its 5 min queue budget whatever queueMs 
   }
   assert.deepStrictEqual(seen, [[300000, 2460000], [300000, 2460000]]);
 });
+
+for (const [name, exclusive, want] of [
+  ['true', true, true],
+  ['false', false, undefined],
+  ['the string "true"', 'true', undefined],
+  ['1', 1, undefined],
+]) {
+  test(`t2428: testRunner.exclusive ${name} ${want ? 'is kept' : 'drops the key and keeps the runner'}`, () => {
+    const team = mkHome({ testRunner: { peer: 'r', exclusive } }).tm.loadManifest('team');
+    assert.deepStrictEqual(team.testRunner, { peer: 'r', hands: 'off', gate: 'off', ...(want ? { exclusive: true } : {}) });
+    assert.deepStrictEqual(team.droppedFields, []);
+  });
+}
+
+test('t2428: exclusive:on stores the key, the bare line shows it, exclusive:off removes it; another value or a repeat is refused', async () => {
+  const f = mkVerbFixture({ manifestExtra: { testRunner: { peer: 'runner-1', hands: 'full' } }, peers: [SUITE_PEER], reach: INFO });
+  assert.deepStrictEqual(await f.verb('lead', '[agent:team runner exclusive:on]'), ['[agent:team] test runner of team: run 21 min (default), queue 15 min hands, 20 min gate (default), exclusive on']);
+  assert.deepStrictEqual(disk(f.file).testRunner, { peer: 'runner-1', hands: 'full', exclusive: true });
+  assert.deepStrictEqual(await f.verb('lead', '[agent:team runner]'),
+    ['[agent:team] test runner of team: runner-1, wire push, hands full, gate off, run 21 min (default), queue 15 min hands, 20 min gate (default), exclusive on — reachable, suite capability, queue 3, env box-1 linux/arm64 node v22.11.0 key 0123456789ab']);
+  const before = fs.readFileSync(f.file, 'utf8');
+  for (const bad of ['yes', 'true', '']) {
+    assert.deepStrictEqual(await f.verb('lead', `[agent:team runner exclusive:${bad}]`), [`[agent:team] error: exclusive must be on or off — not "${bad}"`], bad);
+  }
+  assert.deepStrictEqual(await f.verb('lead', '[agent:team runner exclusive:on exclusive:off]'), ['[agent:team] error: name exclusive: once per [agent:team runner] intent']);
+  assert.deepStrictEqual(await f.verb('lead', '[agent:team runner exclusive:on gate:shadow]'),
+    ['[agent:team] error: set run:, queue:, exclusive: and hand-env: in their own [agent:team runner] intent, apart from the peer, hands, gate and fallback']);
+  assert.strictEqual(fs.readFileSync(f.file, 'utf8'), before, 'refusals write nothing');
+  assert.deepStrictEqual(await f.verb('lead', '[agent:team runner exclusive:off]'), ['[agent:team] test runner of team: run 21 min (default), queue 15 min hands, 20 min gate (default)']);
+  assert.deepStrictEqual(disk(f.file).testRunner, { peer: 'runner-1', hands: 'full' });
+});
+
+test('t2428: the parser keeps the first exclusive: token and marks a repeat', () => {
+  const p = registry.parseWithRegistry('[agent:team runner exclusive:on exclusive:off]');
+  assert.deepStrictEqual([p.exclusive, p.exclusiveRepeated, p.value], ['on', true, null]);
+  assert.deepStrictEqual(['exclusive' in registry.parseWithRegistry('[agent:team runner run:30]'), 'exclusiveRepeated' in registry.parseWithRegistry('[agent:team runner exclusive:on]')], [false, false]);
+});
+
+for (const [name, extra, want] of [['no key', {}, [undefined, undefined]], ['exclusive', { exclusive: true }, [true, true]]]) {
+  test(`t2428: gate submits with ${name} carry exclusive ${JSON.stringify(want)} (shadow, box decide)`, async () => {
+    const seen = [];
+    const shadow = async (o) => { seen.push(o.exclusive); return null; };
+    const run = async (o) => { seen.push(o.exclusive); return { unknown: 'stub', res: null, record: null }; };
+    const s = mkVerbFixture({ manifestExtra: { testRunner: { peer: 'runner-1', gate: 'shadow', ...extra } }, peers: [SUITE_PEER], shadow });
+    await s.m._shadowSubmit(s.tm.loadManifest('team'), { id: 't1' }, '/w', {});
+    const b = mkVerbFixture({ manifestExtra: { testRunner: { peer: 'runner-1', gate: 'on', box: true, ...extra } }, peers: [SUITE_PEER], run });
+    require('../team-box').writeBox(path.dirname(b.file), 'FROM node:25-bookworm\nRUN true\n');
+    await b.m._boxDecide(b.tm.loadManifest('team'), { id: 't1' }, '/w', {});
+    assert.deepStrictEqual(seen, want);
+  });
+}

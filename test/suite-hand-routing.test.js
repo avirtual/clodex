@@ -1037,7 +1037,7 @@ const HAND_SHARES = [{ share: 'assets', version: 'v1' }];
 const BOX_READY = { state: 'ready', env: { isolation: 'container', box: { imageId: 'sha256:0123456789abcdef', definitionHash: HAND_BOX_HASH } } };
 const STAMPED = { platform: 'linux', arch: 'arm64', isolation: 'container', box: { imageId: 'sha256:0123456789abcdef', definitionHash: HAND_BOX_HASH, shares: [{ name: 'assets', version: 'v1' }] } };
 
-function boxRig(wire, { info = {}, jobEnv = STAMPED } = {}) {
+function boxRig(wire, { info = {}, jobEnv = STAMPED, jobExtra = {} } = {}) {
   const calls = [];
   const bodies = [];
   const conn = {
@@ -1052,7 +1052,7 @@ function boxRig(wire, { info = {}, jobEnv = STAMPED } = {}) {
         return { status: 200, body: { ok: true, text, offset: 0, total: Buffer.byteLength(text) } };
       }
       const id = decodeURIComponent(/ids=([^&]+)/.exec(p)[1]);
-      return { status: 200, body: { ok: true, jobs: [{ id, state: 'done', treeHash: TREE, env: jobEnv, exit: { code: 0, signal: null }, reason: null, queueMs: 0, setupMs: 1, runMs: 2, out: {} }] } };
+      return { status: 200, body: { ok: true, jobs: [{ id, state: 'done', treeHash: TREE, env: jobEnv, exit: { code: 0, signal: null }, reason: null, queueMs: 0, setupMs: 1, runMs: 2, out: {}, ...jobExtra }] } };
     },
   };
   const ledgerFile = path.join(mkTmpRoot('suite-hand-box-'), 'suite-runs.jsonl');
@@ -1081,6 +1081,34 @@ test('t2419: a team without box:true sends its hand job with no isolation, box o
   }]);
 });
 
+
+for (const [said, recorded, note] of [
+  [{ exclusive: 'honoured' }, 'honoured', null],
+  [{ exclusive: 'ignored' }, 'ignored', '(did not run alone: the runner\'s owner set it to ignore exclusive requests, so other jobs could run beside it)'],
+  [{}, 'unsupported', '(did not run alone: the runner is too old to know exclusive jobs, so other jobs could run beside it)'],
+]) {
+  test(`t2428: an exclusive team's hand job carries exclusive: true; a runner answering ${recorded} lands in the end row${note ? ' and the digest says it did not run alone' : ''}`, async () => {
+    const r = boxRig('push', { jobExtra: said });
+    const f = hostFor({ client: r.client, box: () => false, team: { ...teamWith('all'), testRunner: { peer: 'runner-1', hands: 'all', exclusive: true } } });
+    f.host.onMessage(ask(f.dir));
+    const m = await f.done;
+    assert.strictEqual(m.unknown, null, 'ENTER: the run concluded');
+    assert.deepStrictEqual(r.bodies.map((b) => b.exclusive), [true]);
+    assert.deepStrictEqual(r.ends().map((x) => x.exclusive), [recorded]);
+    assert.strictEqual(m.note, note);
+    const root = mkRoot({ status: m.status, stdout: m.stdout, stderr: m.stderr });
+    const d = await runWithHost(root, '{}', path.join(root, 'h'), () => [m]);
+    assert.strictEqual(d.digest.endsWith(note ? `(runner runner-1) ${note}` : '(runner runner-1)'), true, d.digest);
+  });
+}
+
+test('t2428: a team without the key leaves exclusive out of the end row', async () => {
+  const r = boxRig('push', { jobExtra: { exclusive: 'honoured' } });
+  const f = hostFor({ client: r.client, box: () => false, team: { ...teamWith('all'), testRunner: { peer: 'runner-1', hands: 'all' } } });
+  f.host.onMessage(ask(f.dir));
+  assert.strictEqual((await f.done).unknown, null, 'ENTER: the run concluded');
+  assert.deepStrictEqual(r.ends().map((x) => 'exclusive' in x), [false]);
+});
 for (const wire of ['push', 'pull']) {
   test(`t2419: a box:true team's hand run on a ${wire} runner sends the box definition and shares; the reply, ledger row and digest show the box`, async () => {
     const r = boxRig(wire, { info: { box: BOX_READY, shares: [{ name: 'assets', version: 'v1' }] } });
