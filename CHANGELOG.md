@@ -15,6 +15,9 @@ blocks a release.
 
 - Test runners: a hand's test run can now go to a runner that dials in, so `hands:full` and `hands:all` work for those runners and for mixed pools. A newly added dial-in runner still starts with hands off.
 - Test runners: a runner's slot count can be set with `clodexctl` (and by the node's own agent), not only in Preferences. A change waits for running suites to finish.
+- Test runners: a team can set how long a test run may take on its runners: `[agent:team runner run:<minutes>]`, 1 to 36, default 21. Until now a suite longer than 21 minutes was always killed on a runner.
+- Test runners: a team can give hand test runs extra environment variables that gate runs do not get: `[agent:team runner hand-env:KEY=VALUE]`.
+- Test runners: a suite killed at its time limit now reports its last output lines.
 
 ## 5.199.0 — 2026-11-26
 
