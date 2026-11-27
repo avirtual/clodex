@@ -140,9 +140,12 @@ test('t2449: the cache keeps at most 32 names and evicts the oldest', async (t) 
 
 test('t2449: slots and pending are read live even when the box state comes from the cache', async (t) => {
   const f = await fixture(t);
-  const first = f.runner.info(want(H1));
+  f.runner.info(want(H1));
   await f.clock.advance(3 * DOCKER_CALL_MS);
-  assert.strictEqual((await first).box.state, 'ready');
+  const open = f.runner.info(want(H1));
+  await f.clock.flush();
+  const before = await open;
+  assert.deepStrictEqual([before.box.state, before.slots], ['ready', { total: 1, inUse: 0 }]);
   f.runner.fence(true);
   const fenced = f.runner.info(want(H1));
   await f.clock.flush();

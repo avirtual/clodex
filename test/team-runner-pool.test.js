@@ -1392,3 +1392,18 @@ test('t2440: a caller stop while the moved job is set up on runner-2 ends it wit
   assert.ok(stop, 'ENTER: the stop came during the setup on runner-2');
   assert.deepStrictEqual([r.posts(), out.record.moved], [['0 p1 POST run-1'], [{ from: 'runner-1', to: 'runner-2', at: '1970-01-01T00:01:00.000Z' }]]);
 });
+
+test('t2449: a pool member whose info call timed out is skipped as timeout in the pick record, and one refusing as refused', async () => {
+  const answers = {
+    p1: { ok: true, info: { queue: { running: null, queued: [] }, slots: { total: 1, inUse: 0 } } },
+    p2: { ok: false, why: 'timeout', timedOut: true },
+  };
+  const client = { reachable: async (id) => answers[id] };
+  const f = mkFixture({ manifestExtra: { testRunner: { peer: 'runner-1', gate: 'shadow', pool: [{ peer: 'runner-2' }] } }, peers: [R1, R2], client });
+  const tr = f.tm.loadManifest('team').testRunner;
+  assert.deepStrictEqual((await f.m._pickPool(tr, false, [], { claim: false, record: false })).pick,
+    { chosen: 'runner-1', skipped: [{ member: 'runner-2', reason: 'timeout' }] });
+  answers.p2 = { ok: false, why: 'runner refused the token (status 401)' };
+  assert.deepStrictEqual((await f.m._pickPool(tr, false, [], { claim: false, record: false })).pick,
+    { chosen: 'runner-1', skipped: [{ member: 'runner-2', reason: 'refused' }] });
+});
