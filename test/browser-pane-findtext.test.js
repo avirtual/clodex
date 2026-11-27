@@ -242,15 +242,15 @@ test('READ_INTERACTIVE: buttons that share a label are listed with the row they 
     '[1] button More actions — Invoice 2026-08.pdf',
     '[2] button More actions — Contract Smith',
     '[3] button More actions — Holiday photos 2025',
-    '[4] button Share',
-    '[5] button Share',
+    '[4] button Open — Open house photos',
+    '[5] button Open — Open tax folder',
     '[6] button Upload',
-    '[7] button Open — Open house photos',
-    '[8] button Open — Open tax folder',
+    '[7] button Share',
+    '[8] button Share',
   ]);
   assert.deepStrictEqual({ ...read.bare }, {
     1: '[1] button More actions', 2: '[2] button More actions', 3: '[3] button More actions',
-    7: '[7] button Open', 8: '[8] button Open',
+    4: '[4] button Open', 5: '[5] button Open',
   });
 });
 
