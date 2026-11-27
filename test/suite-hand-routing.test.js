@@ -150,7 +150,7 @@ test('host: a remote run goes through the client as kind hand and streams its pr
   });
   const { onSubmitted, onProgress, shouldStop, ...opts } = client.runs[0];
   assert.deepStrictEqual(opts, {
-    peer: 'p1', name: 'runner-1', tree: f.dir, kind: 'hand', scope: 'own', team: 'tm', ticket: null, seat: 'hand-1',
+    peer: 'p1', wire: 'push', name: 'runner-1', tree: f.dir, kind: 'hand', scope: 'own', team: 'tm', ticket: null, seat: 'hand-1',
     files: ['test/a.test.js'], flags: { CLODEX_TEST_LOCK: '1' }, setup: null, env: {},
     queueBudgetMs: 15 * 60 * 1000, runBudgetMs: 21 * 60 * 1000, timeoutMs: 21 * 60 * 1000, route: 'hands:all',
   });
