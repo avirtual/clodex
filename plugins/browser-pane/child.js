@@ -6,7 +6,7 @@ const readline = require('node:readline');
 const driver = require('./driver');
 const scripts = require('./page-scripts');
 const lock = require('./lock');
-const { TEXT } = require('./replies');
+const { TEXT, downloadReason } = require('./replies');
 const paths = require('./paths');
 const urlpolicy = require('./urlpolicy');
 const keys = require('./keys');
@@ -147,7 +147,7 @@ async function settleDownload(w, deadline) {
       w.abandoned = true;
       return { ...head, bytes: null };
     }
-    return { file: out.file, bytes: out.bytes, mime: out.mime, url: out.url || head.url, ...(out.same ? { same: true } : {}) };
+    return { file: out.file, bytes: out.bytes, mime: out.mime, url: out.url || head.url, ...(out.same ? { same: true } : {}), ...(out.fromServer ? { fromServer: true } : {}) };
   } catch (e) {
     return { ...head, bytes: null, failed: String((e && e.message) || e).replace(/^DOWNLOAD_FAILED: /, '') };
   }
@@ -462,6 +462,88 @@ function wireHost({ stdin, stdout, shutdown }) {
   };
 }
 
+function createDownloadRouter({ profile, ses, services, downloadsRoot, policyDenies, deniedError, send, render, actorOf = () => null }) {
+  const waiters = [];
+  const reserved = new Set();
+  const r = { waiters };
+  const drop = (w) => { const i = waiters.indexOf(w); if (i >= 0) waiters.splice(i, 1); };
+  r.expect = ({ url = null, dir, nameHint = null, wc = null }) => {
+    const actor = actorOf(wc) || {};
+    const w = { url, dir, nameHint, wc, item: null, service: actor.service || null, seat: actor.seat || null };
+    w.started = new Promise((res) => { w.onStart = res; });
+    w.done = new Promise((res, rej) => { w.resolve = res; w.reject = rej; });
+    w.done.catch(() => {});
+    w.cancel = () => drop(w);
+    waiters.push(w);
+    return w;
+  };
+  ses.on('will-download', (_e, item, from) => {
+    const chain = item.getURLChain();
+    const url = (chain && chain[0]) || '';
+    let w = waiters.find((x) => x.url && chain.some((u) => sameUrl(u, x.url)));
+    if (!w) w = waiters.find((x) => !x.url && x.wc && x.wc === from);
+    if (w) drop(w);
+    const owner = services.get(profile) || [...services.values()].find((s) => profileOf(s.name) === profile);
+    const service = (w && w.service) || (owner ? owner.name : profile);
+    const lost = (reason, name) => send({ event: 'download-lost', service, seat: w ? w.seat : null, name: name || hostOf(url), reason });
+    const hit = owner ? (chain || []).reduce((h, u) => h || policyDenies(owner, u, w ? 'agent' : 'page'), null) : null;
+    if (hit) {
+      item.cancel();
+      if (w) w.reject(deniedError(owner, url, hit, 'download'));
+      else lost('policy', item.getFilename());
+      return;
+    }
+    const mime = item.getMimeType();
+    const dir = w ? w.dir : path.join(downloadsRoot, profile);
+    const t0 = Date.now();
+    let file;
+    try {
+      fs.mkdirSync(dir, { recursive: true });
+      file = paths.uniquePath(dir, paths.sanitizeName((w && w.nameHint) || item.getFilename(), mime), (p) => reserved.has(p));
+    } catch (e) {
+      item.cancel();
+      if (w) w.reject(codedError('DOWNLOAD_FAILED', `DOWNLOAD_FAILED: cannot write to ${dir} (${e.code || e.message})`));
+      else lost('unwritable', item.getFilename());
+      return;
+    }
+    item.setSavePath(file);
+    reserved.add(file);
+    let why = null;
+    const stopWith = (reason) => { if (!why) { why = reason; item.cancel(); } };
+    if (item.getTotalBytes() > DOWNLOAD_MAX_BYTES) stopWith('too-large');
+    const timer = setTimeout(() => stopWith('timeout'), DOWNLOAD_DONE_MS);
+    item.on('updated', () => { if (item.getReceivedBytes() > DOWNLOAD_MAX_BYTES) stopWith('too-large'); });
+    if (w) w.onStart(item);
+    item.once('done', (_ev, state) => {
+      clearTimeout(timer);
+      reserved.delete(file);
+      if (state !== 'completed') {
+        try { fs.unlinkSync(file); } catch {}
+        if (w) w.reject(codedError('DOWNLOAD_FAILED', `DOWNLOAD_FAILED: ${why ? downloadReason(why) : state}`));
+        if (!w || w.abandoned) lost(why || state, path.basename(file));
+        return;
+      }
+      let bytes = 0;
+      try { bytes = fs.statSync(file).size; } catch {}
+      const out = { file, bytes, mime, magic: magicOf(file), ms: Date.now() - t0, url, ...(w && w.nameHint ? {} : { fromServer: true }) };
+      if (w) {
+        const got = keepOrFold(out, w, (p) => reserved.has(p));
+        w.resolve(got);
+        if (w.abandoned) send({ event: 'download-late', service, seat: w.seat, file: got.file, bytes: got.bytes, mime: got.mime, ...(got.fromServer ? { fromServer: true } : {}) });
+        return;
+      }
+      const svc = services.get(owner ? owner.name : profile);
+      send({ event: 'operator-download', service: svc ? svc.name : profile, file, bytes, mime });
+      if (svc) {
+        svc.flash = { text: `Downloaded ${path.basename(file)} → ${dir}`, until: Date.now() + FLASH_MS };
+        render(svc);
+        setTimeout(() => render(svc), FLASH_MS + 50);
+      }
+    });
+  });
+  return r;
+}
+
 function run(electron, ctx) {
   console.log = console.error;
   const argv = (ctx && ctx.argv) || process.argv;
@@ -594,78 +676,14 @@ function run(electron, ctx) {
     });
   };
 
+  const actorOf = (wc) => {
+    const svc = wc ? [...services.values()].find((s) => s.wc === wc) : null;
+    return svc ? { service: svc.name, seat: svc.actor || null } : null;
+  };
+
   function routerFor(profile, ses) {
     if (routers.has(profile)) return routers.get(profile);
-    const waiters = [];
-    const reserved = new Set();
-    const r = { waiters };
-    const drop = (w) => { const i = waiters.indexOf(w); if (i >= 0) waiters.splice(i, 1); };
-    r.expect = ({ url = null, dir, nameHint = null, wc = null }) => {
-      const w = { url, dir, nameHint, wc, item: null };
-      w.started = new Promise((res) => { w.onStart = res; });
-      w.done = new Promise((res, rej) => { w.resolve = res; w.reject = rej; });
-      w.done.catch(() => {});
-      w.cancel = () => drop(w);
-      waiters.push(w);
-      return w;
-    };
-    ses.on('will-download', (_e, item, from) => {
-      const chain = item.getURLChain();
-      const url = (chain && chain[0]) || '';
-      let w = waiters.find((x) => x.url && chain.some((u) => sameUrl(u, x.url)));
-      if (!w) w = waiters.find((x) => !x.url && x.wc && x.wc === from);
-      if (w) drop(w);
-      const owner = services.get(profile) || [...services.values()].find((s) => profileOf(s.name) === profile);
-      const hit = owner ? (chain || []).reduce((h, u) => h || policyDenies(owner, u, w ? 'agent' : 'page'), null) : null;
-      if (hit) {
-        item.cancel();
-        if (w) w.reject(deniedError(owner, url, hit, 'download'));
-        return;
-      }
-      const mime = item.getMimeType();
-      const dir = w ? w.dir : path.join(downloadsRoot, profile);
-      const t0 = Date.now();
-      let file;
-      try {
-        fs.mkdirSync(dir, { recursive: true });
-        file = paths.uniquePath(dir, paths.sanitizeName((w && w.nameHint) || item.getFilename(), mime), (p) => reserved.has(p));
-      } catch (e) {
-        item.cancel();
-        if (w) w.reject(codedError('DOWNLOAD_FAILED', `DOWNLOAD_FAILED: cannot write to ${dir} (${e.code || e.message})`));
-        return;
-      }
-      item.setSavePath(file);
-      reserved.add(file);
-      let why = null;
-      const stopWith = (reason) => { if (!why) { why = reason; item.cancel(); } };
-      if (item.getTotalBytes() > DOWNLOAD_MAX_BYTES) stopWith('larger than 500 MB');
-      const timer = setTimeout(() => stopWith('not finished after 300s'), DOWNLOAD_DONE_MS);
-      item.on('updated', () => { if (item.getReceivedBytes() > DOWNLOAD_MAX_BYTES) stopWith('larger than 500 MB'); });
-      if (w) w.onStart(item);
-      item.once('done', (_ev, state) => {
-        clearTimeout(timer);
-        reserved.delete(file);
-        if (state !== 'completed') {
-          try { fs.unlinkSync(file); } catch {}
-          if (w) w.reject(codedError('DOWNLOAD_FAILED', `DOWNLOAD_FAILED: ${why || state}`));
-          return;
-        }
-        let bytes = 0;
-        try { bytes = fs.statSync(file).size; } catch {}
-        const out = { file, bytes, mime, magic: magicOf(file), ms: Date.now() - t0, url };
-        if (w) {
-          w.resolve(keepOrFold(out, w, (p) => reserved.has(p)));
-          return;
-        }
-        const svc = services.get(owner ? owner.name : profile);
-        send({ event: 'operator-download', service: svc ? svc.name : profile, file, bytes, mime });
-        if (svc) {
-          svc.flash = { text: `Downloaded ${path.basename(file)} → ${dir}`, until: Date.now() + FLASH_MS };
-          render(svc);
-          setTimeout(() => render(svc), FLASH_MS + 50);
-        }
-      });
-    });
+    const r = createDownloadRouter({ profile, ses, services, downloadsRoot, policyDenies, deniedError, send, render, actorOf });
     routers.set(profile, r);
     return r;
   }
@@ -867,6 +885,7 @@ function run(electron, ctx) {
   async function mutating(svc, frame, what, body) {
     const seat = frame.seat || null;
     if (svc.lock.state === 'held') throw heldError(svc);
+    svc.actor = seat;
     svc.busy += 1;
     blockerSync();
     svc.popup = false;
@@ -1211,7 +1230,7 @@ function run(electron, ctx) {
       const { idle } = await act(wc, () => driver.click(wc, el), { ...actOpts(svc), shouldStop: () => svc.lock.takeover || began || pdf })
         .finally(() => { acting = false; });
       await watchPdf;
-      const out = { n, kind: el.kind, label: el.label, idle: idleOf(idle) };
+      const out = { n, kind: el.kind, label: el.label, idle: idleOf(idle), armMs: CLICK_DOWNLOAD_MS };
       const deadline = Date.now() + CLICK_DOWNLOAD_MS;
       if (began) out.download = await settleDownload(w, deadline);
       else if (svc.popupUrl && await inMain(wc, scripts.CONTENT_TYPE) === 'application/pdf') {
@@ -1705,6 +1724,6 @@ function run(electron, ctx) {
 }
 
 module.exports = {
-  run, keepOrFold, settleDownload, scrollCode, checkOpenUrl, wireHost, numberVerdict, inspectKind, retiredOf,
+  run, createDownloadRouter, keepOrFold, settleDownload, scrollCode, checkOpenUrl, wireHost, numberVerdict, inspectKind, retiredOf,
   signinOf, framesOf, challenged, numState, mergeNumbers, numberRefusal, notOpenError, loadNumbers, saveNumbers, pruneNumbers, flushNumbers, forgetNumbers, numbersFile, originSlug, genRefusal, NUMBERS_SCHEMA, changedOf, rowChanged, coveredRefusal, liveTarget, consequentialRefusal, passwordRefusal, enterRefusal, signinHold, lateMsFor, navOf, tickersOf, targetDiff, settleChange, LATE_CHANGE_MS, ORIGINS_MAX,
 };

@@ -167,9 +167,71 @@ function downloadTarget(cmd) {
   return 'current page';
 }
 
+const DOWNLOAD_REASONS = {
+  policy: 'refused by URL policy',
+  unwritable: 'download folder not writable',
+  'too-large': 'larger than 500 MB',
+  timeout: 'not finished after 300s',
+  cancelled: 'cancelled',
+  interrupted: 'interrupted',
+};
+const DOWNLOAD_NAME_MAX = 120;
+const UNSAFE_NAME = new RegExp('[\\u0000-\\u001F\\u007F-\\u009F\\u200B-\\u200F\\u2028-\\u202E\\u2066-\\u2069\\uFEFF]', 'g');
+const TYPE_BY_EXT = {
+  docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  pptx: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+  zip: 'application/zip',
+  pdf: 'application/pdf',
+  csv: 'text/csv',
+  txt: 'text/plain',
+  json: 'application/json',
+  png: 'image/png',
+  jpg: 'image/jpeg',
+  gif: 'image/gif',
+  svg: 'image/svg+xml',
+  md: 'text/markdown',
+  html: 'text/html',
+};
+
+function safeName(name) {
+  let s = String(name == null ? '' : name).replace(UNSAFE_NAME, '');
+  for (let prev = null; prev !== s;) { prev = s; s = s.replace(/\[agent:/gi, ''); }
+  return [...s].slice(0, DOWNLOAD_NAME_MAX).join('').trim();
+}
+
+function safePath(file) {
+  const s = String(file || '');
+  return path.join(path.dirname(s), safeName(path.basename(s)));
+}
+
+function typeOf(mime, file) {
+  const m = String(mime || '').trim();
+  if (m && !/^application\/octet-stream\b/i.test(m)) return m;
+  return TYPE_BY_EXT[path.extname(String(file || '')).slice(1).toLowerCase()] || m || 'unknown type';
+}
+
+function downloadReason(reason) {
+  return Object.hasOwn(DOWNLOAD_REASONS, reason) ? DOWNLOAD_REASONS[reason] : DOWNLOAD_REASONS.interrupted;
+}
+
+function downloadLost(name, reason) {
+  return `download not saved: ${safeName(name) || 'download'} — ${downloadReason(reason)}`;
+}
+
+function downloadFinished(d) {
+  const file = safePath(d.file);
+  return `download finished → ${showPath(file)} (${bytesLabel(d.bytes || 0)}, ${typeOf(d.mime, file)})${d.fromServer ? ' · name from server' : ''}`;
+}
+
+function armedTail(dir, ms) {
+  return ` · download destination armed: ${showPath(String(dir || ''))} for ${Math.round(Number(ms) / 1000)} s`;
+}
+
 function downloadReply(service, cmd, r) {
   const head = `${PREFIX} downloaded ${service} ${downloadTarget(cmd)}`;
-  const parts = [`${Number(r.bytes || 0).toLocaleString('en-US')} B`, String(r.mime || 'unknown type')];
+  const parts = [`${Number(r.bytes || 0).toLocaleString('en-US')} B`, typeOf(r.mime, r.file)];
+  if (r.fromServer) parts.push('name from server');
   if (r.same) parts.unshift('same as an existing file');
   if (r.magic === 'html' && looksPdf(r)) {
     parts.push(`WARNING: not a PDF — looks like a web page (session expired?) — read ${service}`);
@@ -476,7 +538,7 @@ function downloadTail(d, popupUrl) {
   if (d.bytes == null) return ` · → download ${where} still downloading`;
   if (d.same) return ` · → download same as ${where} · ${bytesLabel(d.bytes)}`;
   const from = d.url ? ` · from ${clipUrl(d.url)}${popupUrl ? ' (PDF popup)' : ''}` : '';
-  return ` · → download ${where} · ${bytesLabel(d.bytes)} · ${String(d.mime || 'unknown type')}${from}`;
+  return ` · → download ${where} · ${bytesLabel(d.bytes)} · ${typeOf(d.mime, d.file)}${d.fromServer ? ' · name from server' : ''}${from}`;
 }
 
 function shortEl(r, k) {
@@ -659,7 +721,7 @@ module.exports = {
   closedReply,
   classifyReply,
   oneLine, reply, errorReply, openReply, readReply, servicesReply, writeReplyFile, snapshotId, SNAP_RE, SNAP_MAX_AGE_MS, SNAP_TMP_MAX_AGE_MS, replyDir, snapshotDir, pruneSnapshots, pruneAllSnapshots, loginState, stamp,
-  downloadReply, screenshotReply, inspectReply,
+  downloadReply, screenshotReply, inspectReply, downloadLost, downloadFinished, downloadReason, armedTail, safeName, typeOf, DOWNLOAD_REASONS,
   PREFIX, REPLY_MAX, SEAT_RE, TEXT, ago, signinReply, signinNotice, dropSuffix, droppedReply, actReply, scrollReply, navReply, waitReply, handbackReply, heldTimeout, isGoogle,
   handover, INSTRUCTION_MAX, operatorNav,
 };
