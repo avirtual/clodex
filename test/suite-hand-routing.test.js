@@ -8,7 +8,7 @@ const path = require('node:path');
 const { EventEmitter } = require('node:events');
 const { spawn, spawnSync } = require('node:child_process');
 const { mkTmpRoot } = require('./lib/tmp-roots');
-const { route, createChannelHost, createSuiteClient } = require('../suite-client');
+const { route, createChannelHost, createSuiteClient, boxVerdict } = require('../suite-client');
 
 const SCRIPT = path.join(__dirname, '..', 'scripts', 'clodex-run-tests.js');
 const TREE = 'a'.repeat(40);
@@ -152,7 +152,7 @@ test('host: a remote run goes through the client as kind hand and streams its pr
   assert.deepStrictEqual(opts, {
     peer: 'p1', wire: 'push', name: 'runner-1', tree: f.dir, kind: 'hand', scope: 'own', team: 'tm', ticket: null, seat: 'hand-1',
     files: ['test/a.test.js'], flags: { CLODEX_TEST_LOCK: '1' }, setup: null, env: {},
-    queueBudgetMs: 15 * 60 * 1000, runBudgetMs: 21 * 60 * 1000, timeoutMs: 21 * 60 * 1000, route: 'hands:all',
+    queueBudgetMs: 15 * 60 * 1000, runBudgetMs: 21 * 60 * 1000, timeoutMs: 21 * 60 * 1000, budgetMs: 36 * 60 * 1000, route: 'hands:all',
   });
   assert.deepStrictEqual(f.sent[0], { progress: 'runner runner-1: job queued' });
 });
@@ -856,3 +856,112 @@ for (const [name, pool, want] of PICK_ROWS) {
     assert.deepStrictEqual([client.runs[0].peer, client.runs[0].name, 'repick' in client.runs[0]], want);
   });
 }
+
+const KILLED_OUT = [
+  '...',
+  `▶ ${'x'.repeat(250)}`,
+  'second\u001b[31m red\u0007 line',
+  '',
+  'last line before the kill',
+  '',
+].join('\n');
+const KILLED_ERR = 'noise\nrun-tests: TIMEOUT after 300000ms in test/hangs.test.js\n';
+
+function killedAnswer(method, p, { stdout = KILLED_OUT, stderr = KILLED_ERR } = {}) {
+  if (p.includes('/output?')) {
+    const text = p.includes('stream=stdout') ? stdout : stderr;
+    return { status: 200, body: { ok: true, text, offset: 0, total: Buffer.byteLength(text) } };
+  }
+  if (method === 'GET' && /ids=/.test(p)) {
+    const id = decodeURIComponent(/ids=([^&]+)/.exec(p)[1]);
+    return { status: 200, body: { ok: true, jobs: [{ id, state: 'done', treeHash: TREE, exit: { code: null, signal: 'SIGKILL' }, reason: 'timeout', queueMs: 0, setupMs: 1, runMs: 2, out: {} }] } };
+  }
+  return jobsAnswer(method, p);
+}
+
+const KILLED_TAIL = `; last output: ▶ ${'x'.repeat(198)} | second [31m red  line | last line before the kill; run-tests: TIMEOUT after 300000ms in test/hangs.test.js`;
+
+test('t2418: a killed job names the asked limit and its last three stdout lines, cut and flattened, then the hung-file line; no totals', async () => {
+  const { conn } = stubConn((m, p) => killedAnswer(m, p));
+  const { client } = clientWith(conn);
+  const out = await client.run({ peer: 'p1', name: 'runner-1', tree: '/w', timeoutMs: 30 * 60 * 1000 });
+  assert.ok(out.unknown.includes('last line before the kill'), `ENTER: ${out.unknown}`);
+  assert.strictEqual(out.unknown, `the suite did not finish within 1800000ms (killed)${KILLED_TAIL}`);
+  assert.deepStrictEqual([out.record.outcome, out.record.pass, out.record.fail, out.record.tests], ['timeout', null, null, null]);
+});
+
+test('t2418: a killed job with no output and no hung line keeps the bare killed text', async () => {
+  const { conn } = stubConn((m, p) => killedAnswer(m, p, { stdout: '\n\n', stderr: 'other\n' }));
+  const { client } = clientWith(conn);
+  const out = await client.run({ peer: 'p1', name: 'runner-1', tree: '/w' });
+  assert.strictEqual(out.unknown, 'the suite did not finish within 1260000ms (killed)');
+});
+
+test('t2418: a runner refusing the asked timeoutMs reads as one line naming both numbers, outcome unknown, with no resubmit', async () => {
+  const { conn, calls } = stubConn((m, p) => (m === 'POST' && p === '/api/suite/jobs' ? { status: 400, body: { ok: false, error: 'bad timeoutMs' } } : jobsAnswer(m, p)));
+  const { client } = clientWith(conn);
+  const out = await client.run({ peer: 'p1', name: 'runner-1', tree: '/w', timeoutMs: 30 * 60 * 1000 });
+  assert.strictEqual(out.unknown, 'runner refused the job: bad timeoutMs — the job asked for 1800000ms, the runner\'s ceiling is not reported (default 2160000ms)');
+  assert.strictEqual(calls.filter((c) => c === 'POST /api/suite/jobs').length, 1);
+  assert.deepStrictEqual(boxVerdict(out, null), { fallback: 'outcome unknown', fallbackCode: 'outcome-unknown', fallbackClass: 'unknown' });
+});
+
+test('t2418: a runner that reports its ceiling has it named in the refusal', async () => {
+  const { conn } = stubConn((m, p) => {
+    if (p === '/api/suite/info') return { status: 200, body: { ok: true, limits: { maxTimeoutMs: 1200000 }, env: { envKey: 'k' } } };
+    if (m === 'POST' && p === '/api/suite/jobs') return { status: 400, body: { ok: false, error: 'bad timeoutMs' } };
+    return jobsAnswer(m, p);
+  });
+  const { client } = clientWith(conn);
+  const out = await client.run({ peer: 'p1', name: 'runner-1', tree: '/w', timeoutMs: 30 * 60 * 1000 });
+  assert.strictEqual(out.unknown, 'runner refused the job: bad timeoutMs — the job asked for 1800000ms, the runner\'s ceiling is 1200000ms');
+});
+
+test('t2418: a team runMs sets the hand run budget, the job limit and the whole budget; handEnv rides over env', async () => {
+  const client = stubClient({ result: { unknown: null, res: { status: 0, signal: null, stdout: '', stderr: '', treeHash: TREE } } });
+  const team = { ...teamWith('all'), testRunner: { peer: 'runner-1', hands: 'all', runMs: 30 * 60 * 1000, env: { A: '1', B: '2' }, handEnv: { B: 'hand', C: '3' } } };
+  const f = hostFor({ client, team });
+  f.host.onMessage(ask(f.dir));
+  await f.done;
+  const r = client.runs[0];
+  assert.deepStrictEqual([r.runBudgetMs, r.timeoutMs, r.budgetMs, r.queueBudgetMs, r.env], [1800000, 1800000, 2700000, 900000, { A: '1', B: 'hand', C: '3' }]);
+});
+
+test('t2418: the hand digest carries the killed run\'s last output whole', async () => {
+  const root = mkRoot(CAPTURED.green);
+  const leaf = path.basename(root);
+  const why = `the suite did not finish within 1800000ms (killed)${KILLED_TAIL}`;
+  const r = await runWithHost(root, '{}', path.join(root, 'h'), () => [{ run: 'remote', runner: 'runner-1', unknown: why }]);
+  assert.ok(r.digest.includes('run-tests: TIMEOUT after 300000ms in test/hangs.test.js'), `ENTER: ${r.digest}`);
+  assert.strictEqual(r.digest, `[${leaf}] result unknown — the suite did not complete on runner runner-1: ${why}`);
+});
+
+test('t2418: a team runMs moves the exec ceiling of clodex-run-tests by runMs minus 21 minutes, and the channel host gets it', async (t) => {
+  const client = stubClient({ hang: true });
+  const team = { ...teamWith('all'), testRunner: { peer: 'runner-1', hands: 'all', runMs: 30 * 60 * 1000 }, root: fs.realpathSync(mkTmpRoot('suite-route-tree-')) };
+  const f = execFixture(t, 'clodex-run-tests.js', { client, team });
+  await turns(2);
+  const child = f.children[0];
+  child.emit('message', ask(team.root));
+  await turns();
+  assert.strictEqual(client.runs.length, 1, 'ENTER: the job is in flight');
+  assert.deepStrictEqual([client.runs[0].timeoutMs, client.runs[0].runBudgetMs], [1800000, 1800000]);
+  mock.timers.tick(5000);
+  assert.deepStrictEqual(child.kills, [], 'not killed at the def ceiling');
+  mock.timers.tick(9 * 60 * 1000 - 1);
+  assert.deepStrictEqual(child.kills, []);
+  mock.timers.tick(1);
+  assert.deepStrictEqual(child.kills, ['SIGKILL']);
+});
+
+test('t2418: a failed clodex-run-tests delivers its long last stderr line past 200 characters', async (t) => {
+  const team = { ...teamWith('all'), root: fs.realpathSync(mkTmpRoot('suite-route-tree-')) };
+  const f = execFixture(t, 'clodex-run-tests.js', { client: stubClient({ hang: true }), team });
+  await turns(2);
+  const line = `[leaf] result unknown — the suite did not complete on runner runner-1: the suite did not finish within 1800000ms (killed)${KILLED_TAIL}`;
+  assert.ok(line.length > 400, 'ENTER: the line is past the old cut');
+  f.children[0].stderr.emit('data', `${line}\n`);
+  f.children[0].emit('close', 1, null);
+  const err = f.broadcasts.filter((b) => b && b.type === 'exec' && String(b.body).startsWith('err: '));
+  assert.deepStrictEqual(err.map((b) => b.body), [`err: exit 1: ${line}`]);
+});

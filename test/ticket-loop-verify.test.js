@@ -7126,7 +7126,7 @@ const BOX_FALLBACKS = [
   ['unreachable', 'runner unreachable', 'runner-unreachable', 'transient', 'unknown', 'runner unreachable: status 0'],
   ['queue budget', 'queue budget', 'queue-budget', 'budget', 'timeout', 'the job did not start within the 300000ms queue budget (cancelled)'],
   ['run budget', 'run budget', 'run-budget', 'budget', 'timeout', 'no result within the 2460000ms budget (cancelled)'],
-  ['runner killed', 'run budget', 'run-budget', 'budget', 'timeout', 'the suite did not finish within 1260000ms (killed)'],
+  ['runner killed', 'run budget', 'run-budget', 'budget', 'timeout', 'the suite did not finish within 1260000ms (killed); last output: ✖ box only (2ms) | TOTALS: 4 pass, 1 fail, 5 tests'],
   ['refused', 'outcome unknown', 'outcome-unknown', 'unknown', 'unknown', 'runner refused the job: nope'],
   ['cancelled', 'outcome unknown', 'outcome-unknown', 'unknown', 'unknown', 'cancelled on runner'],
   ['no totals', 'no totals', 'no-totals', 'deterministic', 'no-summary', null],
@@ -8362,4 +8362,18 @@ test('t2402: a post-merge box run is not cancelled when the ticket changes under
   assert.deepStrictEqual([out.decidedBy, out.cancelled, out.green], ['box', undefined, true]);
   assert.deepStrictEqual(cancels, []);
   assert.deepStrictEqual(l.b.events, ['post']);
+});
+
+test('t2418: a box run killed at the team runMs holds the verify and the lead notice names the limit and the last output lines', async () => {
+  const p = provenanceLoop({ testRunner: { ...GATE_HOLD, runMs: 30 * 60 * 1000 }, box: true });
+  const killed = boxRemote('runner killed', p.b.events);
+  p.b.holder.client = killed.client;
+  p.seed();
+  await p.loop();
+  const notes = heldNotes(p.b.f);
+  assert.ok(notes.length === 1 && notes[0].includes('TOTALS: 4 pass, 1 fail, 5 tests'), `ENTER: ${notes}`);
+  assert.deepStrictEqual(notes, [
+    '[ticket t1 HELD] the box did not decide (run budget): the suite did not finish within 1800000ms (killed); last output: ✖ box only (2ms) | TOTALS: 4 pass, 1 fail, 5 tests. Not run on the home suite (fallback:hold).\n'
+    + 'The run or queue limit was hit; try again with [agent:task verify t1] when the runner has room.',
+  ]);
 });
