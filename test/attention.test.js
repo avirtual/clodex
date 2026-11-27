@@ -94,3 +94,27 @@ test('bootDialogNote names the dialog and quotes its path when it has one', () =
     'a Claude Code boot dialog is up in its terminal: /home/bogdan/.clodex/messages');
   assert.strictEqual(bootDialogNote({ kind: 'folder-trust', path: null }), 'a Claude Code boot dialog is up in its terminal');
 });
+
+const VARIANT_ROWS = [
+  ['2.1.332 moving variant: "No, stay put" / "Yes, move here"',
+    ' Moving to a new directory:\n /home/bogdan/proj\n This session hasn\'t worked here before. Is this a directory you created or one you trust?\n\n ❯ No, stay put\n   Yes, move here\n\n Enter to confirm · Esc to cancel\n',
+    { kind: 'folder-trust-variant', path: '/home/bogdan/proj' }],
+  ['2.1.332 settings variant: "No, keep them off" / "Yes, trust it and apply them"',
+    ' Now in a new directory:\n /home/bogdan/proj/sub\n Its settings declare project permission rules and/or additional directories.\n ❯ No, keep them off\n   Yes, trust it and apply them\n Enter to confirm · Esc to cancel\n',
+    { kind: 'folder-trust-variant', path: '/home/bogdan/proj/sub' }],
+  ['2.1.332 add variant with "No, leave it out" in place of "No, exit"',
+    ' Adding a new directory:\n /home/bogdan/.clodex/sessions/h1/messages\n This session hasn\'t worked here before.\n ❯ No, leave it out\n   Yes, add it\n Enter to confirm · Esc to cancel\n',
+    { kind: 'folder-trust-variant', path: '/home/bogdan/.clodex/sessions/h1/messages' }],
+  ['a variant answered: the prompt box drawn below it',
+    ' Moving to a new directory:\n /home/bogdan/proj\n This session hasn\'t worked here before.\n ❯ No, stay put\n   Yes, move here\n Enter to confirm\n────────────────────────────────────────\n❯ \n────────────────────────────────────────\n',
+    null],
+  ['variant option labels alone, with no title or body',
+    '❯ No, stay put\n  Yes, move here\n',
+    null],
+];
+
+for (const [label, text, expected] of VARIANT_ROWS) {
+  test(`t2443 classifyBootScreen: ${label}`, () => {
+    assert.deepStrictEqual(classifyBootScreen(text), expected);
+  });
+}

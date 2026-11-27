@@ -1029,3 +1029,17 @@ test('t1908: the dialog form keeps the repeat head, flattens newlines and cuts a
   assert.ok(multi.includes('— Bash: ls -la. Only the operator can answer'), multi);
   assert.ok(!multi.includes('\n'));
 });
+
+test('t2443: a boot dialog seen on the screen gets its own wording, with no Requests list and no Deny', () => {
+  const body = formatStallBody({
+    ticketId: 't1', who: 'hand', age: '31m', commits: 0, dirty: false,
+    dialog: { message: 'Claude Code boot dialog (added-folder-trust): /home/b/.clodex/sessions/h1/messages — answer it in the seat terminal', age: '31m', source: 'screen' },
+  });
+  assert.strictEqual(body,
+    '[ticket t1] stalled: hand held at a Claude Code boot dialog since 31m — Claude Code boot dialog (added-folder-trust): /home/b/.clodex/sessions/h1/messages — answer it in the seat terminal. '
+    + 'Only the operator can answer it, in the seat terminal; it is in their inbox, and nothing is typed into it until then.');
+  const repeat = formatStallBody({ ticketId: 't1', who: 'hand', age: '1h', repeat: 1, dialog: { message: 'Claude Code boot dialog (folder-trust)', age: '1h', source: 'screen' } });
+  assert.strictEqual(repeat,
+    '[ticket t1] STILL stalled (repeat 1): hand held at a Claude Code boot dialog since 1h — Claude Code boot dialog (folder-trust). '
+    + 'Only the operator can answer it, in the seat terminal; it is in their inbox, and nothing is typed into it until then.');
+});
