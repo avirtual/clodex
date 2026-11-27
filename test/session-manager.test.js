@@ -21984,13 +21984,12 @@ test('t2441: a seat messages dir that is a symlink, holds a dotfile or holds a s
     if (plant) plant(own, rig.h.root);
     await rig.h.create('tt1', null, 'pty');
     assert.strictEqual(rig.ptyArgs.length, 1, 'ENTER: the seat spawned a pty');
-    const shape = rig.ptyArgs[0].map((a) => String(a).split(rig.h.root).join('<root>'))
-      .map((a) => (/^[0-9a-f]{8}-[0-9a-f-]{27}$/.test(a) ? '<uuid>' : a));
+    const shape = rig.ptyArgs[0].map((a) => String(a).split(rig.h.root).join('<root>'));
     return { ...rig, own, shape };
   };
   const clean = await run(null);
   assert.deepStrictEqual(clean.shape, [
-    '--session-id', '<uuid>', '--settings', '<root>/settings.json',
+    '--settings', '<root>/settings.json',
     '--add-dir', '<root>/messages', '--add-dir', '<root>/sessions/tt1/messages',
     '--strict-mcp-config', '--mcp-config', '<root>/run/tt1/mcp.json',
     '--append-system-prompt-file', '<root>/run/tt1/append-prompt.md',
