@@ -20,11 +20,11 @@ const { trackedSessionIds: entrySessionIds } = require('./session-info');
 const { hostNotice } = require('./host-stamp');
 const { idleClearAfterMs, IDLE_CLEAR_MIN_MS } = require('./assistant-sleep');
 const { localHalf, failingNames } = require('./suite-client');
-const { boxVerdict, fallbackOf, FALLBACK_CODES, pickRunner, runnerLoad, BUILD_BUDGET_MS, HUNG_RE } = require('./suite-client');
+const { boxVerdict, fallbackOf, FALLBACK_CODES, pickRunner, runnerLoad, BUILD_BUDGET_MS, HUNG_RE, HAND_QUEUE_MS } = require('./suite-client');
 const {
   matchSeatRole, nameRole, defaultLeadSeat, ROLE_RE, RESERVED_ROLE_KEYS, STOCK_ROLE_DEFS,
   DEFAULT_ROLE_DISPATCH, TRUNK_HEAD, normalizeTestRoots, TEST_ROOTS_MAX, effectiveHandCap, DONE_VALUES, normalizeDone, NAME_RE: NODE_NAME_RE, TEST_RUNNER_HANDS, TEST_RUNNER_GATE, TEST_RUNNER_FALLBACK, TEST_RUNNER_WIRE_PUSH: WIRE_PUSH, TEST_RUNNER_POOL_MAX,
-  TEST_RUNNER_ENV_RE, TEST_RUNNER_ENV_MAX, TEST_RUNNER_ENV_VALUE_MAX, TEST_RUNNER_RUN_STEP_MS, TEST_RUNNER_RUN_MIN_MS, TEST_RUNNER_RUN_MAX_MS, TEST_RUNNER_RUN_DEFAULT_MS,
+  TEST_RUNNER_ENV_RE, TEST_RUNNER_ENV_MAX, TEST_RUNNER_ENV_VALUE_MAX, TEST_RUNNER_RUN_STEP_MS, TEST_RUNNER_RUN_MIN_MS, TEST_RUNNER_RUN_MAX_MS, TEST_RUNNER_RUN_DEFAULT_MS, TEST_RUNNER_QUEUE_MIN_MS, TEST_RUNNER_QUEUE_MAX_MS,
 } = require('./team-manifest');
 const {
   readTeamJson, teamTemplatePath, teamTemplateSave, mayGrantOf, ownTeamExecGrants, clampToGrantor, teamTemplateRemove, teamPromptSave, teamPromptRemove,
@@ -3292,6 +3292,10 @@ function createTicketMethods(deps, shared) {
       return tr && Number.isInteger(tr.runMs) ? Math.max(0, tr.runMs - TEST_RUNNER_RUN_DEFAULT_MS) : 0;
     },
 
+    _runnerQueueExtra(tr) {
+      return tr && Number.isInteger(tr.queueMs) ? Math.max(0, tr.queueMs - TICKET_SUITE_LOCK_WAIT_MS) : 0;
+    },
+
     _runnerReroute(tr, box) {
       return async (lost) => {
         const next = await this._pickGateRunner(tr, box, [lost]);
@@ -3489,12 +3493,14 @@ function createTicketMethods(deps, shared) {
       const run = Number.isInteger(cur.runMs) ? `run ${cur.runMs / TEST_RUNNER_RUN_STEP_MS} min` : `run ${TEST_RUNNER_RUN_DEFAULT_MS / TEST_RUNNER_RUN_STEP_MS} min (default)`;
       const flat = (v) => String(v).replace(/[\x00-\x1f\x7f]+/g, ' ').slice(0, 60);
       const keys = Object.entries(cur.handEnv || {});
-      return `, ${run}${keys.length ? `, hand-env ${keys.map(([k, v]) => `${flat(k)}=${flat(v)}`).join(' ')}` : ''}`;
+      const queue = Number.isInteger(cur.queueMs) ? `queue ${cur.queueMs / TEST_RUNNER_RUN_STEP_MS} min`
+        : `queue ${HAND_QUEUE_MS / TEST_RUNNER_RUN_STEP_MS} min hands, ${TICKET_SUITE_LOCK_WAIT_MS / TEST_RUNNER_RUN_STEP_MS} min gate (default)`;
+      return `, ${run}, ${queue}${keys.length ? `, hand-env ${keys.map(([k, v]) => `${flat(k)}=${flat(v)}`).join(' ')}` : ''}`;
     },
 
     _handleRunnerLimits(team, cur, intent, reply) {
       if (intent.value || intent.hands != null || intent.gate != null || intent.fallback != null) {
-        reply('error: set run: and hand-env: in their own [agent:team runner] intent, apart from the peer, hands, gate and fallback');
+        reply('error: set run:, queue: and hand-env: in their own [agent:team runner] intent, apart from the peer, hands, gate and fallback');
         return;
       }
       if (!cur) {
@@ -3505,7 +3511,21 @@ function createTicketMethods(deps, shared) {
         reply('error: name run: once per [agent:team runner] intent');
         return;
       }
+      if (intent.queueRepeated) {
+        reply('error: name queue: once per [agent:team runner] intent');
+        return;
+      }
       const patch = {};
+      if (intent.queue != null) {
+        const min = TEST_RUNNER_QUEUE_MIN_MS / TEST_RUNNER_RUN_STEP_MS;
+        const max = TEST_RUNNER_QUEUE_MAX_MS / TEST_RUNNER_RUN_STEP_MS;
+        if (intent.queue === 'off') patch.queueMs = null;
+        else if (/^\d+$/.test(intent.queue) && Number(intent.queue) >= min && Number(intent.queue) <= max) patch.queueMs = Number(intent.queue) * TEST_RUNNER_RUN_STEP_MS;
+        else {
+          reply(`error: queue must be a whole number of minutes from ${min} to ${max}, or off — not "${intent.queue}"`);
+          return;
+        }
+      }
       if (intent.run != null) {
         const min = TEST_RUNNER_RUN_MIN_MS / TEST_RUNNER_RUN_STEP_MS;
         const max = TEST_RUNNER_RUN_MAX_MS / TEST_RUNNER_RUN_STEP_MS;
@@ -3547,7 +3567,7 @@ function createTicketMethods(deps, shared) {
 
     async _handleTeamRunner(team, intent, reply) {
       const cur = team.testRunner || null;
-      if (intent.run != null || intent.handEnv) {
+      if (intent.run != null || intent.queue != null || intent.handEnv) {
         this._handleRunnerLimits(team, cur, intent, reply);
         return;
       }
@@ -6861,7 +6881,7 @@ function createTicketMethods(deps, shared) {
         return await client.shadow({
           ...via, name: member.peer, tree: cwd, kind, team: team.name, ticket: String(ticket.id),
           setup: tr.setup || null, env: tr.env || {}, route: 'gate:shadow', box, ...(tr.shares ? { shares: tr.shares } : {}),
-          queueBudgetMs: TICKET_SUITE_LOCK_WAIT_MS, budgetMs: TICKET_SUITE_TIMEOUT + this._runnerRunExtra(tr), ...this._runnerTimeout(tr),
+          queueBudgetMs: TICKET_SUITE_LOCK_WAIT_MS + this._runnerQueueExtra(tr), budgetMs: TICKET_SUITE_TIMEOUT + this._runnerRunExtra(tr) + this._runnerQueueExtra(tr), ...this._runnerTimeout(tr),
           ...(pooled ? { pool: true } : {}),
           ...(chosen ? { repick: this._runnerRepick(tr, box) } : {}),
           reroute: this._runnerReroute(tr, box),

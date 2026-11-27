@@ -8019,10 +8019,12 @@ function createSessionManager(deps) {
       const handRemote = !!suiteChannel && suiteRoute({ team: execTeam, kind: 'hand', scope: v.value && v.value.scope, local: !!(v.value && v.value.local === true) }).where === 'remote';
       const handTr = handRemote ? execTeam.testRunner : null;
       const handRunMs = handTr && Number.isInteger(handTr.runMs) ? handTr.runMs : null;
+      const handQueueMs = handTr && Number.isInteger(handTr.queueMs) ? handTr.queueMs : null;
+      const handQueueExtra = handQueueMs != null ? Math.max(0, handQueueMs - HAND_QUEUE_MS) : 0;
       const handBox = handTr ? this._handBox(execTeam) : false;
       const timeoutMs = ((typeof entry.timeoutMs === 'number' && entry.timeoutMs > 0) ? entry.timeoutMs : 10000)
-        + (handTr ? handExecSlackMs(handTr) : 0) + (handRunMs != null ? Math.max(0, handRunMs - HAND_RUN_MS) : 0)
-        + (handBox && typeof handBox.definition === 'string' ? HAND_QUEUE_MS + BUILD_BUDGET_MS : 0);
+        + (handTr ? handExecSlackMs(handTr) : 0) + (handRunMs != null ? Math.max(0, handRunMs - HAND_RUN_MS) : 0) + handQueueExtra
+        + (handBox && typeof handBox.definition === 'string' ? HAND_QUEUE_MS + handQueueExtra + BUILD_BUDGET_MS : 0);
       setImmediate(() => {
         let child;
         try {
@@ -8067,6 +8069,7 @@ function createSessionManager(deps) {
             notifyLead: (body) => this._broadcast('ipc-message', { type: 'task', from: 'ticket-loop', to: execTeam ? execTeam.lead : null, body }),
             log: (m) => log.warn('intent', m),
             ...(handRunMs != null ? { runMs: handRunMs } : {}),
+            ...(handQueueMs != null ? { queueBudgetMs: handQueueMs } : {}),
           });
           child.on('message', (m) => suiteHost.onMessage(m));
           child.on('disconnect', () => suiteHost.cancel());

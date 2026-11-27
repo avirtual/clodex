@@ -499,7 +499,7 @@ function runLocal(routeEnv) {
   else delete childEnv.CLODEX_TEST_LOCK;
   if (selected && !selected.locked) childEnv.CLODEX_TEST_SLOW_ADVISORY = '1';
   else delete childEnv.CLODEX_TEST_SLOW_ADVISORY;
-  if (named) childEnv.CLODEX_SUITE_NAMED = '1';
+  if (named) childEnv.CLODEX_SUITE_NAMED = String(named.files.length);
   const res = spawnSync(process.execPath, [runner, '--reporter=dot', ...(selected ? selected.files : [])], {
     cwd: measure,
     env: childEnv,
@@ -636,7 +636,7 @@ function digest(res, wallMs, note) {
 
   const at = keptFor(`${pass}/${tests} green, ${fail} failing (exit ${code})`, true);
   emit(
-    `[${LEAF}] ${TAG}${pass}/${tests} green, ${fail} failing (${wallShow(wallMs)})${at}: ${names.join('; ')}`,
+    `[${LEAF}] ${TAG}${pass}/${tests} green, ${fail} failing (${wallShow(wallMs)})${at}${names.length ? `: ${names.join('; ')}` : ''}`,
     exitCode,
     180,
   );

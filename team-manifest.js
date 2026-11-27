@@ -225,8 +225,8 @@ const TEST_RUNNER_GATE = ['off', 'shadow', 'on'];
 const TEST_RUNNER_WIRE_PUSH = 'push';
 const TEST_RUNNER_WIRE = [TEST_RUNNER_WIRE_PUSH, 'pull'];
 const TEST_RUNNER_FALLBACK = ['home', 'hold'];
-const TEST_RUNNER_PATCH_KEYS = ['peer', 'hands', 'gate', 'wire', 'pool', 'fallback', 'runMs', 'handEnv'];
-const TEST_RUNNER_KEYS = ['peer', 'hands', 'gate', 'wire', 'setup', 'env', 'box', 'pool', 'shares', 'fallback', 'runMs', 'handEnv'];
+const TEST_RUNNER_PATCH_KEYS = ['peer', 'hands', 'gate', 'wire', 'pool', 'fallback', 'runMs', 'handEnv', 'queueMs'];
+const TEST_RUNNER_KEYS = ['peer', 'hands', 'gate', 'wire', 'setup', 'env', 'box', 'pool', 'shares', 'fallback', 'runMs', 'handEnv', 'queueMs'];
 const TEST_RUNNER_SHARES_MAX = 8;
 const TEST_RUNNER_SHARE_VERSION_RE = /^[A-Za-z0-9._-]{1,64}$/;
 const TEST_RUNNER_POOL_MAX = 8;
@@ -240,6 +240,8 @@ const TEST_RUNNER_RUN_STEP_MS = 60 * 1000;
 const TEST_RUNNER_RUN_MIN_MS = TEST_RUNNER_RUN_STEP_MS;
 const TEST_RUNNER_RUN_MAX_MS = 36 * TEST_RUNNER_RUN_STEP_MS;
 const TEST_RUNNER_RUN_DEFAULT_MS = 21 * TEST_RUNNER_RUN_STEP_MS;
+const TEST_RUNNER_QUEUE_MIN_MS = 5 * TEST_RUNNER_RUN_STEP_MS;
+const TEST_RUNNER_QUEUE_MAX_MS = 120 * TEST_RUNNER_RUN_STEP_MS;
 
 const isPlainObject = (v) => v != null && typeof v === 'object' && !Array.isArray(v);
 
@@ -270,6 +272,10 @@ function normalizeRunnerEnv(e) {
 
 function normalizeRunMs(v) {
   return Number.isInteger(v) && v >= TEST_RUNNER_RUN_MIN_MS && v <= TEST_RUNNER_RUN_MAX_MS && v % TEST_RUNNER_RUN_STEP_MS === 0 ? v : undefined;
+}
+
+function normalizeQueueMs(v) {
+  return Number.isInteger(v) && v >= TEST_RUNNER_QUEUE_MIN_MS && v <= TEST_RUNNER_QUEUE_MAX_MS && v % TEST_RUNNER_RUN_STEP_MS === 0 ? v : undefined;
 }
 
 function normalizeRunnerPool(pool, first) {
@@ -317,7 +323,8 @@ function normalizeTestRunner(v) {
   const pool = v.pool === undefined ? null : normalizeRunnerPool(v.pool, v.peer);
   const hold = v.fallback === 'hold' && gate === 'on';
   const runMs = normalizeRunMs(v.runMs);
-  return { peer: v.peer, hands, gate, ...(v.wire !== undefined ? { wire: v.wire } : {}), ...(setup ? { setup } : {}), ...(env ? { env } : {}), ...(v.box !== undefined ? { box: v.box } : {}), ...(pool ? { pool } : {}), ...(shares ? { shares } : {}), ...(hold ? { fallback: 'hold' } : {}), ...(runMs !== undefined ? { runMs } : {}), ...(handEnv ? { handEnv } : {}) };
+  const queueMs = normalizeQueueMs(v.queueMs);
+  return { peer: v.peer, hands, gate, ...(v.wire !== undefined ? { wire: v.wire } : {}), ...(setup ? { setup } : {}), ...(env ? { env } : {}), ...(v.box !== undefined ? { box: v.box } : {}), ...(pool ? { pool } : {}), ...(shares ? { shares } : {}), ...(hold ? { fallback: 'hold' } : {}), ...(runMs !== undefined ? { runMs } : {}), ...(handEnv ? { handEnv } : {}), ...(queueMs !== undefined ? { queueMs } : {}) };
 }
 
 function boxCpus(cpuMax, cpus) {
@@ -758,6 +765,13 @@ function createTeamManifest({ fs, clodexHome, log = null, now = () => Date.now()
       if (!warnedDrops.has(seen)) {
         warnedDrops.add(seen);
         console.warn(`team "${name}": testRunner.runMs is invalid and ignored; runner runs keep the ${TEST_RUNNER_RUN_DEFAULT_MS / TEST_RUNNER_RUN_STEP_MS} min default — it must be whole minutes from ${TEST_RUNNER_RUN_MIN_MS / TEST_RUNNER_RUN_STEP_MS} to ${TEST_RUNNER_RUN_MAX_MS / TEST_RUNNER_RUN_STEP_MS} in ms (${file})`);
+      }
+    }
+    if (testRunner && m.testRunner.queueMs !== undefined && testRunner.queueMs === undefined) {
+      const seen = `invalid|${file}|testRunner.queueMs`;
+      if (!warnedDrops.has(seen)) {
+        warnedDrops.add(seen);
+        console.warn(`team "${name}": testRunner.queueMs is invalid and ignored; runner jobs keep the default queue waits — it must be whole minutes from ${TEST_RUNNER_QUEUE_MIN_MS / TEST_RUNNER_RUN_STEP_MS} to ${TEST_RUNNER_QUEUE_MAX_MS / TEST_RUNNER_RUN_STEP_MS} in ms (${file})`);
       }
     }
     const testRoots = m.testRoots == null ? null : normalizeTestRoots(m.testRoots);
@@ -1814,9 +1828,10 @@ function createTeamManifest({ fs, clodexHome, log = null, now = () => Date.now()
       if (next.fallback === 'home') delete next.fallback;
       if (next.runMs === null) delete next.runMs;
       if (next.handEnv === null) delete next.handEnv;
+      if (next.queueMs === null) delete next.queueMs;
       const norm = normalizeTestRunner(next);
       if (!norm || (next.pool !== undefined && !norm.pool) || (next.fallback !== undefined && norm.fallback !== next.fallback)
-        || (next.runMs !== undefined && norm.runMs !== next.runMs)) throw new Error(`testRunner would be invalid after this patch (${team.file})`);
+        || (next.runMs !== undefined && norm.runMs !== next.runMs) || (next.queueMs !== undefined && norm.queueMs !== next.queueMs)) throw new Error(`testRunner would be invalid after this patch (${team.file})`);
       raw.testRunner = next;
     }
     atomicWrite(team.file, JSON.stringify(migrateRoles(raw), null, 2));
@@ -2014,6 +2029,6 @@ module.exports = {
   // Exported so the retired-field warn test iterates the REAL list — a copy in
   // the test would keep passing over a field added here and never warned about.
   ROLE_KEYS, CUT_ROLE_FIELDS, HONORED_CUT_FIELDS, EDITABLE_ROLE_FIELDS, UNREACHABLE_ROLE_FIELDS, MANIFEST_VERSION,
-  ROLE_DISPATCH_VALUES, DEFAULT_ROLE_DISPATCH, normalizeTrunk, TRUNK_HEAD, normalizeTestRoots, TEST_ROOTS_MAX, TEST_ROOT_LEN_MAX, DONE_VALUES, DEFAULT_DONE, normalizeDone, WORKTREES_VALUES, normalizeWorktrees, normalizeMaxHands, effectiveHandCap, normalizeTestRunner, TEST_RUNNER_HANDS, TEST_RUNNER_GATE, TEST_RUNNER_FALLBACK, TEST_RUNNER_WIRE, TEST_RUNNER_WIRE_PUSH, TEST_RUNNER_POOL_MAX, TEST_RUNNER_ENV_RE, TEST_RUNNER_ENV_MAX, TEST_RUNNER_ENV_VALUE_MAX, TEST_RUNNER_RUN_STEP_MS, TEST_RUNNER_RUN_MIN_MS, TEST_RUNNER_RUN_MAX_MS, TEST_RUNNER_RUN_DEFAULT_MS,
+  ROLE_DISPATCH_VALUES, DEFAULT_ROLE_DISPATCH, normalizeTrunk, TRUNK_HEAD, normalizeTestRoots, TEST_ROOTS_MAX, TEST_ROOT_LEN_MAX, DONE_VALUES, DEFAULT_DONE, normalizeDone, WORKTREES_VALUES, normalizeWorktrees, normalizeMaxHands, effectiveHandCap, normalizeTestRunner, TEST_RUNNER_HANDS, TEST_RUNNER_GATE, TEST_RUNNER_FALLBACK, TEST_RUNNER_WIRE, TEST_RUNNER_WIRE_PUSH, TEST_RUNNER_POOL_MAX, TEST_RUNNER_ENV_RE, TEST_RUNNER_ENV_MAX, TEST_RUNNER_ENV_VALUE_MAX, TEST_RUNNER_RUN_STEP_MS, TEST_RUNNER_RUN_MIN_MS, TEST_RUNNER_RUN_MAX_MS, TEST_RUNNER_RUN_DEFAULT_MS, TEST_RUNNER_QUEUE_MIN_MS, TEST_RUNNER_QUEUE_MAX_MS,
   ROLE_RE, RESERVED_ROLE_KEYS, RESERVED_ROLE_PATCH_FIELDS, NAME_RE,
 };
