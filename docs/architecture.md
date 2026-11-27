@@ -556,6 +556,10 @@ bundle), whose packaged form is the Docker image under
 - **seat-files.js** — `validateSeatFiles` and `safeFileStem`, the file rule set
   for `seat:file-upload` (≤5, any type, base64, non-empty, 10 MB decoded each;
   names sanitised to `[A-Za-z0-9._-]`, ≤64). Pure leaf, no I/O.
+- **seat-message-names.js** — `isSeatMessageFileName` and `seatMsgFileName`, the
+  one list of names a seat's messages dir may hold (`msg-`, `img-`, `file-`),
+  shared by the spill writer, seat import and the spawn-time dir check. Pure
+  leaf, no I/O.
 - **agent-transport.js** — per-agent registry (`run/<name>/agent.json`) +
   Unix-socket (`run/<name>/agent.sock`) transport; discovery iterates
   `run/*/agent.json`.

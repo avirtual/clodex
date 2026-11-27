@@ -200,13 +200,45 @@ test('putFile over the byte cap marks the staging failed and commit then refuses
   assert.strictEqual(imp.commit({ id }).error, 'staging is failed: import exceeds the 16 byte cap');
 });
 
+test('seat/messages/ takes only depth-1 delivered message names; anything else fails the whole import, naming the path', () => {
+  const accepted = mkImport();
+  const ok = accepted.imp.begin({ name: 'ana', record: record() });
+  for (const rel of ['seat/messages/msg-123-4.txt', 'seat/messages/img-1700000000000-1.png', 'seat/messages/file-1700000000000-2-notes.md']) {
+    assert.deepStrictEqual(put(accepted.imp, ok.id, rel, 'x'), { ok: true, size: 1 }, `ENTER: ${rel} is accepted`);
+  }
+  put(accepted.imp, ok.id, 'transcript.jsonl', '{"t":1}\n');
+  assert.strictEqual(accepted.imp.commit({ id: ok.id }).ok, true);
+  assert.deepStrictEqual(fs.readdirSync(seatPathFor(accepted.root, 'ana', 'messages')).sort(),
+    ['file-1700000000000-2-notes.md', 'img-1700000000000-1.png', 'msg-123-4.txt']);
+
+  for (const rel of ['seat/messages/.claude/settings.json', 'seat/messages/CLAUDE.md', 'seat/messages/.mcp.json', 'seat/messages/a/b.txt', 'seat/messages/msg-1-2.txt/x']) {
+    const { imp } = mkImport();
+    const { id } = imp.begin({ name: 'ana', record: record() });
+    const reason = `'${rel}' is not a delivered message file: seat/messages/ takes only msg-, img- and file- names, one level deep`;
+    assert.deepStrictEqual(put(imp, id, rel, '{}'), { ok: false, error: reason }, rel);
+    assert.strictEqual(put(imp, id, 'transcript.jsonl', '{"t":1}\n').error, `staging is failed: ${reason}`, rel);
+    assert.strictEqual(imp.commit({ id }).error, `staging is failed: ${reason}`, rel);
+  }
+});
+
+test('commit refuses a staged seat/messages/ entry that is not a regular file with a message name', () => {
+  const { root, imp } = mkImport();
+  const { id } = imp.begin({ name: 'ana', record: record() });
+  put(imp, id, 'transcript.jsonl', '{"t":1}\n');
+  put(imp, id, 'seat/messages/msg-1-2.txt', 'x');
+  fs.mkdirSync(path.join(root, 'import', id, 'files', 'seat', 'messages', '.claude'));
+  const reason = "'seat/messages/.claude' is not a delivered message file: seat/messages/ takes only msg-, img- and file- names, one level deep";
+  assert.strictEqual(imp.commit({ id }).error, reason);
+  assert.strictEqual(fs.existsSync(seatPathFor(root, 'ana', 'messages')), false);
+});
+
 test('commit installs transcript, seat kinds, links, pending, loadlog and reminders', () => {
   const { root, claudeProjects, reminders, imp } = mkImport();
   const { id } = imp.begin({ name: 'ana', record: record({ env: { CLAUDE_CONFIG_DIR: '/acct/a' } }) });
 
   put(imp, id, 'transcript.jsonl', '{"t":1}\n');
   put(imp, id, 'seat/memory/unit.md', 'mem-body');
-  put(imp, id, 'seat/messages/m1.txt', 'msg-body');
+  put(imp, id, 'seat/messages/msg-1-2.txt', 'msg-body');
   put(imp, id, 'pending/p1.json', '{"p":1}');
   put(imp, id, 'loadlog.jsonl', '{"l":1}\n');
   put(imp, id, 'reminders.json', JSON.stringify([
@@ -225,7 +257,7 @@ test('commit installs transcript, seat kinds, links, pending, loadlog and remind
   assert.strictEqual(fs.existsSync(path.join(claudeProjects, SLUG, `${SID}.jsonl.import-${id}`)), false);
 
   assert.strictEqual(fs.readFileSync(path.join(seatPathFor(root, 'ana', 'memory'), 'unit.md'), 'utf8'), 'mem-body');
-  assert.strictEqual(fs.readFileSync(path.join(seatPathFor(root, 'ana', 'messages'), 'm1.txt'), 'utf8'), 'msg-body');
+  assert.strictEqual(fs.readFileSync(path.join(seatPathFor(root, 'ana', 'messages'), 'msg-1-2.txt'), 'utf8'), 'msg-body');
 
   for (const kind of ['memory', 'messages', 'notices', 'promptcache', 'spill', 'monitors']) {
     const legacy = legacySeatPathFor(root, 'ana', kind);

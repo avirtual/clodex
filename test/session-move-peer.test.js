@@ -32,7 +32,7 @@ function seedSeat(root, name) {
     fsReal.mkdirSync(seatPathFor(root, name, kind), { recursive: true });
   }
   fsReal.writeFileSync(pathReal.join(seatPathFor(root, name, 'memory'), 'mem-1.md'), 'unit one');
-  fsReal.writeFileSync(pathReal.join(seatPathFor(root, name, 'messages'), 'msg-1.txt'), 'dm one');
+  fsReal.writeFileSync(pathReal.join(seatPathFor(root, name, 'messages'), 'msg-1-2.txt'), 'dm one');
   const pending = pathReal.join(root, 'pending', name);
   fsReal.mkdirSync(pending, { recursive: true });
   fsReal.writeFileSync(pathReal.join(pending, 'p1'), 'parked');
@@ -286,6 +286,26 @@ test('a seat file the far SEGMENT_RE refuses is caught BEFORE the seat is quiesc
   assert.deepStrictEqual(shipped, []);
 });
 
+test('a seat/messages/ entry that is not a depth-1 message name is caught BEFORE the seat is quiesced', async () => {
+  const cases = [
+    ['notes.txt', (dir) => fsReal.writeFileSync(pathReal.join(dir, 'notes.txt'), 'x')],
+    ['.DS_Store', (dir) => fsReal.writeFileSync(pathReal.join(dir, '.DS_Store'), 'x')],
+    ['sub/msg-1-3.txt', (dir) => { fsReal.mkdirSync(pathReal.join(dir, 'sub')); fsReal.writeFileSync(pathReal.join(dir, 'sub', 'msg-1-3.txt'), 'x'); }],
+  ];
+  for (const [rel, plant] of cases) {
+    const { m, root, shipped } = mkMove();
+    plant(seatPathFor(root, 'seat', 'messages'));
+    const s = seedLive(m, 'seat');
+    const out = await m.moveToPeer('seat', 'p1', {});
+    assert.deepStrictEqual(out, {
+      ok: false,
+      error: `seat/messages/${rel} cannot travel — a peer takes only delivered msg-, img- and file- names, one level deep, under seat/messages/`,
+    }, rel);
+    assert.deepStrictEqual(s.killed, [], rel);
+    assert.deepStrictEqual(shipped, [], rel);
+  }
+});
+
 test('a parked DM with a refused file name is caught the same way', async () => {
   const { m, root } = mkMove();
   fsReal.writeFileSync(pathReal.join(root, 'pending', 'seat', 'msg#2'), 'x');
@@ -389,7 +409,7 @@ test('the success arm ships exactly the seeded files, archives the source and st
   assert.deepStrictEqual(shipped[0].files.map((f) => f.relPath), [
     'transcript.jsonl',
     'seat/memory/mem-1.md',
-    'seat/messages/msg-1.txt',
+    'seat/messages/msg-1-2.txt',
     'pending/p1',
     'loadlog.jsonl',
     'reminders.json',
@@ -479,7 +499,7 @@ test('a seat with no reminder rows ships no reminders.json', async () => {
   const out = await m.moveToPeer('seat', 'p1', {});
   assert.strictEqual(out.ok, true);
   assert.deepStrictEqual(shipped[0].files.map((f) => f.relPath), [
-    'transcript.jsonl', 'seat/memory/mem-1.md', 'seat/messages/msg-1.txt', 'pending/p1', 'loadlog.jsonl',
+    'transcript.jsonl', 'seat/memory/mem-1.md', 'seat/messages/msg-1-2.txt', 'pending/p1', 'loadlog.jsonl',
   ]);
 });
 

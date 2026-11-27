@@ -13,6 +13,7 @@ const { ensureDir, atomicWriteFileSync, readJsonSafe } = require('./fs-util');
 const { pathFor, runDirFor, defaultClodexHome, seatPathFor, claudeProjectSlug } = require('./clodex-paths');
 const { SEAT_IMAGE_FILE_PATTERN } = require('./seat-images');
 const { SEAT_FILE_FILE_PATTERN } = require('./seat-files');
+const { SEAT_MESSAGE_NAME_PATTERN, seatMsgFileName } = require('./seat-message-names');
 const { confine } = require('./path-confine');
 const { safeGitArgsFor } = require('./git-safe');
 const { createSkillDelivery } = require('./skill-delivery');
@@ -87,7 +88,7 @@ function diagLines(d = {}) {
   return lines;
 }
 
-const SPILL_NAME_RE = new RegExp(`msg-\\d+-\\d+\\.txt|${SEAT_IMAGE_FILE_PATTERN}|${SEAT_FILE_FILE_PATTERN}`, 'g');
+const SPILL_NAME_RE = new RegExp(SEAT_MESSAGE_NAME_PATTERN, 'g');
 const SEAT_IMAGE_FILE_RE = new RegExp(`^${SEAT_IMAGE_FILE_PATTERN}$`);
 const SEAT_FILE_FILE_RE = new RegExp(`^${SEAT_FILE_FILE_PATTERN}$`);
 const IMG_MAX_AGE = 24 * 3600;
@@ -1041,7 +1042,7 @@ function spillToFile(sender, body, recipient) {
   let fname, fpath, durable;
   do {
     msgCounter++;
-    fname = `msg-${process.pid}-${msgCounter}.txt`;
+    fname = seatMsgFileName(process.pid, msgCounter);
     fpath = path.join(dir, fname);
     durable = seatSpill && durableMessageCopyOf(fpath, path);
   } while (fs.existsSync(fpath) || (durable && fs.existsSync(durable)));

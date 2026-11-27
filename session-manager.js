@@ -126,6 +126,7 @@ const { deepMerge, bootstrapSeatConfig, museDataHome, findMuseTranscript, oldest
 const { activationSettings } = require('./muse-skills');
 const { seatImageFileName, seatImageHead } = require('./seat-images');
 const { seatFileFileName, seatFileHead } = require('./seat-files');
+const { isSeatMessageFileName } = require('./seat-message-names');
 const MUSE_LINK_POLL_MS = 250;
 const MUSE_LINK_DEADLINE_MS = 60000;
 const CODEX_LINK_POLL_MS = 250;
@@ -293,7 +294,7 @@ const { seatHasPlugin } = require('./plugin-api');
 const { classifyBootScreen, bootDialogNote } = require('./attention');
 const BOOT_SCREEN_TAIL = 16 * 1024;
 const { readTeamJson } = require('./team-prompt-dir');
-const { ensureSeatLink, renameSeat, removeSeat, renameTargets, pathInUse } = require('./seat-layout');
+const { ensureSeatLink, renameSeat, removeSeat, renameTargets, pathInUse, seatMessagesDirRefusal } = require('./seat-layout');
 const { SEAT_KINDS, seatPathFor, legacySeatPathFor, claudeProjectSlug } = require('./clodex-paths');
 const { LIVING_MARK } = require('./intent-catalog');
 const { resolveSubagent, nameOfSubagent, clearSubq, SUBQ_DM_SUFFIX, SUBQ_NAME_RE } = require('./subq');
@@ -2019,7 +2020,7 @@ function createSessionManager(deps) {
           ensureDir(MSG_DIR);
           if (!args.includes(MSG_DIR)) args.push('--add-dir', MSG_DIR);
           const seatMsgDir = seatPathFor(REGISTRY_DIR, name, 'messages');
-          if (ensureSeatLink({ root: REGISTRY_DIR, name, kind: 'messages', fs, log }) && !args.includes(seatMsgDir)) args.push('--add-dir', seatMsgDir);
+          if (ensureSeatLink({ root: REGISTRY_DIR, name, kind: 'messages', fs, log }) && !args.includes(seatMsgDir) && this._seatMessagesDirTrusted(name, workspaceId)) args.push('--add-dir', seatMsgDir);
           if (plan.writeConfig) {
             writeMcpConfig(name, mcpSel.servers);
             warnings.push(...mcpSel.warnings);
@@ -4711,8 +4712,10 @@ function createSessionManager(deps) {
     _moveBadSegment(name) {
       const scan = (dir, prefix) => {
         for (const rel of seatRelFiles(fs, path, dir)) {
-          if (rel.split('/').every((seg) => IMPORT_SEGMENT_RE.test(seg))) continue;
-          return `${prefix}${rel}`;
+          if (!rel.split('/').every((seg) => IMPORT_SEGMENT_RE.test(seg))) return `${prefix}${rel} cannot travel — a peer refuses any file name outside [A-Za-z0-9._-]`;
+          if (prefix === 'seat/messages/' && (rel.includes('/') || !isSeatMessageFileName(rel))) {
+            return `${prefix}${rel} cannot travel — a peer takes only delivered msg-, img- and file- names, one level deep, under seat/messages/`;
+          }
         }
         return null;
       };
@@ -4788,9 +4791,7 @@ function createSessionManager(deps) {
         return { ok: false, error: `${name}'s conversation id '${entry.sessionId}' is not a session uuid — a peer refuses it` };
       }
       const badSegment = this._moveBadSegment(name);
-      if (badSegment) {
-        return { ok: false, error: `${badSegment} cannot travel — a peer refuses any file name outside [A-Za-z0-9._-]` };
-      }
+      if (badSegment) return { ok: false, error: badSegment };
 
       const composed = path.join(
         claudeHome(), 'projects', claudeProjectSlug(entry.cwd), `${entry.sessionId}.jsonl`,
@@ -6142,6 +6143,20 @@ function createSessionManager(deps) {
       if (typeof scheduleTrayRefresh === 'function') scheduleTrayRefresh();
       if (!attn) this._maybeFlushInjectQueue(session);
       if (attn && attn.kind === 'permission') this._notePermissionInbox(session, attn);
+    }
+
+    _seatMessagesDirTrusted(name, workspaceId) {
+      const { reason, repaired } = seatMessagesDirRefusal({ root: REGISTRY_DIR, name, fs });
+      if (repaired) log.info('session', `seat ${name}: messages dir mode repaired to 0700`);
+      if (!reason) return true;
+      log.warn('session', `seat ${name}: messages dir not trusted — ${reason}`);
+      try {
+        const store = getNotifications && getNotifications();
+        if (store) store.add({ from: 'clodex', workspaceId: workspaceId || null, body: `seat ${name}: messages dir not trusted — ${reason}` });
+      } catch (e) {
+        this._shadowLog({ type: 'messages-dir-inbox-error', agent: name, error: e.message });
+      }
+      return false;
     }
 
     _notePermissionInbox(session, attn) {

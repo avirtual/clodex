@@ -777,7 +777,8 @@ the fields the far `create()` re-seeds itself (`ephemeral`, the review keys,
 `pluginGrants`, `wireLabel`, `ticketId`, `rosterSentAt`), `movedTo`
 (a seat moved on from a box it was already moved to must not carry the old
 destination), and anything behind a symlink inside a seat kind (the walk takes
-real files only). A file name outside `[A-Za-z0-9._-]` is not dropped but REFUSED,
+real files only). A file name outside `[A-Za-z0-9._-]`, or a `seat/messages/`
+entry that is not a depth-1 message name (below), is not dropped but REFUSED,
 along with a `sessionId` that is not a uuid, before the pty is touched — the far
 staging judges both, and learning that after quiescing would cost a kill and a
 respawn. For the same reason the far cwd is PROBED before the pty is touched:
@@ -796,6 +797,18 @@ re-POSTed on the same staging id; `ok` → the success arm; any reached refusal 
 an unreached re-send → `{ok:false, kept:true, unknown:true, archived:true}` with
 the entry archived, unstamped and NOT respawned, since the seat may already run
 on the peer.
+
+A seat's messages dir is an added, pre-trusted directory of its CLI, so the
+import admits under `seat/messages/` only depth-1 names a Clodex writer
+produces (`msg-`, `img-`, `file-`; `isSeatMessageFileName` in
+seat-message-names.js), as regular files: any other entry there (`CLAUDE.md`,
+`.mcp.json`, `.claude/settings.json`, a subdirectory) fails the whole import,
+naming the path. Every spawn and restore re-checks the dir
+(`seatMessagesDirRefusal` in seat-layout.js): a symlink, a foreign owner, a
+realpath outside `sessions/<name>`, or any entry that is not a regular file
+with such a name, and the seat starts without that `--add-dir` and its trust
+entry, with a WARN and one inbox note; a mode wider than 0700 on a dir we own
+is repaired.
 
 The UI half: right-click an agent row ▸ **Move to Peer…**, whose submenu lists
 the peers that are online, carry the `import` cap and are not behind on version —

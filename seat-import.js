@@ -7,6 +7,7 @@ const { SEAT_KINDS, seatDirFor, seatPathFor, legacySeatPathFor, claudeProjectSlu
 const { ensureSeatLink, renameTargets, pathInUse } = require('./seat-layout');
 const { isReservedSeatName } = require('./pending-store');
 const { isReservedSenderName, reservedSenderError } = require('./system-senders');
+const { isSeatMessageFileName } = require('./seat-message-names');
 
 const SEAT_NAME_RE = /^(?!\.+$)[a-zA-Z0-9._-]{1,64}$/;
 const SESSION_ID_RE = /^[0-9a-f-]{36}$/;
@@ -20,6 +21,12 @@ const STAGING_MAX_AGE_MS = 60 * 60 * 1000;
 const TOP_LEVEL = new Set(['transcript.jsonl', 'seat', 'pending', 'loadlog.jsonl', 'reminders.json']);
 const SINGLE_FILE = new Set(['transcript.jsonl', 'loadlog.jsonl', 'reminders.json']);
 const IMPORTABLE_KINDS = Object.keys(SEAT_KINDS).filter((k) => k !== 'run');
+const MESSAGES_PATH_SHOWN_MAX = 160;
+
+function messagesRefusal(relPath) {
+  const shown = String(relPath).replace(/[^A-Za-z0-9._/-]/g, '_').slice(0, MESSAGES_PATH_SHOWN_MAX);
+  return `'${shown}' is not a delivered message file: seat/messages/ takes only msg-, img- and file- names, one level deep`;
+}
 
 function fail(error) {
   return { ok: false, error };
@@ -140,10 +147,18 @@ function createSeatImport({
       const kind = segs[1];
       if (kind === 'run') return "seat kind 'run' is not imported";
       if (!Object.prototype.hasOwnProperty.call(SEAT_KINDS, kind)) return `unknown seat kind '${kind}'`;
+      if (kind === 'messages' && (segs.length !== 3 || !isSeatMessageFileName(segs[2]))) return messagesRefusal(relPath);
       return null;
     }
     if (segs.length < 2) return "'pending' is a directory, not a file";
     return null;
+  }
+
+  function stagedMessagesRefusal(dir) {
+    let entries;
+    try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return null; }
+    const stray = entries.find((e) => !e.isFile() || !isSeatMessageFileName(e.name));
+    return stray ? messagesRefusal(`seat/messages/${stray.name}`) : null;
   }
 
   function stagedSeatKinds(id) {
@@ -241,6 +256,11 @@ function createSeatImport({
     const failed = failureReason(id);
     if (failed) return fail(`staging is failed: ${failed}`);
     const bad = checkRelPath(relPath);
+    if (bad && typeof relPath === 'string' && relPath.startsWith('seat/messages/')) {
+      const reason = messagesRefusal(relPath);
+      markFailed(id, reason);
+      return fail(reason);
+    }
     if (bad) return fail(bad);
     if (!Buffer.isBuffer(bytes)) return fail('bytes must be a Buffer');
     if (!Number.isInteger(offset) || offset < 0) return fail('offset must be a non-negative integer');
@@ -345,6 +365,12 @@ function createSeatImport({
       } catch { same = false; }
       if (!same) return fail(`a different transcript already exists at ${transcriptTarget}`);
       transcriptIdentical = true;
+    }
+
+    const strayMessage = stagedMessagesRefusal(path.join(staged, 'seat', 'messages'));
+    if (strayMessage) {
+      markFailed(id, strayMessage);
+      return fail(strayMessage);
     }
 
     const stagedPending = path.join(staged, 'pending');
