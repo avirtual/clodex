@@ -1085,9 +1085,9 @@ is. There are three waits, and the key moves all of them:
   wait for its remote half, so nothing else moves.
 - deciding gate runs (`gate:on`, `BOX_DECIDE_QUEUE_MS`, 5 min, verify and
   post-merge): the queue budget becomes `queueMs` (`_gateQueueMs`, held to 5
-  to 120 minutes), and the whole budget and the decide guard grow by `queueMs`
-  minus 5 minutes; for a team with a box definition the guard grows by twice
-  that, since a first build waits in the queue before its run budget starts.
+  to 120 minutes), and the whole budget grows by `queueMs` minus 5 minutes.
+  The decide guard grows by twice that, since a first build waits in the
+  queue before its run budget starts.
 
 With no key every budget and timer is today's. Bare `[agent:team runner]`
 shows `queue <n> min hands, <g> min gate` after the run limit, or

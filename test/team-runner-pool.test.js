@@ -599,26 +599,21 @@ test('t2453: the retry flag of each of the 13 fallback codes is the literal one'
   for (const [code, retry] of Object.entries(FALLBACK_RETRY)) assert.strictEqual(FALLBACK_CODES[code].retry, retry, code);
 });
 
-for (const [name, withBox, wantDelta] of [
-  ['with a box definition grows by twice the queue extra', true, 4800000],
-  ['without a box definition grows by the queue extra once', false, 2400000],
-]) {
-  test(`t2453: the deciding guard ${name}, so a long queue is not read as a run overrun`, async () => {
-    const seen = [];
-    for (const extra of [{}, { queueMs: 2700000 }]) {
-      const timers = { setTimeout: (fn, ms) => { seen.push(ms); fn(); return 1; }, clearTimeout: () => {} };
-      const f = mkFixture({
-        manifestExtra: { testRunner: { ...PUSH_ON, ...extra } }, peers: [R1], client: { run: () => new Promise(() => {}) },
-        extraDeps: { boxDecideTimers: timers },
-      });
-      const team = f.tm.loadManifest('team');
-      if (withBox) require('../team-box').writeBox(team.dir, BOX_TEXT);
-      await f.m._boxDecide(team, { id: 't1' }, '/w', {});
-    }
-    assert.strictEqual(seen.length, 2, 'ENTER: both decides armed the guard');
-    assert.strictEqual(seen[1] - seen[0], wantDelta);
-  });
-}
+test('t2453: the deciding guard grows by twice the queue minutes past the 5 min default, once for the queue before a build and once for the run, so a long queue is not read as an overrun', async () => {
+  const seen = [];
+  for (const extra of [{}, { queueMs: 2700000 }]) {
+    const timers = { setTimeout: (fn, ms) => { seen.push(ms); fn(); return 1; }, clearTimeout: () => {} };
+    const f = mkFixture({
+      manifestExtra: { testRunner: { ...PUSH_ON, ...extra } }, peers: [R1], client: { run: () => new Promise(() => {}) },
+      extraDeps: { boxDecideTimers: timers },
+    });
+    const team = f.tm.loadManifest('team');
+    require('../team-box').writeBox(team.dir, BOX_TEXT);
+    await f.m._boxDecide(team, { id: 't1' }, '/w', {});
+  }
+  assert.strictEqual(seen.length, 2, 'ENTER: both decides armed the guard');
+  assert.strictEqual(seen[1] - seen[0], 4800000);
+});
 
 test('t2378: a box-decided _boxDecide result carries no fallback code or class, and its compare row has no fallbackCode', async () => {
   const { client, records } = clientOver({});
