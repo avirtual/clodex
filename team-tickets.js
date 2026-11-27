@@ -3205,7 +3205,7 @@ function createTicketMethods(deps, shared) {
       const id12 = String((be.box && be.box.imageId) || '').replace(/^sha256:/, '').slice(0, 12);
       const box = !b ? '' : b.state === 'ready'
         ? `, box ready ${flat(be.platform)}/${flat(be.arch)} image ${flat(id12 || null)} key ${flat(be.envKey)}`
-        : b.state === 'building' || b.state === 'can-build' ? `, box ${b.state}: ${flat(b.why)}`
+        : b.state === 'building' || b.state === 'can-build' || b.state === 'probing' ? `, box ${b.state}: ${flat(b.why)}`
           : `, box unavailable: ${flat(b.why)}`;
       return `queue ${queue}, env ${flat(e.runner)} ${flat(e.platform)}/${flat(e.arch)} node ${flat(e.node)} key ${flat(e.envKey)}${box}`;
     },

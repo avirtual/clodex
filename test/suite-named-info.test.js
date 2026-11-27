@@ -42,13 +42,13 @@ function fakeClock() {
   return { timers, now: () => t, advance, flush };
 }
 
-async function fixture(t, { images = [{ id: IMG1, labels: [`clodex.box=${H1}`] }] } = {}) {
+async function fixture(t, { images = [{ id: IMG1, labels: [`clodex.box=${H1}`] }], fail = {}, buildBoxes = false } = {}) {
   const root = mkTmpRoot('suite-named-info-');
   const workRaw = path.join(root, 'work');
   fs.mkdirSync(workRaw);
   const work = fs.realpathSync(workRaw);
   const clock = fakeClock();
-  const base = imagesDocker(images);
+  const base = imagesDocker(images, { fail });
   const started = [];
   const docker = {
     call: (args, o) => new Promise((resolve) => {
@@ -64,7 +64,7 @@ async function fixture(t, { images = [{ id: IMG1, labels: [`clodex.box=${H1}`] }
   });
   const runner = createSuiteRunner({
     root, work, isolation: noneIsolation({ user: 'suite-test', kill: () => {} }), now: clock.now, timers: clock.timers,
-    platform: 'linux', arch: 'x64', box,
+    platform: 'linux', arch: 'x64', box, buildBoxes,
   });
   t.after(() => { runner.close(); spawnSync('chmod', ['-R', 'u+w', root]); });
   await runner.info();
@@ -102,7 +102,7 @@ test('t2449: two concurrent named info calls share one probe', async (t) => {
   assert.deepStrictEqual(f.calls(), ['info --format', 'image ls', 'image inspect']);
 });
 
-test('t2449: a cached named box state expires after 30 s and the next call probes again', async (t) => {
+test('t2449: past 30 s a named info answers the last known state at once and refreshes it in the background', async (t) => {
   const f = await fixture(t);
   const first = f.runner.info(want(H1));
   await f.clock.advance(20000);
@@ -113,11 +113,58 @@ test('t2449: a cached named box state expires after 30 s and the next call probe
   await f.clock.flush();
   assert.strictEqual((await f.got(fresh)).box.state, 'ready');
   assert.strictEqual(f.calls().length, 3, 'at 29.999 s the entry is still fresh');
+  f.images.splice(0, 1);
   await f.clock.advance(1);
   const stale = f.runner.info(want(H1));
+  await f.clock.flush();
+  assert.strictEqual((await f.got(stale)).box.state, 'ready', 'past 30 s: the last known state, not probing');
+  assert.strictEqual(f.calls().length, 4, 'and one refresh probe started');
+  const during = f.runner.info(want(H1));
+  await f.clock.flush();
+  assert.strictEqual((await f.got(during)).box.state, 'ready');
+  assert.strictEqual(f.calls().length, 4, 'a call during the refresh shares it');
+  await f.clock.advance(2 * DOCKER_CALL_MS);
+  const after = f.runner.info(want(H1));
+  await f.clock.flush();
+  assert.deepStrictEqual((await f.got(after)).box, { state: 'no-image', why: 'no image for box 111111111111 on this runner' });
+  assert.strictEqual(f.calls().length, 5);
+});
+
+test('t2449: an unavailable named box state is retried after 5 s, not 30 s', async (t) => {
+  const fail = { info: { ok: false, code: 1, stderr: 'Cannot connect to the Docker daemon' } };
+  const f = await fixture(t, { fail });
+  const first = f.runner.info(want(H1));
+  await f.clock.advance(DOCKER_CALL_MS);
+  assert.strictEqual((await f.got(first)).box.state, 'probing');
+  const down = f.runner.info(want(H1));
+  await f.clock.flush();
+  assert.strictEqual((await f.got(down)).box.state, 'unavailable', 'ENTER: the failed probe is cached');
+  delete fail.info;
+  await f.clock.advance(4999);
+  f.runner.info(want(H1));
+  await f.clock.flush();
+  assert.strictEqual(f.calls().length, 1, 'at 4.999 s the failure is still fresh');
+  await f.clock.advance(1);
+  f.runner.info(want(H1));
+  await f.clock.flush();
+  assert.strictEqual(f.calls().length, 2, 'at 5 s the failure is probed again');
+  await f.clock.advance(3 * DOCKER_CALL_MS);
+  const back = f.runner.info(want(H1));
+  await f.clock.flush();
+  assert.strictEqual((await f.got(back)).box.state, 'ready');
+});
+
+test('t2449: with builds on, can-build is answered from the cache: a second named info makes no docker call', async (t) => {
+  const f = await fixture(t, { images: [], buildBoxes: true });
+  const first = f.runner.info(want(H1), { origin: 'peer-a' });
   await f.clock.advance(2500);
-  assert.deepStrictEqual((await f.got(stale)).box, PROBING_H1);
-  assert.strictEqual(f.calls().length, 4, 'past 30 s the call probes again');
+  assert.strictEqual((await f.got(first)).box.state, 'probing');
+  await f.clock.advance(3 * DOCKER_CALL_MS);
+  assert.deepStrictEqual(f.calls(), ['info --format', 'image ls', 'info --format'], 'ENTER: the probe and the free-space read ran');
+  const second = f.runner.info(want(H1), { origin: 'peer-b' });
+  await f.clock.flush();
+  assert.deepStrictEqual((await f.got(second)).box, { state: 'can-build', definitionHash: H1, why: 'no image for box 111111111111 on this runner; it builds one on the first job' });
+  assert.strictEqual(f.calls().length, 3);
 });
 
 test('t2449: the cache keeps at most 32 names and evicts the oldest', async (t) => {

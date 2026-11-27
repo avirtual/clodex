@@ -26,6 +26,8 @@ const BOX_REFUSALS = { 'no-image': 'no-image', ambiguous: 'ambiguous-image' };
 const NAMED_BOX_TTL_MS = 30000;
 const NAMED_BOX_WAIT_MS = 2500;
 const NAMED_BOX_MAX = 32;
+const NAMED_BOX_RETRY_MS = 5000;
+const SETTLED_BOX = new Set(['ready', 'no-image', 'ambiguous']);
 const REF_RE = /^(?![-/.])(?!.*\.\.)(?!.*\/\/)[A-Za-z0-9._/-]{1,200}$/;
 const ENV_NAME_RE = /^[A-Z_][A-Z0-9_]*$/;
 const FLAG_KEYS = ['CLODEX_TEST_LOCK', 'CLODEX_TEST_SLOW_ADVISORY'];
@@ -538,6 +540,7 @@ function createSuiteRunner({
   const coolOff = new Map();
   const builtIds = new Set();
   const namedBoxes = new Map();
+  const rooms = new Map();
 
   const isBox = (job) => job.isolation === 'container';
   const namedBox = (job) => Boolean((job.identity && job.identity.box && job.identity.box.definitionHash) || job.build);
@@ -716,11 +719,14 @@ function createSuiteRunner({
     return null;
   }
 
-  async function buildRefusal(hash, origin) {
+  async function readRoom() {
+    try { return await box.freeBytes(); } catch { return { bytes: null }; }
+  }
+
+  async function buildRefusal(hash, origin, room$ = readRoom) {
     const now0 = refusalNow(hash, origin);
     if (now0) return now0;
-    let room;
-    try { room = await box.freeBytes(); } catch { room = { bytes: null }; }
+    const room = await room$();
     if (room.bytes == null) return { why: 'the free disk space could not be read' };
     if (room.bytes < BUILD_DISK_FLOOR) {
       return { why: `${(room.bytes / 1024 ** 3).toFixed(1)} GiB free on the ${room.where}; a build needs ${BUILD_DISK_FLOOR / 1024 ** 3} GiB` };
@@ -728,11 +734,11 @@ function createSuiteRunner({
     return null;
   }
 
-  async function buildAnswer(want, origin, found) {
+  async function buildAnswer(want, origin, found, room$ = readRoom) {
     const hash12 = want.definitionHash.slice(0, 12);
     if (building && building.hash === want.definitionHash) return { state: 'building', definitionHash: want.definitionHash, why: `building box ${hash12} on this runner` };
     if (!buildBoxes) return found;
-    const refusal = await buildRefusal(want.definitionHash, origin);
+    const refusal = await buildRefusal(want.definitionHash, origin, room$);
     if (refusal) return { ...found, why: `${found.why}; no build: ${refusal.why}` };
     return { state: 'can-build', definitionHash: want.definitionHash, why: `no image for box ${hash12} on this runner; it builds one on the first job` };
   }
@@ -1339,30 +1345,37 @@ function createSuiteRunner({
 
   function forgetBox(hash) {
     for (const key of [...namedBoxes.keys()]) if (key.startsWith(`${hash}@`)) namedBoxes.delete(key);
+    rooms.clear();
   }
 
-  function namedProbe(want) {
-    const key = `${want.definitionHash}@${want.rev}`;
-    const hit = namedBoxes.get(key);
-    if (hit && (hit.at == null || now() - hit.at < NAMED_BOX_TTL_MS)) return hit;
-    const entry = { at: null, done: null };
-    entry.done = probeBox(want).then((found) => {
-      if (namedBoxes.get(key) === entry) entry.at = now();
-      return found;
-    });
-    namedBoxes.delete(key);
-    namedBoxes.set(key, entry);
-    while (namedBoxes.size > NAMED_BOX_MAX) namedBoxes.delete(namedBoxes.keys().next().value);
-    return entry;
+  function cachedRead(map, key, read, ttlOf) {
+    let entry = map.get(key);
+    if (!entry) {
+      entry = { at: null, value: null, pending: null };
+      map.set(key, entry);
+      while (map.size > NAMED_BOX_MAX) map.delete(map.keys().next().value);
+    }
+    if (!entry.pending && (entry.at == null || now() - entry.at >= ttlOf(entry.value))) {
+      const mine = entry;
+      mine.pending = read().then((value) => {
+        if (map.get(key) === mine) { mine.value = value; mine.at = now(); }
+        mine.pending = null;
+        return value;
+      });
+    }
+    return entry.at != null ? Promise.resolve(entry.value) : entry.pending;
   }
+
+  const boxTtl = (found) => (found && SETTLED_BOX.has(found.state) ? NAMED_BOX_TTL_MS : NAMED_BOX_RETRY_MS);
+  const roomTtl = (room) => (room && room.bytes != null ? NAMED_BOX_TTL_MS : NAMED_BOX_RETRY_MS);
+  const cachedRoom = () => cachedRead(rooms, 'room', readRoom, roomTtl);
 
   async function namedBoxState(want, origin) {
     if (!box) return null;
     if (boxHold) return { state: 'unavailable', why: `cleanup not confirmed: ${boxHold.why}` };
-    const entry = namedProbe(want);
-    const known = entry.done.then(async (found) => {
+    const known = cachedRead(namedBoxes, `${want.definitionHash}@${want.rev}`, () => probeBox(want), boxTtl).then(async (found) => {
       const b = boxAnswerOf(want, found);
-      return b.state === 'no-image' ? buildAnswer(want, origin, b) : b;
+      return b.state === 'no-image' ? buildAnswer(want, origin, b, cachedRoom) : b;
     });
     let timer = null;
     const late = new Promise((resolve) => {
