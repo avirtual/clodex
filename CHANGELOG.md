@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+## 5.207.0 — 2026-11-27
+
 - Test runs: a gate run no longer inherits suite settings from the environment of the process that started it.
 - Seats: a ticket seat held at a Claude boot dialog is reported to its team lead at once; when the dialog is for a folder Clodex itself added and its trust entry was lost, the seat is re-seeded and restarted once.
 - Browser pane: a page that keeps long-poll channels open or has a ticking element no longer reads as "still busy" on every action; the reply says what was ignored.
