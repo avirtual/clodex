@@ -13,6 +13,7 @@ blocks a release.
 
 ## Unreleased
 
+- Test runners: the record of a hand's named test run now lists the files it named, not only how many.
 - Test runners: a team's `env` now also reaches test runs on the source machine (a verify or post-merge suite that falls back home, and a hand's local run), which previously ran without it.
 - Test runners: `[agent:team runner verify-env:KEY=VALUE]` and `merge-env:KEY=VALUE` set env for the verify run or the post-merge suite only, as `hand-env:` does for hand runs.
 

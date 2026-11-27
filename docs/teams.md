@@ -309,7 +309,7 @@ Clodex ships three definitions and seeds them on first run:
 |---|---|
 | `clodex-team` | **Yes** — runs a script Clodex itself ships (`${CLODEX_BIN}`). Roster, ticket list, retire. |
 | `clodex-monitor` | **Yes** — same. Runs a long command in the background and DMs the seat its output. |
-| `clodex-run-tests` | **Yes** — runs `${CLODEX_BIN}/clodex-run-tests.js`, which runs your `scripts/run-tests.js` (the merge gate's runner) and prints a one-line digest. Payload: `tree` picks the worktree to measure; `scope` is `"full"` (default, the merge gate's whole-suite run under the suite lock) or `"own"` (the branch's own tests plus the repo-wide shape checks, no lock unless a selected file binds real ports); `files` (1 to 20 repo-relative test file paths, refused together with `scope`) runs exactly those files and nothing else, routed and locked as an own run, with a digest headed `named: <n> files:` and ledger start and end rows carrying `named: <n>`, the file count. A test file is `*.test.js`, `*.test.mjs` or `*.test.cjs` outside fixture, dot and `node_modules` directories. For an own or named run your `scripts/run-tests.js` receives the selected files as positional arguments after `--reporter=dot`; a full run passes none. |
+| `clodex-run-tests` | **Yes** — runs `${CLODEX_BIN}/clodex-run-tests.js`, which runs your `scripts/run-tests.js` (the merge gate's runner) and prints a one-line digest. Payload: `tree` picks the worktree to measure; `scope` is `"full"` (default, the merge gate's whole-suite run under the suite lock) or `"own"` (the branch's own tests plus the repo-wide shape checks, no lock unless a selected file binds real ports); `files` (1 to 20 repo-relative test file paths, refused together with `scope`) runs exactly those files and nothing else, routed and locked as an own run, with a digest headed `named: <n> files:` and ledger start and end rows carrying `named: <n>`, the file count, the start row also carrying `files`, the paths in order (first 20, each cut to 300 bytes, `filesCut: true` when cut). A test file is `*.test.js`, `*.test.mjs` or `*.test.cjs` outside fixture, dot and `node_modules` directories. For an own or named run your `scripts/run-tests.js` receives the selected files as positional arguments after `--reporter=dot`; a full run passes none. |
 
 `clodex-run-tests` is the shape to learn from. The one file it needs from you is
 `${TEAM_ROOT}/scripts/run-tests.js` — the same runner the merge gate below
@@ -1324,7 +1324,7 @@ on its `moved` entry; the original pick is never overwritten.
 When a hand job waited more than 60 s for a slot, its digest adds
 `(waited <t> on <member>; <best other member> <state>)`. `clodexctl get testjobs
 -o json` on the source node carries `picks`: the latest ledger row of each of
-the last 20 jobs that has a pick.
+the last 20 jobs that has a pick or a named start row's `files`, which every later row of that job shows too (with `filesCut` when set).
 
 Reading it: bare `[agent:team runner]` also shows the gate mode and, for the
 runner's current environment key (`envKey`, from its info route), how many

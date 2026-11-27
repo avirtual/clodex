@@ -316,6 +316,7 @@ test('run drives submit, a multi-chunk pack with a refused offset, commit, poll 
   assert.strictEqual(typeof env.envKey, 'string');
   const lines = fs.readFileSync(ledgerFile, 'utf8').trim().split('\n').map((l) => JSON.parse(l));
   assert.deepStrictEqual(lines.map((l) => [l.phase, l.jobId, l.where]), [['start', 'run-0001', 'runner-1'], ['end', 'run-0001', 'runner-1']]);
+  assert.deepStrictEqual(lines.map((l) => ['files' in l, 'filesCut' in l]), [[false, false], [false, false]]);
   const said = [...logs, ...progress].join('\n');
   assert.ok(logs.length > 0 && said.includes('runner-1'), 'ENTER: the client logged the run');
   assert.strictEqual(said.includes(SUITE_TOKEN), false);
@@ -552,4 +553,5 @@ test('a named hand run on the push wire runs scripts/run-tests.js --reporter=dot
   assert.deepStrictEqual(argvs, [['scripts/run-tests.js', '--reporter=dot', 'test/b.test.js', 'test/a.test.js']]);
   const lines = fs.readFileSync(ledgerFile, 'utf8').trim().split('\n').map((l) => JSON.parse(l));
   assert.deepStrictEqual(lines.map((l) => [l.phase, l.scope, l.named]), [['start', 'own', 2], ['end', 'own', 2]]);
+  assert.deepStrictEqual(lines.map((l) => [l.phase, l.files, 'filesCut' in l]), [['start', ['test/b.test.js', 'test/a.test.js'], false], ['end', undefined, false]]);
 });

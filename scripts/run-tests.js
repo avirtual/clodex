@@ -378,6 +378,28 @@ const LEDGER = process.env.CLODEX_SUITE_LEDGER || '';
 const LEDGER_ROTATE_BYTES = 5 * 1024 * 1024;
 let ledgerTotals = null;
 
+const LEDGER_FILES_MAX = 20;
+const LEDGER_PATH_MAX = 300;
+
+function ledgerPathBytes(s) {
+  return Buffer.byteLength(JSON.stringify(s)) - 2;
+}
+
+function ledgerFiles(list) {
+  let cut = list.length > LEDGER_FILES_MAX;
+  const files = list.slice(0, LEDGER_FILES_MAX).map((f) => {
+    if (ledgerPathBytes(f) <= LEDGER_PATH_MAX) return f;
+    cut = true;
+    let out = '';
+    for (const ch of f) {
+      if (ledgerPathBytes(out + ch) > LEDGER_PATH_MAX) break;
+      out += ch;
+    }
+    return out;
+  });
+  return cut ? { files, filesCut: true } : { files };
+}
+
 function ledgerAppend(rec) {
   try {
     fs.mkdirSync(path.dirname(LEDGER), { recursive: true });
@@ -405,7 +427,8 @@ if (LEDGER) {
     phase: 'start',
     kind: process.env.CLODEX_SUITE_KIND || 'manual',
     scope: sweeping ? 'full' : 'own',
-    ...(!sweeping && /^[1-9][0-9]*$/.test(process.env.CLODEX_SUITE_NAMED || '') ? { named: Number(process.env.CLODEX_SUITE_NAMED) } : {}),
+    ...(!sweeping && /^[1-9][0-9]*$/.test(process.env.CLODEX_SUITE_NAMED || '')
+      ? { named: Number(process.env.CLODEX_SUITE_NAMED), ...ledgerFiles(passthrough.filter((a) => !a.startsWith('-'))) } : {}),
     ticket: process.env.CLODEX_SUITE_TICKET || null,
     seat: process.env.CLODEX_SUITE_SEAT || null,
     tree: path.resolve(ROOT),
