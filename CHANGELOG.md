@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+- Test runners: a team can ask that its jobs run alone on a runner: `[agent:team runner exclusive:on]`. The runner starts such a job only when nothing else is running there and starts nothing beside it; other teams' jobs still share the runner's slots at other times. A runner's owner can turn this off with `clodexctl patch testjobs --exclusive ignore`.
+
 ## 5.203.0 — 2026-11-27
 
 - Test runners: a team can set how long its hand and shadow test runs wait for a free slot on a runner: `[agent:team runner queue:<minutes>]`, 5 to 120. The defaults stay 15 minutes for hands and 20 for shadow gate runs.

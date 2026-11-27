@@ -675,6 +675,13 @@ the runner off, and never turns a runner on; a bad count is 400. The answer is
 change waits for them, like a Preferences Apply. `clodexctl patch testjobs
 --slots N` sends it.
 
+`POST /api/testjobs/exclusive` with `{ "exclusive": "honour" | "ignore" }`
+(same token, body and refusals; the `testjobs/exclusive` row) sets the stored
+record's `exclusive` through `setSuiteRunnerExclusive`: the record holds
+`exclusive: "ignore"` only, and a Preferences Apply keeps it. The answer is
+`{ ok, exclusive, applied, running }`; `clodexctl patch testjobs --exclusive
+honour|ignore` sends it.
+
 The job's PATH is a fixed list (`jobPath`), never the node's own:
 `/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin`, with
 `/opt/homebrew/bin:/opt/homebrew/sbin` ahead of it on macOS arm64. Its `LANG`
