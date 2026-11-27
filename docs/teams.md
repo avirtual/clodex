@@ -964,15 +964,17 @@ counts, both platforms; with `box: true` the tally shown is the box's env key. O
 
 `[agent:team runner <peer>]` (lead only) sets the peer: it must be a known peer;
 an offline one is accepted with a warning, one online without the `suite`
-capability is refused. A first peer starts at `hands:full`.
+capability is refused. A first peer starts at `hands:full`, a first runner that
+dials in at `hands:off`; replacing a runner keeps the stored `hands`.
 `[agent:team runner hands:off|full|all]` sets the mode once a peer is set;
 `[agent:team runner off]` removes the whole setting; bare `[agent:team runner]`
 shows the peer, the mode, and whether the runner is reachable, with its queue
 length and environment identity. `full` sends full-scope hand runs
 (`clodex-run-tests`) to the runner and keeps own-scope runs local; `all` sends
 both. The decision is `route()` in suite-client.js. On a pool, a routed run
-picks its member with the gate's pick (`_handRunners`, no box) among the push
-members only (a pull member serves the gate only), is picked again once when
+picks its member with the gate's pick (`_handRunners`, no box) among every
+member, push or pull (a pull member that is not attached is not live), and goes
+through that member's wire (`_runnerVia`); it is picked again once when
 that member refuses or is unreachable before accepting, and is rerouted once,
 as a gate run is, when its runner is lost after accepting; with no pick it
 goes to the first member. Because the loss is counted for every routed run, a
@@ -1062,10 +1064,9 @@ setting. `[agent:team runner <name>]` resolves the wire once, at set time, and
 stores it: a configured peer row means `push`; otherwise a name the suite desk
 has seen claim (attached now or earlier) means `pull`; a name that is both is
 `push`; neither is refused ("not a known peer and no node by that name has
-dialed in"). A pull runner is used for `gate:shadow` comparisons and `gate:on` runs only: naming
-one sets `hands` to `off`, `hands:full` and `hands:all` are refused for it, and
-`route()` keeps every hand run local whatever a hand-edited `hands` says, as
-does the channel host's runner lookup. Bare `[agent:team runner]` shows the
+dialed in"). A pull runner serves `gate:shadow` comparisons, `gate:on` runs and
+hand runs under the same `hands:` rules as a push runner; naming one as the first
+runner of a team that has none starts it at `hands:off`. Bare `[agent:team runner]` shows the
 wire, and for a pull runner `attached` (with the queue and environment line,
 fetched through the desk) or `not attached (last claim <age> | never)`; the
 popover's state line says the same. When a pull runner is not attached at
@@ -1086,7 +1087,7 @@ the setting. `[agent:team runner add <peer>]` (lead only) resolves the wire with
 the rule `[agent:team runner <peer>]` uses and refuses with its texts; adding the
 first member or a pool member again is refused by name. `[agent:team runner rm
 <peer>]` drops a pool row; removing the first member promotes the next pool row to
-`peer`/`wire` (`hands` set to `off` when it dials in); removing the only runner is
+`peer`/`wire` and keeps the stored `hands`; removing the only runner is
 refused and names `[agent:team runner off]`, which removes everything.
 `[agent:team runner <peer>]` still replaces the first member and leaves the pool
 alone; naming a pool member there is refused. Bare `[agent:team runner]` on a pool
@@ -1136,9 +1137,7 @@ late for the abandoned attempt; <new> decided green`. None of this is persisted:
 source restart ends the run loop as before, no abandoned job is revived and no
 reroute repeats. The held-ticket retry sweep does not reroute; its pick may choose
 the lost member again once that member answers info. Compare rows of a pooled team carry `runner: <member>`, the member that
-ran the job, and a superseded job's cancel goes to that member. Hand routing is
-not pooled: `route()` and the channel host's runner lookup read the first member
-only, with the pull refusal above.
+ran the job, and a superseded job's cancel goes to that member.
 
 Reading it: bare `[agent:team runner]` also shows the gate mode and, for the
 runner's current environment key (`envKey`, from its info route), how many
