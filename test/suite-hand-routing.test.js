@@ -704,7 +704,7 @@ test('t2414: on a pool whose first member is offline and whose pull member is de
   assert.deepStrictEqual([reply.run, reply.runner, reply.unknown], ['remote', 'runner-b', null]);
   const root = mkRoot(CAPTURED.green);
   const d = await runWithHost(root, '{}', path.join(root, 'h'), () => [reply]);
-  assert.match(d.digest, /^\[[^\]]+\] 3\/3 green \(\d+m \d{2}s\) \(runner runner-b\)$/);
+  assert.match(d.digest, /^\[[^\]]+\] 3\/3 green \(\d+m \d{2}s\) \(runner runner-b\) \(pool: skipped runner-a: not connected, laptop: not connected\)$/);
 });
 
 test('t2414: a hand run whose runner is lost after accept is rerouted once; the reply, the digest and the ledger row name both runners', async () => {
