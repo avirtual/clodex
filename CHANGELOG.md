@@ -14,6 +14,7 @@ blocks a release.
 ## Unreleased
 
 - Test runs: a gate run no longer inherits suite settings from the environment of the process that started it.
+- Browser pane: a page that keeps long-poll channels open or has a ticking element no longer reads as "still busy" on every action; the reply says what was ignored.
 
 ## 5.206.0 — 2026-11-27
 
