@@ -240,7 +240,17 @@ async function run(argv, io = {}) {
     V.checkResourceWord(verb, rest);
     preflightResourceWord(verb, rest);
     if (verb === 'version') {
-      const dial = async (fn) => { let out; await withWire(flags, io, async (client) => { out = await fn(client); }); return out; };
+      const dial = async (fn) => {
+        let out;
+        let opened = false;
+        try {
+          await withWire(flags, io, async (client) => { opened = true; out = await fn(client); });
+        } catch (e) {
+          if (opened) throw e;
+          throw new CliError(EXIT.CONNECT, (e && e.message) || String(e));
+        }
+        return out;
+      };
       await V.version({ printer, flags, dial });
       return EXIT.OK;
     }

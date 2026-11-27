@@ -525,6 +525,24 @@ test('version -o json against an unreachable node carries the client and the rea
   assert.match(j.error, /^cannot reach the engine: /);
 });
 
+test('version with no context to dial prints the client line, then node: unreachable, exit 0', async () => {
+  const { code, stdout } = await cli(['version'], null);
+  assert.strictEqual(code, 0);
+  const lines = stdout.trim().split('\n');
+  assert.strictEqual(lines.length, 2);
+  assert.strictEqual(lines[0], VERSION);
+  assert.match(lines[1], /^node: unreachable \(.+\)$/);
+});
+
+test('version against a node that refuses the token prints the client line and keeps the auth failure exit', async () => {
+  await withNode({}, async (port) => {
+    const { code, stdout, stderr } = await cli(['version', '--url', `http://127.0.0.1:${port}`, '--token', 'wrong'], null);
+    assert.notStrictEqual(code, 0);
+    assert.strictEqual(stdout, `${VERSION}\n`);
+    assert.match(stderr, /unauthorized/);
+  });
+});
+
 test('-V still prints the client version alone and opens no wire', async () => {
   const { code, stdout } = await cli(['-V', 'info'], null);
   assert.strictEqual(code, 0);

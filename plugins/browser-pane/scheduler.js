@@ -281,7 +281,7 @@ function createScheduler({
     if ((s.state === 'held' && s.reason !== 'takeover') || (samePage && last.idp)) {
       throw new Error(`note refused: ${service} is on ${origin} (sign-in), not the site — note after the hand-back`);
     }
-    const p = siteNotes.prepare(cmd.text, (n) => (samePage ? siteNotes.elementLabel(last.elements, n) : null));
+    const p = siteNotes.prepare(cmd.text, (n) => (samePage ? siteNotes.elementLabel(last.bare && last.bare[n] != null ? [last.bare[n]] : last.elements, n) : null));
     const note = await notes.add(origin, { ...p, seat: handle.from || handle.name });
     return replies.reply(`noted ${note.id} for ${origin}: @${note.anchor} ${note.kind}: ${JSON.stringify(note.text)}${handle.from && handle.from !== handle.name ? ` — as ${handle.from}` : ''}`);
   }
@@ -350,7 +350,7 @@ function createScheduler({
       const e = elementStrip(elBase ? elBase.elements : null, raw.elements, elBase ? elBase.keys : null, raw.keys, { chrome: raw.chrome, covered: raw.covered, dialog: raw.dialog });
       if (e.hidden) { page = { ...page, elements: e.lines }; hidden = e.hidden; covered = e.covered || 0; }
     }
-    if (hasText) st.lastText[service] = { text: raw.text, title: raw.title, origin, where, page: pageKey(raw.url), elements: raw.elements, keys: raw.keys, elBase, base, gen: raw.gen == null ? null : raw.gen, idp: !!(raw.login && raw.login.idp) };
+    if (hasText) st.lastText[service] = { text: raw.text, title: raw.title, origin, where, page: pageKey(raw.url), elements: raw.elements, bare: raw.bare || null, keys: raw.keys, elBase, base, gen: raw.gen == null ? null : raw.gen, idp: !!(raw.login && raw.login.idp) };
     const rec = ((storage.get() || {}).services || {})[profileOf(service)] || {};
     const openedHost = rec.openedHost || hostOf(rec.lastUrl);
     const memo = feedMemory(st, service, raw, cmd);

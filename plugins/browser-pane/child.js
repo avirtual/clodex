@@ -1572,6 +1572,7 @@ function run(electron, ctx) {
       cats: el.cats || {},
       adKeys: el.adKeys || {},
       keys: el.keys || {},
+      ...(el.bare && Object.keys(el.bare).length ? { bare: el.bare } : {}),
       ...(first && ent.restoredAt != null ? { restored: ent.restoredAt } : first ? { first: firstHost || true } : {}),
     } : {};
     if (el) {

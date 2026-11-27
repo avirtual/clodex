@@ -276,7 +276,7 @@ function toCommand(intent) {
     const service = serviceArg(sub, positional, false);
     if (flags.text && flags.links) throw new Error('--text and --links cannot be combined');
     if (flags.compact && (flags.text || flags.links)) throw new Error('--compact is a mode of the default read; drop --text/--links');
-    if (flags.filter === '') throw new Error('--filter needs a value, e.g. --filter=pdf');
+    if (flags.filter === '') throw new Error('--filter needs a value, e.g. --filter="pdf"');
     const max = flags.max == null ? DEFAULT_MAX
       : Math.min(MAX_MAX, Math.max(MAX_MIN, intArg('max', flags.max, 1)));
     return {

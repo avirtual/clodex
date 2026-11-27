@@ -311,7 +311,8 @@ async function version({ client, printer, flags, dial = (fn) => fn(client) }) {
   try {
     hello = await dial((c) => c.get('/api/peer/hello', 'version'));
   } catch (e) {
-    const reason = (e && e.message) || String(e);
+    if (!(e instanceof CliError) || e.exitCode !== EXIT.CONNECT) throw e;
+    const reason = e.message;
     if (flags.json) { printer.json({ client: VERSION, server: null, error: reason }); return; }
     printer.line(`node: unreachable (${reason})`);
     return;

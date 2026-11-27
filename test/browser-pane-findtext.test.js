@@ -230,12 +230,12 @@ test('READ_INTERACTIVE: a link label joins an https:// split from its host', () 
 test('READ_INTERACTIVE: buttons that share a label are listed with the row they sit in; a unique label and identical rows print as before', () => {
   const page = mkPage();
   const { mk } = page;
-  const row = (title, y) => mk('li', {}, [mk('span', {}, [title], [10, y, 200, 20]), mk('button', {}, ['More actions'], [300, y, 30, 20])], [10, y, 330, 20]);
+  const row = (title, y, label = 'More actions') => mk('li', {}, [mk('span', {}, [title], [10, y, 200, 20]), mk('button', {}, [label], [300, y, 30, 20])], [10, y, 330, 20]);
   const list = mk('ul', {}, [row('Invoice 2026-08.pdf', 40), row('Contract Smith', 60), row('Holiday photos 2025', 80)], [10, 40, 330, 60]);
-  const twinA = mk('div', {}, [mk('button', {}, ['Share'], [300, 200, 30, 20])], [10, 200, 330, 20]);
-  const twinB = mk('div', {}, [mk('button', {}, ['Share'], [300, 220, 30, 20])], [10, 220, 330, 20]);
+  const twin = (y) => mk('div', {}, [mk('span', {}, ['Shared folder'], [10, y, 200, 20]), mk('button', {}, ['Share'], [300, y, 30, 20])], [10, y, 330, 20]);
+  const opens = mk('ul', {}, [row('Open house photos', 400, 'Open'), row('Open tax folder', 420, 'Open')], [10, 400, 330, 40]);
   const upload = mk('button', {}, ['Upload'], [10, 300, 60, 20]);
-  const body = mk('body', {}, [list, twinA, twinB, upload], [0, 0, 1200, 800]);
+  const body = mk('body', {}, [list, twin(200), twin(220), upload, opens], [0, 0, 1200, 800]);
   Object.assign(mk('html', {}, [body], [0, 0, 1200, 800]), { scrollWidth: 1200, scrollHeight: 800 });
   const read = vm.runInContext(scripts.READ_INTERACTIVE(false, { known: {}, next: 1 }), context(page));
   assert.deepStrictEqual(Array.from(read.lines), [
@@ -245,7 +245,13 @@ test('READ_INTERACTIVE: buttons that share a label are listed with the row they 
     '[4] button Share',
     '[5] button Share',
     '[6] button Upload',
+    '[7] button Open — Open house photos',
+    '[8] button Open — Open tax folder',
   ]);
+  assert.deepStrictEqual({ ...read.bare }, {
+    1: '[1] button More actions', 2: '[2] button More actions', 3: '[3] button More actions',
+    7: '[7] button Open', 8: '[8] button Open',
+  });
 });
 
 test('READ_INTERACTIVE: a label whose radio is visually hidden is listed as that radio with its state; a visible wrapped checkbox stays one line; a label with no control stays clickable', () => {
