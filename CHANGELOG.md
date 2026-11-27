@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+- Browser pane: a download that is refused or lost is reported instead of vanishing, a download that finishes after the action's reply is announced to the agent that started it, and `--to` on a click says it is armed.
+
 ## 5.204.0 — 2026-11-27
 
 - Test boxes: a node's offer now shows the CPUs and memory of its container runtime, which is what its boxes share, with the host's numbers beside it when they differ.

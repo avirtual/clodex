@@ -77,6 +77,7 @@ const HELD_WAIT_MAX_MS = 1800000;
 const DOWNLOAD_OP_MS = 450000;
 const SCREENSHOT_OP_MS = 30000;
 const N_ACTS = new Set(['click', 'type', 'select']);
+const DOWNLOAD_SUBS = new Set(['click', 'type', 'select', 'key', 'download']);
 const HELD_OK = new Set(['wait', 'release']);
 const heldOk = (s, sub) => HELD_OK.has(sub) || (sub === 'close' && s.reason !== 'takeover');
 const realTimers = {
@@ -109,6 +110,7 @@ function createScheduler({
 }) {
   const services = new Map();
   const seats = new Map();
+  const handles = new Map();
 
   const seatState = (name) => {
     if (!seats.has(name)) seats.set(name, { current: null, hasRead: {}, lastText: {}, feed: {}, notesShown: {}, notesOpen: {} });
@@ -116,7 +118,7 @@ function createScheduler({
   };
 
   const svcState = (name) => {
-    if (!services.has(name)) services.set(name, { lease: null, queue: [], inflight: null, state: 'closed', reason: null, waiters: [], url: '' });
+    if (!services.has(name)) services.set(name, { lease: null, queue: [], inflight: null, state: 'closed', reason: null, waiters: [], url: '', notes: [], last: null });
     return services.get(name);
   };
 
@@ -397,7 +399,8 @@ function createScheduler({
     const d = r.download;
     if (root && d && d.file && !d.failed) keepInside(root, d.bytes == null ? path.dirname(d.file) : d.file);
     if (r.held && !r.takeover) signin(service, r);
-    return replies.actReply(cmd.sub, service, cmd, withNotes(handle, service, r));
+    const text = replies.actReply(cmd.sub, service, cmd, withNotes(handle, service, r));
+    return root && r.armMs != null ? text + replies.armedTail(args.dir, r.armMs) : text;
   }
 
   async function runScroll(handle, service, cmd) {
@@ -470,6 +473,37 @@ function createScheduler({
 
   const heldSibling = (service, sub) => sub === 'close' && !tabOf(service) && [...services.entries()].find(([n, t]) => profileOf(n) === service && t.state === 'held' && !heldOk(t, 'close'));
 
+  const pendingFor = (seat) => (j) => !!j && j.handle.name === seat && DOWNLOAD_SUBS.has(j.cmd.sub);
+
+  function withDownloads(s, job, text) {
+    if (!DOWNLOAD_SUBS.has(job.cmd.sub)) return text;
+    const mine = s.notes.filter((x) => x.seat === job.handle.name);
+    if (!mine.length) return text;
+    s.notes = s.notes.filter((x) => x.seat !== job.handle.name);
+    return [text, ...mine.map((x) => x.line)].join(' · ');
+  }
+
+  function lastActor(service) {
+    let best = null;
+    for (const [n, s] of services) {
+      if ((n === service || profileOf(n) === profileOf(service)) && s.last && (!best || s.last.at > best.at)) best = s.last;
+    }
+    return best ? best.seat : null;
+  }
+
+  function onDownload(frame) {
+    if (frame.event !== 'download-lost' && frame.event !== 'download-late') return;
+    const service = String(frame.service || '');
+    const line = frame.event === 'download-late' ? replies.downloadFinished(frame) : replies.downloadLost(frame.name, frame.reason);
+    const seat = frame.seat != null ? String(frame.seat) : lastActor(service);
+    const handle = seat ? handles.get(seat) : null;
+    if (!handle) return;
+    const near = [services.get(service), ...[...services.entries()].filter(([n]) => n !== service && profileOf(n) === profileOf(service)).map(([, s]) => s)];
+    const s = near.find((x) => x && pendingFor(seat)(x.inflight));
+    if (s) s.notes.push({ seat, line });
+    else handle.inject(`${replies.PREFIX} ${line}`);
+  }
+
   function pump(service) {
     const s = svcState(service);
     if (s.inflight || !s.queue.length) return;
@@ -487,8 +521,8 @@ function createScheduler({
     else if (sib) p = Promise.reject(new Error(replies.TEXT.held(sib[0], sib[1].reason)));
     else p = Promise.resolve().then(() => RUN[job.cmd.sub](job.handle, service, job.cmd));
     p
-      .then((text) => job.handle.inject(text))
-      .catch((e) => fail(job.handle, s, errText(service, e), !!(e && (e.signin || e.code === 'HELD' || e.code === 'PASSWORD_FIELD')) || s.state === 'held'))
+      .then((text) => job.handle.inject(withDownloads(s, job, text)))
+      .catch((e) => fail(job.handle, s, withDownloads(s, job, errText(service, e)), !!(e && (e.signin || e.code === 'HELD' || e.code === 'PASSWORD_FIELD')) || s.state === 'held'))
       .finally(() => {
         if (s.inflight === job) s.inflight = null;
         pump(service);
@@ -575,6 +609,8 @@ function createScheduler({
     seatState(handle.name).current = service;
     if (cmd.sub === 'release') { release(handle, service); return; }
     s.lease = { seat: handle.name, lastCmdAt: now() };
+    s.last = { seat: handle.name, at: now() };
+    handles.set(handle.name, handle);
     if (s.state === 'held' && !heldOk(s, cmd.sub)) {
       handle.inject(replies.errorReply(replies.TEXT.held(service, s.reason)));
       return;
@@ -630,8 +666,10 @@ function createScheduler({
       s.queue = s.queue.filter((j) => j.handle.name !== name);
       for (const w of s.waiters.filter((x) => x.seat === name)) timers.clearTimeout(w.timer);
       s.waiters = s.waiters.filter((x) => x.seat !== name);
+      s.notes = s.notes.filter((x) => x.seat !== name);
     }
     seats.delete(name);
+    handles.delete(name);
   }
 
   function leaseHolder(service) {
@@ -651,6 +689,7 @@ function createScheduler({
     operatorOpened,
     restoreLease,
     leaseHolder,
+    onDownload,
     noteUrl,
     NO_SERVICE,
   };
