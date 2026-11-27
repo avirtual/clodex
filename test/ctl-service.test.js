@@ -1262,3 +1262,52 @@ test('helpIndex advertises no ctx shorthand — there is none left to advertise'
     assert.ok(idx.verbs.some((r) => r.verb === v), `${v} must be advertised`);
   }
 });
+
+test('t2417: patch testjobs runs against this node\'s own engine and is refused, undialed, for any other context', async (t) => {
+  const http = require('node:http');
+  const seen = [];
+  const server = http.createServer((req, res) => {
+    let raw = '';
+    req.on('data', (d) => { raw += d; });
+    req.on('end', () => {
+      seen.push(`${req.method} ${req.url} ${raw}`);
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      if (req.url === '/api/resources') {
+        return res.end(JSON.stringify({ ok: true, version: 7, resources: [{ name: 'testjobs', singular: 'testjobs', scope: 'node', verbs: ['list'], subresources: { slots: ['post'] } }] }));
+      }
+      res.end(JSON.stringify({ ok: true, slots: 1, applied: 'now', running: 0 }));
+    });
+  });
+  await new Promise((r) => server.listen(0, '127.0.0.1', r));
+  const port = server.address().port;
+  const dials = [];
+  const svc = createCtlService({
+    contextsFile: tmpCtxFile(), env: {}, localPort: () => port,
+    openTransport: async (ctx) => { dials.push(ctx.name); return { baseUrl: `http://127.0.0.1:${port}`, close() {} }; },
+  });
+  t.after(async () => { svc.dispose(); await new Promise((r) => server.close(r)); });
+  await svc.run(`create node here --url http://127.0.0.1:${port} --token STORED_TOKEN_HERE`);
+  await svc.run('create node far --url http://far.example:7777 --token STORED_TOKEN_FAR');
+  await svc.run(`create node other --url http://127.0.0.1:${port + 1} --token STORED_TOKEN_OTHER`);
+  const local = await svc.run('--ctx here patch testjobs --slots 1');
+  assert.deepStrictEqual([local.exitCode, local.output], [0, 'test runner slots set to 1 — applied now\n']);
+  assert.deepStrictEqual(seen.filter((s) => s.startsWith('POST')), ['POST /api/testjobs/slots {"slots":1}']);
+  for (const name of ['far', 'other']) {
+    const b = await svc.run(`--ctx ${name} patch testjobs --slots 1`);
+    assert.deepStrictEqual([b.exitCode, b.output], [2, 'clodexctl: refused: "patch testjobs" runs here only against this node\'s own engine\n'], name);
+  }
+  assert.deepStrictEqual(dials, ['here']);
+  const farPatch = await svc.run('--ctx far patch session bob --proxy p');
+  assert.doesNotMatch(farPatch.output, /refused/, 'patch session stays open to a remote context');
+});
+
+test('t2417: with no local port wired, patch testjobs is refused for every context', async (t) => {
+  const svc = createCtlService({
+    contextsFile: tmpCtxFile(), env: {},
+    openTransport: () => { throw new Error('DIALED'); },
+  });
+  t.after(() => svc.dispose());
+  await svc.run('create node here --url http://127.0.0.1:7777 --token STORED_TOKEN_HERE');
+  const b = await svc.run('--ctx here patch testjobs --slots 1');
+  assert.deepStrictEqual([b.exitCode, b.output], [2, 'clodexctl: refused: "patch testjobs" runs here only against this node\'s own engine\n']);
+});

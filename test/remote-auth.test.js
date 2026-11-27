@@ -266,6 +266,7 @@ const SCOPED_ROWS = [
   ['POST', '/api/dm'],
   ['POST', '/api/import/begin'],
   ['POST', '/api/restart'],
+  ['POST', '/api/testjobs/slots'],
   ['GET', '/api/node/logs'],
   ['GET', '/api/inbox'],
 ];

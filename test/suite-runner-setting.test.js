@@ -649,3 +649,76 @@ test('t2400: the restart fence reaches the live runner and a runner rebuilt whil
   f.wiring.fenceSuiteRunner(false);
   assert.deepStrictEqual(f.runners[1].fences, [true, false]);
 });
+
+function slotsFixture(t, initial) {
+  const settings = { remoteEnabled: false, remotePort: 0, peers: [], suiteRunner: initial };
+  const runners = [];
+  const startRunner = (opts) => { const r = fakeRunner(opts); runners.push(r); return { runner: r, error: null }; };
+  const store = { get: () => settings, set: (patch) => { Object.assign(settings, patch); return settings; } };
+  const { wiring } = wiringFixture(t, settings, { startRunner, getUiSettings: () => store });
+  return { wiring, settings, runners };
+}
+
+const FULL = {
+  enabled: true, isolation: 'none', work: '/srv/suite-work', boxImage: `sha256:${'a'.repeat(64)}`, slots: 2,
+  shares: [{ name: 'fonts', path: '/srv/fonts', version: 'v1' }], buildBoxes: true,
+};
+
+test('t2417: setSuiteRunnerSlots refuses a slot count outside 1..MAX_SLOTS with its own message and leaves the record', (t) => {
+  const f = slotsFixture(t, { ...FULL });
+  const rows = [
+    [0, 'slots must be from 1 to 4, not 0'],
+    [5, 'slots must be from 1 to 4, not 5'],
+    [1.5, 'slots must be a whole number from 1 to 4'],
+    ['2', 'slots must be a number from 1 to 4'],
+  ];
+  for (const [slots, error] of rows) {
+    assert.deepStrictEqual(f.wiring.setSuiteRunnerSlots(slots), { ok: false, status: 400, error }, String(slots));
+  }
+  assert.deepStrictEqual(f.settings.suiteRunner, FULL);
+});
+
+test('t2417: setSuiteRunnerSlots accepts 1 and 4 on an idle runner and applies now', (t) => {
+  const f = slotsFixture(t, { ...FULL });
+  assert.strictEqual(f.wiring.getSuiteEngine(), f.runners[0], 'ENTER: a live runner');
+  assert.deepStrictEqual(f.wiring.setSuiteRunnerSlots(4), { ok: true, slots: 4, applied: 'now', running: 0 });
+  assert.strictEqual(f.settings.suiteRunner.slots, 4);
+  assert.strictEqual(f.wiring.getSuiteEngine().opts.slots, 4);
+  assert.deepStrictEqual(f.wiring.setSuiteRunnerSlots(1), { ok: true, slots: 1, applied: 'now', running: 0 });
+  assert.strictEqual('slots' in f.settings.suiteRunner, false);
+  assert.strictEqual(f.runners.filter((r) => r.closed).length, 2);
+});
+
+test('t2417: setSuiteRunnerSlots refuses a node with no record and a disabled runner, and never writes', (t) => {
+  const none = slotsFixture(t, null);
+  assert.deepStrictEqual(none.wiring.setSuiteRunnerSlots(2), { ok: false, status: 409, error: 'this node has no test runner setting' });
+  assert.strictEqual(none.settings.suiteRunner, null);
+  const off = { ...FULL, enabled: false };
+  const f = slotsFixture(t, { ...off, shares: off.shares.map((s) => ({ ...s })) });
+  assert.deepStrictEqual(f.wiring.setSuiteRunnerSlots(3), { ok: false, status: 409, error: 'the test runner is off on this node' });
+  assert.deepStrictEqual(f.settings.suiteRunner, off);
+});
+
+test('t2417: a slot change leaves every other key of the record byte-identical', (t) => {
+  const f = slotsFixture(t, { ...FULL });
+  const before = JSON.parse(JSON.stringify(f.settings.suiteRunner));
+  assert.strictEqual(f.wiring.setSuiteRunnerSlots(3).ok, true);
+  const after = f.settings.suiteRunner;
+  assert.deepStrictEqual(Object.keys(after), Object.keys(before));
+  const others = Object.keys(before).filter((k) => k !== 'slots');
+  assert.strictEqual(others.length, 6, 'ENTER: the fixture carries every optional key');
+  for (const k of others) assert.strictEqual(JSON.stringify(after[k]), JSON.stringify(before[k]), k);
+  assert.deepStrictEqual([before.slots, after.slots], [2, 3]);
+});
+
+test('t2417: with a job running the change waits for it and says so', (t) => {
+  const f = slotsFixture(t, { ...FULL });
+  f.wiring.getSuiteEngine();
+  f.runners[0].active = 1;
+  assert.deepStrictEqual(f.wiring.setSuiteRunnerSlots(1), { ok: true, slots: 1, applied: 'after-drain', running: 1 });
+  assert.deepStrictEqual(f.wiring.setSuiteRunnerSlots(1), { ok: true, slots: 1, applied: 'after-drain', running: 1 }, 'a repeat while pending still reports the wait');
+  assert.deepStrictEqual([f.runners[0].closed, f.wiring.suiteRunnerState().pending], [false, true]);
+  f.runners[0].finishOne();
+  assert.strictEqual(f.runners[0].closed, true);
+  assert.strictEqual(f.wiring.getSuiteEngine().opts.slots, undefined);
+});
