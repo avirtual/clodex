@@ -31,7 +31,7 @@ anything: `create`, `rename` (to), `[agent:spawn]` (`_validateSeatName`),
 seat-import `begin`/`commit`; `clodexctl create` relays the server's refusal.
 The renderer's `nameFieldState` holds a second copy of the list
 (`test/reserved-cli-config-names.test.js` fails when they differ). A persisted
-seat that already carries one of the three names still restores (`create`
+seat that already carries one of those names still restores (`create`
 lets a persisted record through), renames away, and is served by the
 per-session peer routes; `.claims` stays refused everywhere.
 

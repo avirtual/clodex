@@ -14,7 +14,7 @@ const { mk } = require('./lib/session-fixtures');
 const { mkTmpRoot } = require('./lib/tmp-roots');
 
 const RESERVED = ['.claude', 'CLAUDE.md', '.mcp.json', 'claude.md', '.MCP.JSON', 'Claude.Local.md'];
-const NEAR_MISS = ['.claudex', 'CLAUDE.mdx'];
+const NEAR_MISS = ['.claudex', 'CLAUDE.mdx', 'CLAUDE.local.mdx'];
 const AGENT_NAME_RE_T = /^[a-zA-Z0-9._-]{1,64}$/;
 const SID = '11111111-2222-3333-4444-555555555555';
 
