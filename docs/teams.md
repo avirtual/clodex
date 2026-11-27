@@ -309,7 +309,7 @@ Clodex ships three definitions and seeds them on first run:
 |---|---|
 | `clodex-team` | **Yes** — runs a script Clodex itself ships (`${CLODEX_BIN}`). Roster, ticket list, retire. |
 | `clodex-monitor` | **Yes** — same. Runs a long command in the background and DMs the seat its output. |
-| `clodex-run-tests` | **Yes** — runs `${CLODEX_BIN}/clodex-run-tests.js`, which runs your `scripts/run-tests.js` (the merge gate's runner) and prints a one-line digest. Payload: `tree` picks the worktree to measure; `scope` is `"full"` (default, the merge gate's whole-suite run under the suite lock) or `"own"` (the branch's own tests plus the repo-wide shape checks, no lock unless a selected file binds real ports). |
+| `clodex-run-tests` | **Yes** — runs `${CLODEX_BIN}/clodex-run-tests.js`, which runs your `scripts/run-tests.js` (the merge gate's runner) and prints a one-line digest. Payload: `tree` picks the worktree to measure; `scope` is `"full"` (default, the merge gate's whole-suite run under the suite lock) or `"own"` (the branch's own tests plus the repo-wide shape checks, no lock unless a selected file binds real ports); `files` (1 to 20 repo-relative test file paths, refused together with `scope`) runs exactly those files and nothing else, routed and locked as an own run, with a digest headed `named: <n> files:` and a ledger start row carrying `named: true`. A test file is `*.test.js`, `*.test.mjs` or `*.test.cjs` outside fixture, dot and `node_modules` directories. For an own or named run your `scripts/run-tests.js` receives the selected files as positional arguments after `--reporter=dot`; a full run passes none. |
 
 `clodex-run-tests` is the shape to learn from. The one file it needs from you is
 `${TEAM_ROOT}/scripts/run-tests.js` — the same runner the merge gate below
@@ -970,7 +970,7 @@ dials in at `hands:off`; replacing a runner keeps the stored `hands`.
 `[agent:team runner off]` removes the whole setting; bare `[agent:team runner]`
 shows the peer, the mode, and whether the runner is reachable, with its queue
 length and environment identity. `full` sends full-scope hand runs
-(`clodex-run-tests`) to the runner and keeps own-scope runs local; `all` sends
+(`clodex-run-tests`) to the runner and keeps own-scope and named-file runs local; `all` sends
 both. The decision is `route()` in suite-client.js. On a pool, a routed run
 picks its member with the gate's pick (`_handRunners`, with the team's box and shares under `box: true`) among every
 member, push or pull (a pull member that is not attached is not live), and goes
