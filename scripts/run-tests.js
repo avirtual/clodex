@@ -405,6 +405,7 @@ if (LEDGER) {
     phase: 'start',
     kind: process.env.CLODEX_SUITE_KIND || 'manual',
     scope: sweeping ? 'full' : 'own',
+    ...(!sweeping && process.env.CLODEX_SUITE_NAMED === '1' ? { named: true } : {}),
     ticket: process.env.CLODEX_SUITE_TICKET || null,
     seat: process.env.CLODEX_SUITE_SEAT || null,
     tree: path.resolve(ROOT),
@@ -487,7 +488,7 @@ delete childEnv.CLODEX_TEST_LOCK_MERGE;
 delete childEnv.CLODEX_TEST_SLOW_ADVISORY;
 delete childEnv.CLODEX_TEST_SLOW_RETIME;
 delete childEnv.CLODEX_TEST_RETIME_CAP;
-for (const k of ['CLODEX_SUITE_LEDGER', 'CLODEX_SUITE_KIND', 'CLODEX_SUITE_TICKET', 'CLODEX_SUITE_SEAT', 'CLODEX_SUITE_RUN_ID', 'CLODEX_SUITE_ROUTE', 'CLODEX_SUITE_OVERRIDE']) {
+for (const k of ['CLODEX_SUITE_LEDGER', 'CLODEX_SUITE_KIND', 'CLODEX_SUITE_TICKET', 'CLODEX_SUITE_SEAT', 'CLODEX_SUITE_RUN_ID', 'CLODEX_SUITE_ROUTE', 'CLODEX_SUITE_OVERRIDE', 'CLODEX_SUITE_NAMED']) {
   delete childEnv[k];
 }
 
