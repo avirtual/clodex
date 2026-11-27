@@ -344,6 +344,9 @@ bundle), whose packaged form is the Docker image under
   a headless node says why the controls are dead instead of offering a mode
   nothing can listen through. Pure `fs` lookups with no spawn, memoized per
   process because the renderer polls it every fifteen seconds.
+- **claude-config-lock.js** — `withClaudeConfigLock`, the Claude CLI's own
+  `<file>.lock` mkdir lock around a `.claude.json` read-edit-write; used by
+  `preseedClaudeOnboarding` and by the accounts mint and Re-sync.
 - **accounts.js** — the registered-subscription registry (`~/.clodex/accounts.json`,
   0600) plus the mint recipe for `~/.clodex/accounts/<label>/`, the isolated
   `CLAUDE_CONFIG_DIR` a seat on that account spawns with. The `default` account is
