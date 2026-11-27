@@ -227,6 +227,27 @@ test('READ_INTERACTIVE: a link label joins an https:// split from its host', () 
   assert.deepStrictEqual(Array.from(read.lines), ['[1] link https://youtu.be/x → https://youtu.be/x']);
 });
 
+test('READ_INTERACTIVE: buttons that share a label are listed with the row they sit in; a unique label and identical rows print as before', () => {
+  const page = mkPage();
+  const { mk } = page;
+  const row = (title, y) => mk('li', {}, [mk('span', {}, [title], [10, y, 200, 20]), mk('button', {}, ['More actions'], [300, y, 30, 20])], [10, y, 330, 20]);
+  const list = mk('ul', {}, [row('Invoice 2026-08.pdf', 40), row('Contract Smith', 60), row('Holiday photos 2025', 80)], [10, 40, 330, 60]);
+  const twinA = mk('div', {}, [mk('button', {}, ['Share'], [300, 200, 30, 20])], [10, 200, 330, 20]);
+  const twinB = mk('div', {}, [mk('button', {}, ['Share'], [300, 220, 30, 20])], [10, 220, 330, 20]);
+  const upload = mk('button', {}, ['Upload'], [10, 300, 60, 20]);
+  const body = mk('body', {}, [list, twinA, twinB, upload], [0, 0, 1200, 800]);
+  Object.assign(mk('html', {}, [body], [0, 0, 1200, 800]), { scrollWidth: 1200, scrollHeight: 800 });
+  const read = vm.runInContext(scripts.READ_INTERACTIVE(false, { known: {}, next: 1 }), context(page));
+  assert.deepStrictEqual(Array.from(read.lines), [
+    '[1] button More actions — Invoice 2026-08.pdf',
+    '[2] button More actions — Contract Smith',
+    '[3] button More actions — Holiday photos 2025',
+    '[4] button Share',
+    '[5] button Share',
+    '[6] button Upload',
+  ]);
+});
+
 test('READ_INTERACTIVE: a label whose radio is visually hidden is listed as that radio with its state; a visible wrapped checkbox stays one line; a label with no control stays clickable', () => {
   const page = mkPage();
   const { mk } = page;
