@@ -550,3 +550,16 @@ test('t2413: a successful build and a later job start each stamp the box row in 
   assert.strictEqual((await waitState(f.runner, 'j2', 'done')).env.box.imageId, IMG_BUILT);
   assert.strictEqual(cacheRow(), atStart + 6000);
 });
+
+test('t2439: jobs waiting on another job\'s build are pending in info; the building job holds the slot', async (t) => {
+  const f = await fixture(t);
+  const started = heldBuild(f);
+  assert.strictEqual((await f.upload(f.body('j1', BUILD()))).state, 'queued');
+  const c = await started;
+  assert.strictEqual((await f.upload(f.body('j2', BUILD()))).state, 'build');
+  assert.strictEqual((await f.upload(f.body('j3', BUILD()))).state, 'build');
+  const i = await f.runner.info();
+  assert.deepStrictEqual([i.slots, i.queue.queued, i.pending], [{ total: 1, inUse: 1 }, [], 2]);
+  f.succeed(c);
+  for (const id of ['j1', 'j2', 'j3']) await waitState(f.runner, id, 'done');
+});

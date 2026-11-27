@@ -2270,3 +2270,11 @@ for (const [label, end] of [
     if (label.includes('agent')) assert.deepStrictEqual(abandoned, ['cancelled']);
   });
 }
+
+test('t2439: info counts a job submitted and awaiting its pack as pending, beside slots, and not once it is queued', async (t) => {
+  const f = await fixture(t);
+  assert.strictEqual((await f.runner.info()).pending, 0);
+  assert.strictEqual((await f.runner.submit(f.body('j1'))).state, 'awaiting-pack');
+  const i = await f.runner.info();
+  assert.deepStrictEqual([i.slots, i.queue, i.pending], [{ total: 1, inUse: 0 }, { running: null, queued: [] }, 1]);
+});
