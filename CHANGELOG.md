@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+- Test runners: a hand's test run on a runner now uses the team's box and shares, as gate runs do. Until now it ran directly on the runner's host, so tests that need the box image or a share failed there.
+
 ## 5.200.0 — 2026-11-27
 
 - Test runners: a hand's test run can now go to a runner that dials in, so `hands:full` and `hands:all` work for those runners and for mixed pools. A newly added dial-in runner still starts with hands off.
