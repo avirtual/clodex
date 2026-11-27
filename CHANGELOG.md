@@ -17,13 +17,13 @@ blocks a release.
 
 - Test runners: a team can set how long its hand and shadow test runs wait for a free slot on a runner: `[agent:team runner queue:<minutes>]`, 5 to 120. The defaults stay 15 minutes for hands and 20 for shadow gate runs.
 - A hand's named-files run is now marked as such, with its file count, in the run records.
+- A team can say where its tests live: `[agent:team test-roots <dir> …]`. A hand's `own` test run then finds the tests for the code it changed in those directories (default `test` and `cli/test`), including ES module tests.
 
 ## 5.202.0 — 2026-11-27
 
 - An agent that asks for a restart is no longer told "Clodex restarted" before the restart has happened (seen when the web UI reloaded while the restart was waiting for test jobs); the notice now comes only from the relaunched app.
 - Hands can run named test files: `clodex-run-tests` takes `files` (up to 20 test file paths) and runs exactly those, locally or on the team's runner. The project's `scripts/run-tests.js` receives them as arguments, as it does for an `own` run.
 - `clodex-run-tests` now treats `*.test.mjs` and `*.test.cjs` as test files, not only `*.test.js`.
-- A team can say where its tests live: `[agent:team test-roots <dir> …]`. A hand's `own` test run then finds the tests for the code it changed in those directories (default `test` and `cli/test`), including ES module tests.
 
 ## 5.201.0 — 2026-11-27
 
