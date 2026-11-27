@@ -13,8 +13,6 @@ blocks a release.
 
 ## Unreleased
 
-- Team tickets: a ticket branch cut before a release no longer files its CHANGELOG line under the released version or stops the merge; the line moves to Unreleased.
-
 ## 5.208.0 — 2026-11-27
 
 - Test runners: a job waiting in one pool member's queue moves to another member that is idle and ready.

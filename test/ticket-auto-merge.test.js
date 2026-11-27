@@ -2247,44 +2247,6 @@ test('t698: a CHANGELOG-only adjacent-insert conflict is unioned, landed, and na
   assert.strictEqual(git(repo.dir, ['status', '--porcelain']), '', 'the shared checkout is clean');
 });
 
-test('t2446: a bullet cut before a release stamp is moved to Unreleased, landed, and named in the notice', async () => {
-  const repo = mkRepo();
-  const CL = '# Changelog\n\nintro\n\n## Unreleased\n\n- old bullet one\n\n## 5.0.0\n';
-  fsReal.writeFileSync(pathReal.join(repo.dir, 'CHANGELOG.md'), CL);
-  git(repo.dir, ['add', 'CHANGELOG.md']);
-  git(repo.dir, ['commit', '-q', '-m', 'changelog']);
-  git(repo.dir, ['branch', '-f', 'tl-1', 'HEAD']);
-  const baseSha = git(repo.dir, ['rev-parse', 'HEAD']);
-  commitOnBranch(repo.dir, 'tl-1', 'CHANGELOG.md', CL.replace('- old bullet one\n', '- old bullet one\n- **B.** the branch bullet\n'));
-  const STAMPED = CL.replace('## Unreleased\n', '## Unreleased\n\n## 5.1.0 — 2026-01-01\n');
-  fsReal.writeFileSync(pathReal.join(repo.dir, 'CHANGELOG.md'), STAMPED);
-  git(repo.dir, ['add', 'CHANGELOG.md']);
-  git(repo.dir, ['commit', '-q', '-m', 'release stamp']);
-
-  const f = mkMerge({ repo: { ...repo, baseSha }, ticketOver: { worktree: { path: pathReal.join(repo.dir, 'wt'), branch: 'tl-1', baseSha } } });
-  const before = f.masterHead();
-  const seen = [];
-  const real = f.m._runTicketSuite.bind(f.m);
-  f.m._runTicketSuite = async (team, ticket, runIn) => {
-    seen.push(fsReal.readFileSync(pathReal.join(runIn, 'CHANGELOG.md'), 'utf8'));
-    return real(team, ticket, runIn);
-  };
-
-  await f.m._autoMergeTicket(f.team, 't1', LANDED, ACCEPT);
-
-  const EXPECT = '# Changelog\n\nintro\n\n## Unreleased\n\n- **B.** the branch bullet\n\n## 5.1.0 — 2026-01-01\n\n- old bullet one\n\n## 5.0.0\n';
-  assert.deepStrictEqual(f.esc(), [], 'nothing escalated');
-  assert.deepStrictEqual(seen, [EXPECT], 'the post-merge suite ran on the re-homed tree');
-  const sha = f.masterHead();
-  assert.strictEqual(git(repo.dir, ['rev-parse', `${sha}^1`]), before, 'one merge commit, no follow-up');
-  const notes = f.landed();
-  assert.strictEqual(notes.length, 1, 'ENTER: exactly one merge notification');
-  assert.ok(notes[0].body.includes(`as ${sha}`), `the notice names the sha on master. Got:\n${notes[0].body}`);
-  assert.ok(notes[0].body.includes('CHANGELOG.md: a release stamped the section this branch wrote into, so the loop moved its 1 added line(s) under the current ## Unreleased'),
-    notes[0].body);
-  assert.strictEqual(fsReal.readFileSync(pathReal.join(repo.dir, 'CHANGELOG.md'), 'utf8'), EXPECT);
-});
-
 test('an already-merged branch is reported, not announced as a merge that happened', async () => {
   // `--no-ff` on a contained branch prints "Already up to date", exits 0 and
   // creates NO commit. An implementation reading the exit code alone announces
