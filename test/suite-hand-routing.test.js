@@ -171,7 +171,7 @@ test('host: an unknown result is passed on as unknown with the runner name', asy
   assert.deepStrictEqual(await f.done, { run: 'remote', runner: 'runner-1', unknown: 'runner unreachable' });
 });
 
-function execFixture(t, bin, { client = null, team = null, peers = null, desk = null } = {}) {
+function execFixture(t, bin, { client = null, team = null, peers = null, desk = null, payload = '{}' } = {}) {
   const { createSessionManager } = require('../session-manager');
   const { isFilenameToken, parseAndValidate } = require('../exec-schema');
   const REGISTRY_DIR = mkTmpRoot('suite-route-exec-');
@@ -180,7 +180,7 @@ function execFixture(t, bin, { client = null, team = null, peers = null, desk = 
   fs.writeFileSync(path.join(execDir, 'cmd.json'), JSON.stringify({
     argv: ['/usr/bin/env', 'node', `\${CLODEX_BIN}/${bin}`],
     timeoutMs: 5000, maxBytes: 4096, replyStderr: true,
-    schema: { type: 'object', additionalProperties: false, properties: { scope: { type: 'string' } } },
+    schema: { type: 'object', additionalProperties: false, properties: { scope: { type: 'string' }, local: { type: 'boolean' } } },
   }));
   const spawned = [];
   const children = [];
@@ -216,7 +216,7 @@ function execFixture(t, bin, { client = null, team = null, peers = null, desk = 
     for (const c of children) c.emit('close', 0, null);
     mock.timers.reset();
   });
-  m._handleExecIntent({ name: 'hand-1', agentType: 'claude', workspaceId: 'ws1', cwd: '/x' }, 'cmd', '{}');
+  m._handleExecIntent({ name: 'hand-1', agentType: 'claude', workspaceId: 'ws1', cwd: '/x' }, 'cmd', payload);
   return { spawned, children, broadcasts };
 }
 
@@ -972,6 +972,35 @@ test('t2418: a team runMs moves the exec ceiling of clodex-run-tests by runMs mi
   mock.timers.tick(5000);
   assert.deepStrictEqual(child.kills, [], 'not killed at the def ceiling');
   mock.timers.tick(28 * 60 * 1000 - 1);
+  assert.deepStrictEqual(child.kills, []);
+  mock.timers.tick(1);
+  assert.deepStrictEqual(child.kills, ['SIGKILL']);
+});
+
+test('t2418: a team setup.timeoutMs of 30 min widens the hand run budget to runMs plus 32 min and the exec ceiling by 34 min', async (t) => {
+  const client = stubClient({ hang: true });
+  const setup = { run: 'npm ci', key: ['package-lock.json'], paths: ['node_modules'], timeoutMs: 1800000 };
+  const team = { ...teamWith('all'), testRunner: { peer: 'runner-1', hands: 'all', runMs: 30 * 60 * 1000, setup }, root: fs.realpathSync(mkTmpRoot('suite-route-tree-')) };
+  const f = execFixture(t, 'clodex-run-tests.js', { client, team });
+  await turns(2);
+  const child = f.children[0];
+  child.emit('message', ask(team.root));
+  await turns();
+  assert.strictEqual(client.runs.length, 1, 'ENTER: the job is in flight');
+  assert.deepStrictEqual([client.runs[0].timeoutMs, client.runs[0].runBudgetMs, client.runs[0].budgetMs], [1800000, 3720000, 4620000]);
+  mock.timers.tick(5000 + 43 * 60 * 1000 - 1);
+  assert.deepStrictEqual(child.kills, []);
+  mock.timers.tick(1);
+  assert.deepStrictEqual(child.kills, ['SIGKILL']);
+});
+
+test('t2418: a clodex-run-tests call with local:true keeps the def ceiling, with no hand slack', async (t) => {
+  const team = { ...teamWith('all'), testRunner: { peer: 'runner-1', hands: 'all', runMs: 30 * 60 * 1000 }, root: fs.realpathSync(mkTmpRoot('suite-route-tree-')) };
+  const f = execFixture(t, 'clodex-run-tests.js', { client: stubClient({ hang: true }), team, payload: '{"local":true}' });
+  await turns(2);
+  const child = f.children[0];
+  assert.ok(child, 'ENTER: the exec spawned');
+  mock.timers.tick(5000 - 1);
   assert.deepStrictEqual(child.kills, []);
   mock.timers.tick(1);
   assert.deepStrictEqual(child.kills, ['SIGKILL']);

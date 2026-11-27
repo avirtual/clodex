@@ -909,8 +909,10 @@ function agreement(a, b) {
 
 const HAND_QUEUE_MS = 15 * 60 * 1000;
 const HAND_RUN_MS = 21 * 60 * 1000;
-const HAND_RUN_SLACK_MS = 17 * 60 * 1000;
-const HAND_EXEC_SLACK_MS = HAND_RUN_SLACK_MS + 2 * 60 * 1000;
+const HAND_SETUP_MS = 15 * 60 * 1000;
+const HAND_KILL_MS = 2 * 60 * 1000;
+const handSlackMs = (tr) => Math.max((tr && tr.setup && tr.setup.timeoutMs) || 0, HAND_SETUP_MS) + HAND_KILL_MS;
+const handExecSlackMs = (tr) => handSlackMs(tr) + HAND_KILL_MS;
 const FLAG_KEYS = ['CLODEX_TEST_LOCK', 'CLODEX_TEST_SLOW_ADVISORY'];
 
 function route({ team = null, kind = 'hand', scope = 'full', local = false } = {}) {
@@ -1012,7 +1014,7 @@ function createChannelHost({
     const out = await client.run({
       peer: via.peer, wire, name, tree, kind: 'hand', scope: msg.scope, team: team.name, ticket, seat,
       files: msg.files || [], flags: msg.flags || {}, setup: tr.setup || null, env: { ...(tr.env || {}), ...(tr.handEnv || {}) },
-      queueBudgetMs, runBudgetMs: runMs + HAND_RUN_SLACK_MS, timeoutMs: runMs, budgetMs: queueBudgetMs + runMs + HAND_RUN_SLACK_MS, route: d.why,
+      queueBudgetMs, runBudgetMs: runMs + handSlackMs(tr), timeoutMs: runMs, budgetMs: queueBudgetMs + runMs + handSlackMs(tr), route: d.why,
       shouldStop: () => wantCancel,
       onSubmitted: ({ jobId }) => { inflight.jobId = jobId; fireCancel(); },
       onProgress: (line) => say({ progress: line }),
@@ -1046,4 +1048,4 @@ function createChannelHost({
   };
 }
 
-module.exports = { createSuiteClient, createChannelHost, route, lastTotals, localHalf, failingNames, agreement, boxVerdict, fallbackOf, FALLBACK_CODES, pickRunner, runnerLoad, HAND_QUEUE_MS, HAND_RUN_MS, HAND_RUN_SLACK_MS, HAND_EXEC_SLACK_MS, HUNG_RE, BUILD_BUDGET_MS, LOST_AFTER_MS };
+module.exports = { createSuiteClient, createChannelHost, route, lastTotals, localHalf, failingNames, agreement, boxVerdict, fallbackOf, FALLBACK_CODES, pickRunner, runnerLoad, HAND_QUEUE_MS, HAND_RUN_MS, handSlackMs, handExecSlackMs, HUNG_RE, BUILD_BUDGET_MS, LOST_AFTER_MS };
