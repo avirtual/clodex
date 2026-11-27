@@ -222,7 +222,7 @@ test('t2362: bare [agent:team runner] on a pool prints one line per member with 
     peers: [R1, R2], desk: ATTACHED, client,
   });
   assert.deepStrictEqual(await f.verb('[agent:team runner]'), [[
-    '[agent:team] test runner of team: 3 runners, hands full (hand runs use runner-1 only), gate on, run 21 min (default)',
+    '[agent:team] test runner of team: 3 runners, hands full (hand runs use runner-1 only), gate on, run 21 min (default), queue 15 min hands, 20 min gate (default)',
     'runner-1, wire push — reachable, suite capability, queue 2, env box linux/arm64 node v22 key k, slots 1/2 in use',
     'laptop, wire pull — attached, queue 0, env box linux/arm64 node v22 key k, slots 0/1 in use',
     'runner-2, wire push — online with the suite capability, but its info route failed: status 0',

@@ -1156,7 +1156,7 @@ test('t2425: with no queueMs the hand run options are exactly the 15 min queue o
     peer: 'p1', wire: 'push', name: 'runner-1', tree: team.root, kind: 'hand', scope: 'full', team: 'tm', ticket: null, seat: 'hand-1',
     files: [], flags: {}, setup: null, env: {},
     queueBudgetMs: 900000, runBudgetMs: 2280000, timeoutMs: 1260000, budgetMs: 3180000, route: 'hands:all',
-    shouldStop: 'function', onSubmitted: 'function', onProgress: 'function',
+    shouldStop: 'function', onSubmitted: 'function', onProgress: 'function', reroute: 'function', onReroute: 'function',
   });
 });
 
