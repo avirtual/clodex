@@ -1767,7 +1767,7 @@ test('liveTarget: the click point comes from the last look; a new occupant is a 
     (e) => e.code === 'COVERED' && e.message === '[5] "Pret crescator" is covered at its click point by [8] ⚠ "Delete account" (deletion) — read again, or click it with --confirm if the operator asked for it');
   assert.throws(() => liveTarget(5, el, null, 'x'), (e) => e.code === 'NO_ELEMENT' && e.message === R.TEXT.noElement('x', 5));
   assert.throws(() => liveTarget(5, el, { off: true }, 'x'), (e) => e.code === 'NO_ELEMENT' && e.message === '[5] "Pret crescator" scrolled out of view on x — read again');
-  assert.match(CHILD_SRC, /const pre = await preAct\(svc, op === 'click' \? n : null\);\n\s*const live = op === 'click' \|\| op === 'type' \? await livePoint\(svc, n, el\) : el;\n\s*if \(op === 'click'\) \{\n\s*const out = await clickWatched\(svc, n, live, nav, dir\);/);
+  assert.match(CHILD_SRC, /const pre = await preAct\(svc, op === 'click' \? n : null\);\n\s*const live = op === 'click' \|\| op === 'type' \? await livePoint\(svc, n, el\) : el;\n\s*if \(op === 'click'\) \{\n\s*const out = await clickWatched\(svc, n, live, nav, dir, args\.dir != null\);/);
   assert.ok(CHILD_SRC.includes('driver.click(wc, live);'));
   assert.strictEqual(CHILD_SRC.split('driver.click(wc, el)').length - 1, 2, 'clickWatched and viaClick receive the point from their caller');
 });
@@ -2860,9 +2860,9 @@ test('child: partition, numbers dir, downloads dir, cookie watch and download ro
   for (const s of ["path.join(data, 'numbers', profile)", 'watchCookies(profile, ses)', 'routerFor(profile, ses)']) assert.ok(CHILD_SRC.includes(s), s);
   assert.strictEqual(CHILD_SRC.split('path.join(downloadsRoot, profile').length - 1, 2);
   assert.ok(CHILD_SRC.includes("ses.on('will-download', (_e, item, from) => {"));
-  assert.ok(CHILD_SRC.includes('if (!w) w = waiters.find((x) => !x.url && x.wc && x.wc === from);\n'));
+  assert.ok(CHILD_SRC.includes('if (!w) w = waiters.find((x) => !x.url && x.wc && (x.wc === from || (x.popups && x.popups.has(from))));\n'));
   assert.ok(!CHILD_SRC.includes('waiters.find((x) => !x.url);'), 'no cross-tab URL-less fallback');
-  assert.deepStrictEqual(['.expect({ dir, wc, watch: true });', '.expect({ url, dir, nameHint, wc: svc.wc });', '.expect({ dir, nameHint, wc });'].map((x) => CHILD_SRC.split(x).length - 1), [1, 1, 1]);
+  assert.deepStrictEqual(['.expect({ dir, wc, watch: true, popups: svc.popupWcs });', '.expect({ url, dir, nameHint, wc: svc.wc });', '.expect({ dir, nameHint, wc, popups: svc.popupWcs });'].map((x) => CHILD_SRC.split(x).length - 1), [1, 1, 1]);
   assert.ok(CHILD_SRC.includes("const { NAME_RE, profileOf, tabOf } = require('./grammar');"));
 });
 

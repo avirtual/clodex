@@ -499,17 +499,25 @@ test('scheduler click --to: resolves inside the seat cwd, passes dir to the chil
   const h = harness({
     click: (a) => {
       fs.writeFileSync(path.join(a.dir, 'lista.pdf'), '%PDF-1.4');
-      return { ...DEFAULTS.click(), armMs: 5000, download: { file: path.join(a.dir, 'lista.pdf'), bytes: 8, mime: 'application/pdf', url: 'https://x/l.pdf' } };
+      return { ...DEFAULTS.click(), download: { file: path.join(a.dir, 'lista.pdf'), bytes: 8, mime: 'application/pdf', url: 'https://x/l.pdf' } };
     },
   }, { fsScope: () => ({ cwd }) });
   await h.run([['hand-a', '[agent:browser read utility]']]);
   const out = await h.run([['hand-a', '[agent:browser click utility 1 --to=bills]']]);
   assert.strictEqual(h.calls[1][2].dir, path.join(cwd, 'bills'));
   assert.deepStrictEqual(out, [['hand-a',
-    `[agent:browser] clicked utility [1] button "View" · same page · idle 1.2s · → download ${file} · 8 B · application/pdf · from https://x/l.pdf · download destination armed: ${path.join(cwd, 'bills')} for 5 s`]]);
+    `[agent:browser] clicked utility [1] button "View" · same page · idle 1.2s · → download ${file} · 8 B · application/pdf · from https://x/l.pdf`]]);
   assert.deepStrictEqual(await h.run([['hand-a', '[agent:browser click utility 1 --to=../escape]']]),
     [['hand-a', `[agent:browser] error: --to must name a folder inside your working directory (${cwd})`]]);
   assert.strictEqual(h.calls.length, 2);
+});
+
+test('scheduler click --to: a click the child left armed says the real arming rule', async () => {
+  const cwd = fs.realpathSync(mkTmpRoot('clodex-bp-sched-'));
+  const h = harness({ click: () => ({ ...DEFAULTS.click(), armed: true }) }, { fsScope: () => ({ cwd }) });
+  await h.run([['hand-a', '[agent:browser read utility]']]);
+  assert.deepStrictEqual(await h.run([['hand-a', '[agent:browser click utility 1 --to=bills]']]), [['hand-a',
+    `[agent:browser] clicked utility [1] button "View" · same page · idle 1.2s · download destination armed: ${path.join(cwd, 'bills')} until your next action here, at most 120 s`]]);
 });
 
 test('scheduler click --to: a download that lands outside the cwd is deleted and refused', async () => {

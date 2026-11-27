@@ -13,7 +13,7 @@ blocks a release.
 
 ## Unreleased
 
-- Browser pane: a download that is refused or lost is reported instead of vanishing, a download that finishes after the action's reply is announced to the agent that started it, and `--to` on a click says it is armed.
+- Browser pane: a download that is refused or lost is reported instead of vanishing, a download that finishes after the action's reply is announced to the agent that started it, and `--to` on a click stays armed until the download starts, your next action, or 120 s, and says so. A navigation the pane blocks right after an agent's action is reported to that agent.
 - Browser pane: buttons that share a label are listed with the row they belong to; the prompt names the batched browser tool for bulk work; the docs show quoted flag values.
 - clodexctl: `version` prints the client version even when the node cannot be reached.
 - Test runs: an `own` run on a branch that changes no test-relevant file runs nothing and says so, instead of running the whole suite.

@@ -6,7 +6,7 @@ const readline = require('node:readline');
 const driver = require('./driver');
 const scripts = require('./page-scripts');
 const lock = require('./lock');
-const { TEXT, downloadReason } = require('./replies');
+const { TEXT, downloadReason, downloadNotStarted, DOWNLOAD_ARM_MS } = require('./replies');
 const paths = require('./paths');
 const urlpolicy = require('./urlpolicy');
 const keys = require('./keys');
@@ -25,6 +25,7 @@ const ACT_IDLE_MS = 15000;
 const DOWNLOAD_START_MS = 30000;
 const DOWNLOAD_DONE_MS = 300000;
 const CLICK_DOWNLOAD_MS = 5000;
+const NAV_REPORT_MS = 10000;
 const SNAP_MS = 2000;
 const LATE_CHANGE_MS = 3000;
 const LATE_STEP_MS = 500;
@@ -462,14 +463,17 @@ function wireHost({ stdin, stdout, shutdown }) {
   };
 }
 
-function createDownloadRouter({ profile, ses, services, downloadsRoot, policyDenies, deniedError, send, render, actorOf = () => null }) {
+const realClock = { now: () => Date.now(), setTimeout: (fn, ms) => setTimeout(fn, ms), clearTimeout: (t) => clearTimeout(t) };
+
+function createDownloadRouter({ profile, ses, services, downloadsRoot, policyDenies, deniedError, send, render, actorOf = () => null, clock = realClock }) {
   const waiters = [];
   const reserved = new Set();
+  const acts = new Map();
   const r = { waiters };
   const drop = (w) => { const i = waiters.indexOf(w); if (i >= 0) waiters.splice(i, 1); };
-  r.expect = ({ url = null, dir, nameHint = null, wc = null, watch = false }) => {
+  r.expect = ({ url = null, dir, nameHint = null, wc = null, watch = false, popups = null }) => {
     const actor = actorOf(wc) || {};
-    const w = { url, dir, nameHint, wc, watch, item: null, service: actor.service || null, seat: actor.seat || null };
+    const w = { url, dir, nameHint, wc, watch, popups, item: null, service: actor.service || null, seat: actor.seat || null };
     w.started = new Promise((res) => { w.onStart = res; });
     w.done = new Promise((res, rej) => { w.resolve = res; w.reject = rej; });
     w.done.catch(() => {});
@@ -477,12 +481,40 @@ function createDownloadRouter({ profile, ses, services, downloadsRoot, policyDen
     waiters.push(w);
     return w;
   };
+  const disarm = (w, reason) => {
+    drop(w);
+    clock.clearTimeout(w.armTimer);
+    send({ event: 'download-disarmed', service: w.service, seat: w.seat, reason });
+  };
+  r.arm = (w, clickedAt) => {
+    if (!waiters.includes(w)) return false;
+    Object.assign(w, { abandoned: true, watch: true, armed: true });
+    w.armTimer = clock.setTimeout(() => { if (waiters.includes(w)) disarm(w, 'expired'); }, Math.max(0, clickedAt + DOWNLOAD_ARM_MS - clock.now()));
+    return true;
+  };
+  const armedOn = (service) => waiters.filter((x) => x.armed && x.service === service);
+  r.acting = (service, seat) => {
+    for (const w of armedOn(service)) disarm(w, w.seat === seat ? 'next' : 'other');
+    const a = { seat, end: null, told: false };
+    acts.set(service, a);
+    return () => { a.end = clock.now(); };
+  };
+  r.navBlocked = (service, url, reason) => {
+    const a = acts.get(service);
+    if (!a || !a.seat || a.told) return;
+    if (a.end != null && clock.now() - a.end > NAV_REPORT_MS && !armedOn(service).length) return;
+    a.told = true;
+    let scheme = 'unknown';
+    let host = '';
+    try { const u = new URL(url); scheme = u.protocol.replace(/:$/, ''); host = u.host; } catch {}
+    send({ event: 'nav-blocked', service, seat: a.seat, scheme, host, reason });
+  };
   ses.on('will-download', (_e, item, from) => {
     const chain = item.getURLChain();
     const url = (chain && chain[0]) || '';
     let w = waiters.find((x) => x.url && chain.some((u) => sameUrl(u, x.url)));
-    if (!w) w = waiters.find((x) => !x.url && x.wc && x.wc === from);
-    if (w) drop(w);
+    if (!w) w = waiters.find((x) => !x.url && x.wc && (x.wc === from || (x.popups && x.popups.has(from))));
+    if (w) { drop(w); clock.clearTimeout(w.armTimer); }
     const owner = services.get(profile) || [...services.values()].find((s) => profileOf(s.name) === profile);
     const service = (w && w.service) || (owner ? owner.name : profile);
     const lost = (reason, name) => send({ event: 'download-lost', service, seat: w ? w.seat : null, name: name || hostOf(url), reason });
@@ -746,7 +778,7 @@ function run(electron, ctx) {
     const svc = {
       name, win, view, wc, ses, doc: 0, busy: 0, reading: 0, lock: lock.reduce(lock.initial(), { type: 'open' }),
       lastInput: 0, popup: false, popupUrl: null, downloading: false, pendingNav: false, flash: null, watch: null, navAt: Date.now(),
-      policy: null, barMsg: null, lastDenied: null, blockedNav: null, openedBy: null,
+      policy: null, barMsg: null, lastDenied: null, blockedNav: null, openedBy: null, popupWcs: new Set(),
       origins: new Map(), num: null, agentNav: false, opNav: false, lastHref: '', numDir: path.join(data, 'numbers', profile), dirty: new Set(), saveTimer: null,
       blank: wc.loadURL('about:blank').catch(() => {}),
     };
@@ -789,14 +821,17 @@ function run(electron, ctx) {
       svc.lastHref = href;
       if (svc.busy === 0) operatorNav(svc, true);
     });
+    const refused = (url, reason) => routerFor(profile, ses).navBlocked(name, url, reason);
     const block = (e, url) => {
       const target = (e && e.url) || url;
-      if (!allowedNav(target)) { e.preventDefault(); return; }
+      if (!allowedNav(target)) { e.preventDefault(); refused(target, 'scheme'); return; }
       const hit = policyDenies(svc, target, 'page');
-      if (hit) { svc.blockedNav = { url: target, hit }; e.preventDefault(); }
+      if (hit) { svc.blockedNav = { url: target, hit }; e.preventDefault(); refused(target, 'policy'); }
     };
     const popupOpts = { webPreferences: { session: ses, sandbox: true, contextIsolation: true, nodeIntegration: false } };
     const guardPopup = (pwc) => {
+      svc.popupWcs.add(pwc);
+      pwc.once('destroyed', () => svc.popupWcs.delete(pwc));
       for (const ev of ['will-navigate', 'will-frame-navigate', 'will-redirect']) pwc.on(ev, block);
       pwc.setWindowOpenHandler(({ url }) => (policyDenies(svc, url, 'page') ? { action: 'deny' } : { action: 'allow', overrideBrowserWindowOptions: popupOpts }));
       pwc.on('did-create-window', (w) => guardPopup(w.webContents));
@@ -806,10 +841,10 @@ function run(electron, ctx) {
     wc.on('will-redirect', block);
     wc.on('did-create-window', (w) => guardPopup(w.webContents));
     wc.setWindowOpenHandler(({ url }) => {
-      if (policyDenies(svc, url, 'page')) return { action: 'deny' };
+      if (policyDenies(svc, url, 'page')) { refused(url, 'policy'); return { action: 'deny' }; }
       if (svc.lock.state === 'driving') {
         if (svc.downloading) { if (allowedNav(url)) svc.popupUrl = url; return { action: 'deny' }; }
-        if (allowedNav(url)) { svc.popup = true; svc.popupUrl = url; wc.loadURL(url).catch(() => {}); }
+        if (allowedNav(url)) { svc.popup = true; svc.popupUrl = url; wc.loadURL(url).catch(() => {}); } else refused(url, 'scheme');
         return { action: 'deny' };
       }
       return { action: 'allow', overrideBrowserWindowOptions: popupOpts };
@@ -886,6 +921,7 @@ function run(electron, ctx) {
     const seat = frame.seat || null;
     if (svc.lock.state === 'held') throw heldError(svc);
     svc.actor = seat;
+    const acted = routerFor(profileOf(svc.name), svc.ses).acting(svc.name, seat);
     svc.busy += 1;
     blockerSync();
     svc.popup = false;
@@ -927,6 +963,7 @@ function run(electron, ctx) {
       if (!takeover && svc.lock.state === 'held') result.held = { reason: svc.lock.reason, login, url: result.url };
       return result;
     } finally {
+      acted();
       svc.busy -= 1;
       blockerSync();
     }
@@ -1043,7 +1080,7 @@ function run(electron, ctx) {
       const pre = await preAct(svc, op === 'click' ? n : null);
       const live = op === 'click' || op === 'type' ? await livePoint(svc, n, el) : el;
       if (op === 'click') {
-        const out = await clickWatched(svc, n, live, nav, dir);
+        const out = await clickWatched(svc, n, live, nav, dir, args.dir != null);
         if (fresh) out.fresh = true;
         if (byName) out.byName = true;
         if (clickOnly) out.clickOnly = true;
@@ -1213,9 +1250,11 @@ function run(electron, ctx) {
     return { n: found.hits[0].n, fresh: !!found.hits[0].fresh, byName: !!found.byName, clickOnly: !!found.clickOnly };
   }
 
-  async function clickWatched(svc, n, el, nav, dir) {
+  async function clickWatched(svc, n, el, nav, dir, armable) {
     const wc = svc.wc;
-    const w = routerFor(profileOf(svc.name), svc.ses).expect({ dir, wc, watch: true });
+    const router = routerFor(profileOf(svc.name), svc.ses);
+    const w = router.expect({ dir, wc, watch: true, popups: svc.popupWcs });
+    const clickedAt = Date.now();
     let began = false;
     let pdf = false;
     let acting = true;
@@ -1230,7 +1269,7 @@ function run(electron, ctx) {
       const { idle } = await act(wc, () => driver.click(wc, el), { ...actOpts(svc), shouldStop: () => svc.lock.takeover || began || pdf })
         .finally(() => { acting = false; });
       await watchPdf;
-      const out = { n, kind: el.kind, label: el.label, idle: idleOf(idle), armMs: CLICK_DOWNLOAD_MS };
+      const out = { n, kind: el.kind, label: el.label, idle: idleOf(idle) };
       const deadline = Date.now() + CLICK_DOWNLOAD_MS;
       if (began) out.download = await settleDownload(w, deadline);
       else if (svc.popupUrl && await inMain(wc, scripts.CONTENT_TYPE) === 'application/pdf') {
@@ -1245,10 +1284,11 @@ function run(electron, ctx) {
         }
       }
       if (!out.download) delete out.download;
+      if (armable && !out.download && router.arm(w, clickedAt)) out.armed = true;
       return Object.assign(out, nav(!!out.download));
     } finally {
       w.abandoned = true;
-      w.cancel();
+      if (!w.armed) w.cancel();
     }
   }
 
@@ -1282,7 +1322,8 @@ function run(electron, ctx) {
 
   async function viaClick(svc, n, el, dir, nameHint) {
     const wc = svc.wc;
-    const w = routerFor(profileOf(svc.name), svc.ses).expect({ dir, nameHint, wc });
+    const router = routerFor(profileOf(svc.name), svc.ses);
+    const w = router.expect({ dir, nameHint, wc, popups: svc.popupWcs });
     const t0 = Date.now();
     svc.popupUrl = null;
     try {
@@ -1293,17 +1334,18 @@ function run(electron, ctx) {
         if (svc.popupUrl || Date.now() - t0 >= DOWNLOAD_START_MS) break;
         if (await inMain(wc, scripts.CONTENT_TYPE) === 'application/pdf') break;
       }
-      w.cancel();
-      if (await inMain(wc, scripts.CONTENT_TYPE) === 'application/pdf') {
+      const isPdf = await inMain(wc, scripts.CONTENT_TYPE) === 'application/pdf';
+      if (isPdf || svc.popupUrl) {
+        w.cancel();
+        if (!isPdf) return await viaUrl(svc, svc.popupUrl, dir, nameHint);
         const out = await viaUrl(svc, wc.getURL(), dir, nameHint);
         if (wc.navigationHistory && wc.navigationHistory.canGoBack()) wc.navigationHistory.goBack();
         return out;
       }
-      if (svc.popupUrl) return await viaUrl(svc, svc.popupUrl, dir, nameHint);
-      throw codedError('DOWNLOAD_TIMEOUT',
-        `nothing downloaded within 30s after clicking [${n}] — read ${svc.name} to see what happened, or download its URL`);
+      if (!router.arm(w, t0)) return await w.done;
+      throw codedError('DOWNLOAD_TIMEOUT', downloadNotStarted(n, svc.name));
     } finally {
-      w.cancel();
+      if (!w.armed) w.cancel();
     }
   }
 

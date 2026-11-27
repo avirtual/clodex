@@ -106,9 +106,24 @@ such as `ebloc:riot` gets its own `downloads/ebloc:riot/`), while a click's
 download and a download the page or the operator starts save under
 `downloads/<profile>/` (`downloads/ebloc/` for every `ebloc` tab).
 
-`click <n> --to=<folder>` replies `download destination armed: <folder> for 5 s`:
-a download the click starts within that window after the click settles lands
-there. A saved file's reply names the final path and says `name from server`
+`click <n> --to=<folder>` with no download yet replies `download destination
+armed: <folder> until your next action here, at most 120 s`: the first download
+the service's page or one of its popups starts in that window lands there and is
+announced once with `download finished → <path>`. If none starts, the agent gets
+one line: `no download started within 120 s of your click; destination
+disarmed`, or, inside its next action's reply, `no download started after your
+click; destination disarmed by your next action`. `download <n>` waits 30 s for
+the click's download to start; past that it replies `nothing downloaded within
+30s after clicking [<n>]; the destination stays armed until your next action
+here, at most 120 s`, under the same rule. Outside an armed window a download
+the page starts goes to the default folder above.
+
+A navigation the pane refuses (anything but http, https and about:blank, such
+as a `blob:` frame, or a denylist match) during an agent's action, within 10 s
+after it, or while a click is armed is reported to that agent once per action:
+`navigation blocked after your action: <scheme>://<host> — <reason>` (host
+only; `blob: — not allowed as a navigation` for a blob). `blob:` navigations
+stay blocked. A saved file's reply names the final path and says `name from server`
 when no `--as` named it; an `application/octet-stream` type is read from the
 file's extension. A download that is refused or lost (URL policy, unwritable
 folder, interrupted, too large, too slow) is reported as `download not saved:

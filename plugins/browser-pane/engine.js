@@ -152,7 +152,7 @@ function activate(host) {
       else if (frame.event === 'window-closed') { notified.delete(frame.service); live.delete(frame.service); scheduler.onClosed(frame.service); }
       else if (frame.event === 'visibility') { const v = live.get(frame.service); if (v) v.visible = !!frame.visible; }
       else if (frame.event === 'operator-download' && host.log) host.log.info(`operator download on ${frame.service}: ${frame.file}`);
-      else if (frame.event === 'download-lost' || frame.event === 'download-late') scheduler.onDownload(frame);
+      else if (['download-lost', 'download-late', 'download-disarmed', 'nav-blocked'].includes(frame.event)) scheduler.onDownload(frame);
       else if (frame.event === 'operator-nav') onOperatorNav(frame);
       else if (frame.event === 'denied') {
         denials.set(frame.service, (denials.get(frame.service) || 0) + 1);

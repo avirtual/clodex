@@ -78,6 +78,8 @@ const DOWNLOAD_OP_MS = 450000;
 const SCREENSHOT_OP_MS = 30000;
 const N_ACTS = new Set(['click', 'type', 'select']);
 const DOWNLOAD_SUBS = new Set(['click', 'type', 'select', 'key', 'download']);
+const ACT_SUBS = new Set([...DOWNLOAD_SUBS, 'scroll', 'back', 'forward']);
+const AFTER_ACT = new Set(['download-disarmed', 'nav-blocked']);
 const HELD_OK = new Set(['wait', 'release']);
 const heldOk = (s, sub) => HELD_OK.has(sub) || (sub === 'close' && s.reason !== 'takeover');
 const realTimers = {
@@ -400,7 +402,7 @@ function createScheduler({
     if (root && d && d.file && !d.failed) keepInside(root, d.bytes == null ? path.dirname(d.file) : d.file);
     if (r.held && !r.takeover) signin(service, r);
     const text = replies.actReply(cmd.sub, service, cmd, withNotes(handle, service, r));
-    return root && r.armMs != null ? text + replies.armedTail(args.dir, r.armMs) : text;
+    return root && r.armed ? text + replies.armedTail(args.dir) : text;
   }
 
   async function runScroll(handle, service, cmd) {
@@ -473,10 +475,10 @@ function createScheduler({
 
   const heldSibling = (service, sub) => sub === 'close' && !tabOf(service) && [...services.entries()].find(([n, t]) => profileOf(n) === service && t.state === 'held' && !heldOk(t, 'close'));
 
-  const pendingFor = (seat) => (j) => !!j && j.handle.name === seat && DOWNLOAD_SUBS.has(j.cmd.sub);
+  const pendingFor = (seat, subs = DOWNLOAD_SUBS) => (j) => !!j && j.handle.name === seat && subs.has(j.cmd.sub);
 
   function withDownloads(s, job, text) {
-    if (!DOWNLOAD_SUBS.has(job.cmd.sub)) return text;
+    if (!ACT_SUBS.has(job.cmd.sub)) return text;
     const mine = s.notes.filter((x) => x.seat === job.handle.name);
     if (!mine.length) return text;
     s.notes = s.notes.filter((x) => x.seat !== job.handle.name);
@@ -492,14 +494,19 @@ function createScheduler({
   }
 
   function onDownload(frame) {
-    if (frame.event !== 'download-lost' && frame.event !== 'download-late') return;
+    const after = AFTER_ACT.has(frame.event);
+    if (frame.event !== 'download-lost' && frame.event !== 'download-late' && !after) return;
+    if (after && frame.seat == null) return;
     const service = String(frame.service || '');
-    const line = frame.event === 'download-late' ? replies.downloadFinished(frame) : replies.downloadLost(frame.name, frame.reason);
+    const line = frame.event === 'download-late' ? replies.downloadFinished(frame)
+      : frame.event === 'download-disarmed' ? replies.downloadDisarmed(frame.reason)
+        : frame.event === 'nav-blocked' ? replies.navBlocked(frame.scheme, frame.host, frame.reason)
+          : replies.downloadLost(frame.name, frame.reason);
     const seat = frame.seat != null ? String(frame.seat) : lastActor(service);
     const handle = seat ? handles.get(seat) : null;
     if (!handle) return;
     const near = [services.get(service), ...[...services.entries()].filter(([n]) => n !== service && profileOf(n) === profileOf(service)).map(([, s]) => s)];
-    const s = near.find((x) => x && pendingFor(seat)(x.inflight));
+    const s = near.find((x) => x && pendingFor(seat, after ? ACT_SUBS : DOWNLOAD_SUBS)(x.inflight));
     if (s) s.notes.push({ seat, line });
     else handle.inject(`${replies.PREFIX} ${line}`);
   }
