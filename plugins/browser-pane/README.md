@@ -129,7 +129,13 @@ file's extension. A download that is refused or lost (URL policy, unwritable
 folder, interrupted, too large, too slow) is reported as `download not saved:
 <file name or host> — <reason>` to the agent that last acted on the service,
 inside its pending act or download reply if one is still open, otherwise as a
-follow-up line. A click's download that finishes after the click replied
+follow-up line. Downloads are capped at 500 MB: a file that declares a larger
+size is refused at once (`larger than 500 MB: 612 MB declared from
+https://<origin>`), and one with no declared size is stopped and its partial file
+deleted once it passes the cap (`… 501 MB received from https://<origin> with no
+size declared`); the `download` verb answers with the same text. These notices
+and the navigation-blocked, late-download and disarm lines are also written to
+the host log (`~/.clodex/clodex.log`) with the service name. A click's download that finishes after the click replied
 `still downloading` is announced to that agent once: `[agent:browser] download
 finished → <path> (<size>, <type>)`. A download started by hand is not announced.
 

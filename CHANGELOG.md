@@ -13,6 +13,9 @@ blocks a release.
 
 ## Unreleased
 
+- Browser pane: a download larger than the 500 MB limit is now reported to the agent with its size instead of vanishing, and no longer leaves the service unresponsive.
+- Browser pane: a static progress meter on a page no longer makes every read say the page is still loading.
+
 ## 5.211.0 — 2026-11-27
 
 - Team tickets: a verify held because the test runner was busy now retries by itself when the runner has a free slot, and `queue:` also sets how long a deciding run waits.
