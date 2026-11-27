@@ -176,10 +176,12 @@ function downloadTarget(cmd) {
   return 'current page';
 }
 
+const MB = 1024 * 1024;
+const DOWNLOAD_MAX_BYTES = 500 * MB;
 const DOWNLOAD_REASONS = {
   policy: 'refused by URL policy',
   unwritable: 'download folder not writable',
-  'too-large': 'larger than 500 MB',
+  'too-large': `larger than ${DOWNLOAD_MAX_BYTES / MB} MB`,
   timeout: 'not finished after 300s',
   cancelled: 'cancelled',
   interrupted: 'interrupted',
@@ -221,12 +223,29 @@ function typeOf(mime, file) {
   return TYPE_BY_EXT[path.extname(String(file || '')).slice(1).toLowerCase()] || m || 'unknown type';
 }
 
-function downloadReason(reason) {
-  return Object.hasOwn(DOWNLOAD_REASONS, reason) ? DOWNLOAD_REASONS[reason] : DOWNLOAD_REASONS.interrupted;
+function originLabel(url) {
+  try {
+    const o = new URL(String(url || '')).origin;
+    return o && o !== 'null' ? safeName(o) : '';
+  } catch { return ''; }
 }
 
-function downloadLost(name, reason) {
-  return `download not saved: ${safeName(name) || 'download'} — ${downloadReason(reason)}`;
+function tooLargeFacts(d) {
+  const bytes = Number(d && d.bytes);
+  if (!Number.isFinite(bytes) || bytes <= 0) return '';
+  const size = `${Math.round(bytes / MB).toLocaleString('en-US')} MB`;
+  const from = originLabel(d.origin);
+  const source = from ? ` from ${from}` : '';
+  return d.declared ? `: ${size} declared${source}` : `: ${size} received${source} with no size declared`;
+}
+
+function downloadReason(reason, d = null) {
+  const text = Object.hasOwn(DOWNLOAD_REASONS, reason) ? DOWNLOAD_REASONS[reason] : DOWNLOAD_REASONS.interrupted;
+  return reason === 'too-large' ? text + tooLargeFacts(d) : text;
+}
+
+function downloadLost(name, reason, d = null) {
+  return `download not saved: ${safeName(name) || 'download'} — ${downloadReason(reason, d)}`;
 }
 
 function downloadFinished(d) {
@@ -758,7 +777,7 @@ module.exports = {
   closedReply,
   classifyReply,
   oneLine, reply, errorReply, openReply, readReply, servicesReply, writeReplyFile, snapshotId, SNAP_RE, SNAP_MAX_AGE_MS, SNAP_TMP_MAX_AGE_MS, replyDir, snapshotDir, pruneSnapshots, pruneAllSnapshots, loginState, stamp,
-  downloadReply, screenshotReply, inspectReply, downloadLost, downloadFinished, downloadReason, armedTail, downloadDisarmed, navBlocked, downloadNotStarted, DOWNLOAD_ARM_MS, safeName, typeOf, DOWNLOAD_REASONS,
+  downloadReply, screenshotReply, inspectReply, downloadLost, downloadFinished, downloadReason, DOWNLOAD_MAX_BYTES, armedTail, downloadDisarmed, navBlocked, downloadNotStarted, DOWNLOAD_ARM_MS, safeName, typeOf, DOWNLOAD_REASONS,
   PREFIX, REPLY_MAX, SEAT_RE, TEXT, ago, signinReply, signinNotice, dropSuffix, droppedReply, actReply, scrollReply, navReply, waitReply, handbackReply, heldTimeout, isGoogle,
   handover, INSTRUCTION_MAX, operatorNav,
 };

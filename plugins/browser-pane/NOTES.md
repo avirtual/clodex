@@ -190,6 +190,12 @@ A download with no waiter is the operator's: it lands in the service's default
 folder with no dialog. `setSavePath` must be called synchronously in the handler
 or Electron shows a save dialog.
 
+Electron 43 fires `done` synchronously inside `item.cancel()`, so `once('done')`
+is attached before any cancel, and every refusal (`stopWith`: too large, timeout)
+rejects the waiter and sends `download-lost` itself, before `cancel()`, instead
+of relying on `done`: a waiter whose `w.done` never settles holds the service's
+`serial` chain, and every later op on it times out. The cap is `DOWNLOAD_MAX_BYTES` in replies.js (the refusal text quotes it).
+
 ## child.js — opScreenshot
 
 `capturePage` can return an empty image when the window is hidden or minimized;
@@ -293,7 +299,10 @@ e-bloc pages (600–700 tok) and filtered reads (100–250 tok) fit the 1k defau
 on. A read is loading when `wc.isLoading()` or a non-skipped request has been in
 flight over `LOADING_INFLIGHT_MS` (300 ms). `READ_TEXT` also counts visible
 `BUSY_SEL` elements (`.loading`, spinners, `aria-busy`); either signal marks the
-reply `still loading`.
+reply `still loading`. A `role=progressbar` with `aria-valuenow` (a storage-quota
+meter) counts only when animated or under `aria-busy=true`; one without
+`aria-valuenow` (indeterminate) always counts. The action idle rules in driver.js
+don't use this scan.
 
 ## page-scripts.js — DEEP (vis)
 

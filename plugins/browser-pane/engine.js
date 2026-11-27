@@ -44,6 +44,15 @@ function idleStopNotice(idleMs, closed) {
   };
 }
 
+function noticeLogLine(frame) {
+  const on = `on ${frame.service}`;
+  if (frame.event === 'download-lost') return `download not saved ${on}: ${replies.downloadLost(frame.name, frame.reason, frame).replace(/^download not saved: /, '')}`;
+  if (frame.event === 'download-late') return `late download ${on}: ${frame.file}`;
+  if (frame.event === 'download-disarmed') return `download destination disarmed ${on}: ${replies.downloadDisarmed(frame.reason)}`;
+  if (frame.event === 'nav-blocked') return `navigation blocked ${on}: ${replies.navBlocked(frame.scheme, frame.host, frame.reason).replace(/^navigation blocked after your action: /, '')}`;
+  return null;
+}
+
 function removeUnder(rootDir, name, dir = path.join(rootDir, name)) {
   if (!fs.existsSync(dir)) return false;
   const real = fs.realpathSync(dir);
@@ -152,7 +161,10 @@ function activate(host) {
       else if (frame.event === 'window-closed') { notified.delete(frame.service); live.delete(frame.service); scheduler.onClosed(frame.service); }
       else if (frame.event === 'visibility') { const v = live.get(frame.service); if (v) v.visible = !!frame.visible; }
       else if (frame.event === 'operator-download' && host.log) host.log.info(`operator download on ${frame.service}: ${frame.file}`);
-      else if (['download-lost', 'download-late', 'download-disarmed', 'nav-blocked'].includes(frame.event)) scheduler.onDownload(frame);
+      else if (['download-lost', 'download-late', 'download-disarmed', 'nav-blocked'].includes(frame.event)) {
+        if (host.log) host.log.info(noticeLogLine(frame));
+        scheduler.onDownload(frame);
+      }
       else if (frame.event === 'operator-nav') onOperatorNav(frame);
       else if (frame.event === 'denied') {
         denials.set(frame.service, (denials.get(frame.service) || 0) + 1);
@@ -426,4 +438,4 @@ function deactivate() {
   client.dispose();
 }
 
-module.exports = { activate, deactivate, handOver, idleStopNotice, PROMPT_LINES, removePartition, createNavNotifier, OPERATOR_NAV_MS };
+module.exports = { activate, deactivate, handOver, idleStopNotice, noticeLogLine, PROMPT_LINES, removePartition, createNavNotifier, OPERATOR_NAV_MS };

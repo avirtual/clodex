@@ -6,7 +6,7 @@ const readline = require('node:readline');
 const driver = require('./driver');
 const scripts = require('./page-scripts');
 const lock = require('./lock');
-const { TEXT, downloadReason, downloadNotStarted, DOWNLOAD_ARM_MS } = require('./replies');
+const { TEXT, downloadReason, downloadNotStarted, DOWNLOAD_ARM_MS, DOWNLOAD_MAX_BYTES } = require('./replies');
 const paths = require('./paths');
 const urlpolicy = require('./urlpolicy');
 const keys = require('./keys');
@@ -40,7 +40,6 @@ const HMS = /\b\d{1,2}\s?:\s?\d{2}\s?:\s?\d{2}\b/g;
 const CLASS_NOISE = /focus|hover|ripple/i;
 const LOADING_INFLIGHT_MS = 300;
 const CLICKISH = ['click', 'mousedown', 'pointerdown', 'mouseup'];
-const DOWNLOAD_MAX_BYTES = 500 * 1024 * 1024;
 const FLASH_MS = 4000;
 const BAR_MSG_MS = 5000;
 const DENY_DEDUPE_MS = 1000;
@@ -517,7 +516,7 @@ function createDownloadRouter({ profile, ses, services, downloadsRoot, policyDen
     if (w) { drop(w); clock.clearTimeout(w.armTimer); }
     const owner = services.get(profile) || [...services.values()].find((s) => profileOf(s.name) === profile);
     const service = (w && w.service) || (owner ? owner.name : profile);
-    const lost = (reason, name) => send({ event: 'download-lost', service, seat: w ? w.seat : null, name: name || hostOf(url), reason });
+    const lost = (reason, name, facts = {}) => send({ event: 'download-lost', service, seat: w ? w.seat : null, name: name || hostOf(url), reason, ...facts });
     const hit = owner ? (chain || []).reduce((h, u) => h || policyDenies(owner, u, w ? 'agent' : 'page'), null) : null;
     if (hit) {
       item.cancel();
@@ -541,18 +540,32 @@ function createDownloadRouter({ profile, ses, services, downloadsRoot, policyDen
     item.setSavePath(file);
     reserved.add(file);
     let why = null;
-    const stopWith = (reason) => { if (!why) { why = reason; item.cancel(); } };
-    if (item.getTotalBytes() > DOWNLOAD_MAX_BYTES) stopWith('too-large');
-    const timer = setTimeout(() => stopWith('timeout'), DOWNLOAD_DONE_MS);
-    item.on('updated', () => { if (item.getReceivedBytes() > DOWNLOAD_MAX_BYTES) stopWith('too-large'); });
-    if (w) w.onStart(item);
+    let timer = null;
+    const fail = (reason, facts = {}) => {
+      clock.clearTimeout(timer);
+      reserved.delete(file);
+      try { fs.unlinkSync(file); } catch {}
+      if (w) w.reject(codedError('DOWNLOAD_FAILED', `DOWNLOAD_FAILED: ${downloadReason(reason, facts)}`));
+      if (!w || w.abandoned) lost(reason, (reason === 'too-large' && item.getFilename()) || path.basename(file), facts);
+    };
+    const stopWith = (reason, facts) => {
+      if (why) return;
+      why = reason;
+      fail(reason, facts);
+      item.cancel();
+    };
+    const lastUrl = (chain && chain[chain.length - 1]) || url;
+    const tooLarge = (bytes, declared) => stopWith('too-large', { bytes, declared, origin: originOf(lastUrl) });
     item.once('done', (_ev, state) => {
-      clearTimeout(timer);
+      if (why) {
+        try { fs.unlinkSync(file); } catch {}
+        return;
+      }
+      clock.clearTimeout(timer);
       reserved.delete(file);
       if (state !== 'completed') {
-        try { fs.unlinkSync(file); } catch {}
-        if (w) w.reject(codedError('DOWNLOAD_FAILED', `DOWNLOAD_FAILED: ${why ? downloadReason(why) : state}`));
-        if (!w || w.abandoned) lost(why || state, path.basename(file));
+        why = state;
+        fail(state);
         return;
       }
       let bytes = 0;
@@ -572,8 +585,26 @@ function createDownloadRouter({ profile, ses, services, downloadsRoot, policyDen
         setTimeout(() => render(svc), FLASH_MS + 50);
       }
     });
+    if (w) w.onStart(item);
+    const total = item.getTotalBytes();
+    if (total > DOWNLOAD_MAX_BYTES) { tooLarge(total, true); return; }
+    timer = clock.setTimeout(() => stopWith('timeout'), DOWNLOAD_DONE_MS);
+    item.on('updated', () => {
+      const got = item.getReceivedBytes();
+      if (got > DOWNLOAD_MAX_BYTES) tooLarge(got, total > 0);
+    });
   });
   return r;
+}
+
+function serialQueue() {
+  const chains = new Map();
+  return function serial(name, fn) {
+    const prev = chains.get(name) || Promise.resolve();
+    const next = prev.then(fn, fn);
+    chains.set(name, next.catch(() => {}));
+    return next;
+  };
 }
 
 function run(electron, ctx) {
@@ -601,7 +632,7 @@ function run(electron, ctx) {
   const opened = new Set();
   const shut = new Map();
   let known = [];
-  const chains = new Map();
+  const serial = serialQueue();
   const partitions = new Set();
   const routers = new Map();
   let blockerId = null;
@@ -1671,13 +1702,6 @@ function run(electron, ctx) {
     return { active: svc.wc.isLoading() || inflight > 0, inflight, background: w && w.background ? w.background() : 0, ms: Date.now() - since };
   }
 
-  function serial(name, fn) {
-    const prev = chains.get(name) || Promise.resolve();
-    const next = prev.then(fn, fn);
-    chains.set(name, next.catch(() => {}));
-    return next;
-  }
-
   function shutdown() {
     if (shuttingDown) return;
     shuttingDown = true;
@@ -1767,6 +1791,6 @@ function run(electron, ctx) {
 }
 
 module.exports = {
-  run, createDownloadRouter, keepOrFold, settleDownload, scrollCode, checkOpenUrl, wireHost, numberVerdict, inspectKind, retiredOf,
+  run, createDownloadRouter, serialQueue, keepOrFold, settleDownload, scrollCode, checkOpenUrl, wireHost, numberVerdict, inspectKind, retiredOf,
   signinOf, framesOf, challenged, numState, mergeNumbers, numberRefusal, notOpenError, loadNumbers, saveNumbers, pruneNumbers, flushNumbers, forgetNumbers, numbersFile, originSlug, genRefusal, NUMBERS_SCHEMA, changedOf, rowChanged, coveredRefusal, liveTarget, consequentialRefusal, passwordRefusal, enterRefusal, signinHold, lateMsFor, navOf, tickersOf, targetDiff, settleChange, LATE_CHANGE_MS, ORIGINS_MAX,
 };

@@ -14,6 +14,8 @@ blocks a release.
 ## Unreleased
 
 - Test runners: a job's record now lists every pool member that was considered and why each was not chosen, from the moment the job starts.
+- Browser pane: a download larger than the 500 MB limit is now reported to the agent with its size instead of vanishing, and no longer leaves the service unresponsive.
+- Browser pane: a static progress meter on a page no longer makes every read say the page is still loading.
 
 ## 5.211.0 — 2026-11-27
 

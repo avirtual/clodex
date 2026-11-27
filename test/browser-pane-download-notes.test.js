@@ -6,7 +6,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { EventEmitter } = require('node:events');
 const { mkTmpRoot } = require('./lib/tmp-roots');
-const { createDownloadRouter } = require('../plugins/browser-pane/child');
+const { createDownloadRouter, serialQueue } = require('../plugins/browser-pane/child');
 const { createScheduler } = require('../plugins/browser-pane/scheduler');
 const { parseLine, toCommand } = require('../plugins/browser-pane/grammar');
 const R = require('../plugins/browser-pane/replies');
@@ -16,13 +16,16 @@ process.env.TMPDIR = mkTmpRoot('clodex-bp-dlnotes-');
 const PAGE = { url: 'https://drive.example.com/folder', title: 'Folder', doc: 1 };
 const CLICKED = { n: 7, kind: 'menuitem', label: 'Download', navigated: false, idle: { ok: true, ms: 1200 }, ...PAGE };
 
-function fakeItem({ chain = ['https://dl.example.com/f.zip'], filename = 'f.zip', mime = 'application/zip' } = {}) {
+const MB = 1024 * 1024;
+
+function fakeItem({ chain = ['https://dl.example.com/f.zip'], filename = 'f.zip', mime = 'application/zip', total = 10 } = {}) {
   const item = new EventEmitter();
   let save = null;
   Object.assign(item, {
+    received: 0,
     getURLChain: () => chain, getFilename: () => filename, getMimeType: () => mime,
-    getTotalBytes: () => 10, getReceivedBytes: () => 0,
-    cancel() { item.cancelled = true; }, setSavePath(p) { save = p; }, getSavePath: () => save,
+    getTotalBytes: () => total, getReceivedBytes: () => item.received,
+    cancel() { item.cancelled = true; item.emit('done', {}, 'cancelled'); }, setSavePath(p) { save = p; }, getSavePath: () => save,
   });
   return item;
 }
@@ -42,22 +45,24 @@ function fakeClock() {
   };
 }
 
-function rig({ deny = null, clock = fakeClock() } = {}) {
+function rig({ deny = null, clock = fakeClock(), request = null, downloadsRoot: dlRoot = null } = {}) {
   const root = mkTmpRoot('clodex-bp-dlnotes-');
-  const downloadsRoot = path.join(root, 'downloads');
+  const downloadsRoot = dlRoot || path.join(root, 'downloads');
   const wc = { id: 'wc-utility' };
   const owner = { name: 'utility', wc };
   const services = new Map([['utility', owner]]);
   const frames = [];
   let release = null;
+  const ses = new EventEmitter();
+  const readResult = { ...PAGE, contentType: 'text/html', text: 'Folder', elements: ['[7] menuitem Download'], truncated: false, frames: [], login: {} };
   const client = {
-    request(op) {
+    request(op, args, meta) {
+      if (request) return request({ op, args, meta, ses, readResult, wc });
       if (op === 'click') return new Promise((res) => { release = () => res(CLICKED); });
-      return Promise.resolve({ ...PAGE, contentType: 'text/html', text: 'Folder', elements: ['[7] menuitem Download'], truncated: false, frames: [], login: {} });
+      return Promise.resolve(readResult);
     },
   };
-  const sched = createScheduler({ client, storage: { get: () => null, set() {} }, mirror: new Map() });
-  const ses = new EventEmitter();
+  const sched = createScheduler({ client, storage: { get: () => null, set() {} }, mirror: new Map(), ...(request ? { timers: clock, downloadsDir: downloadsRoot } : {}) });
   const router = createDownloadRouter({
     profile: 'utility', ses, services, downloadsRoot,
     policyDenies: (_svc, url) => (deny && deny.test(url) ? { pattern: 'dl.example.com', list: 'global' } : null),
@@ -372,4 +377,130 @@ test('replies: the armed rule, the disarm line and the download <n> timeout all 
   assert.strictEqual(R.downloadDisarmed('expired'), `no download started within ${secs} of your click; destination disarmed`);
   assert.strictEqual(R.downloadNotStarted(4, 'drive'),
     `nothing downloaded within 30s after clicking [4]; the destination stays armed until your next action here, at most ${secs} — read drive to see what happened, or download its URL`);
+});
+
+test('download notes: an armed click download declaring more than the cap is one notice at once with its name, size, cap and origin, and no file', async () => {
+  const r = rig();
+  await r.submit('hand-a', '[agent:browser read utility]');
+  r.out.splice(0);
+  const dir = path.join(r.root, 'to');
+  const w = r.router.expect({ dir, wc: r.wc, watch: true });
+  r.router.arm(w, r.clock.now());
+  const item = fakeItem({ chain: ['https://drive.example.com/zip?id=SECRET', 'https://usercontent.example.com/dl?token=SECRET'], filename: 'folder.zip', total: 600 * MB });
+  r.download(item, r.wc);
+  assert.strictEqual(item.cancelled, true);
+  assert.deepStrictEqual(r.out, [['hand-a', '[agent:browser] download not saved: folder.zip — larger than 500 MB: 600 MB declared from https://usercontent.example.com']]);
+  r.clock.advance(400000);
+  assert.strictEqual(r.out.length, 1);
+  assert.deepStrictEqual(r.frames.map((f) => f.event), ['download-lost']);
+  assert.ok(!JSON.stringify(r.frames).includes('SECRET'));
+  assert.deepStrictEqual(fs.existsSync(dir) ? fs.readdirSync(dir) : [], []);
+  assert.deepStrictEqual(r.router.waiters, []);
+});
+
+test('download notes: a click download over the cap during the click goes in that click\'s reply as its failure, with no extra line', async () => {
+  const r = rig();
+  await r.submit('hand-a', '[agent:browser read utility]');
+  r.out.splice(0);
+  const w = r.router.expect({ dir: path.join(r.root, 'to'), wc: r.wc, watch: true });
+  let started = null;
+  w.started.then((it) => { started = it; });
+  const item = fakeItem({ filename: 'big.zip', total: 700 * MB });
+  r.download(item, r.wc);
+  await assert.rejects(w.done, { message: 'DOWNLOAD_FAILED: larger than 500 MB: 700 MB declared from https://dl.example.com' });
+  await r.settle();
+  assert.strictEqual(started, item);
+  assert.deepStrictEqual(r.frames, []);
+  assert.deepStrictEqual(r.out, []);
+});
+
+test('download notes: a download with no declared size that crosses the cap is cancelled, reported once and its partial file removed', async () => {
+  const r = rig();
+  await r.submit('hand-a', '[agent:browser read utility]');
+  r.out.splice(0);
+  const w = r.router.expect({ dir: path.join(r.root, 'to'), wc: r.wc, watch: true });
+  r.router.arm(w, r.clock.now());
+  const item = fakeItem({ filename: 'chunked.zip', total: 0 });
+  r.download(item, r.wc);
+  const partial = item.getSavePath();
+  fs.writeFileSync(partial, 'PK partial');
+  item.received = 400 * MB;
+  item.emit('updated');
+  assert.strictEqual(item.cancelled, undefined);
+  item.received = 501 * MB;
+  item.emit('updated');
+  item.emit('updated');
+  assert.strictEqual(item.cancelled, true);
+  assert.strictEqual(fs.existsSync(partial), false);
+  assert.deepStrictEqual(r.out, [['hand-a', '[agent:browser] download not saved: chunked.zip — larger than 500 MB: 501 MB received from https://dl.example.com with no size declared']]);
+});
+
+test('download notes: the download verb on an over-cap file answers at once with the refusal and the next read answers', async () => {
+  const serial = serialQueue();
+  const clock = fakeClock();
+  let router = null;
+  const r = rig({
+    clock,
+    request: ({ op, args, meta, ses, readResult, wc }) => new Promise((res, rej) => {
+      const t = clock.setTimeout(() => rej(new Error(`browser child did not answer ${op} within ${(meta.timeoutMs || 20000) / 1000}s`)), meta.timeoutMs || 20000);
+      serial('utility', () => {
+        if (op !== 'download') return readResult;
+        const w = router.expect({ url: args.url, dir: args.dir, wc });
+        ses.emit('will-download', {}, fakeItem({ chain: [args.url], filename: 'big.zip', total: 600 * MB }), wc);
+        return w.done;
+      }).then(res, rej).finally(() => clock.clearTimeout(t));
+    }),
+  });
+  router = r.router;
+  await r.submit('hand-a', '[agent:browser read utility]');
+  r.out.splice(0);
+  await r.submit('hand-a', '[agent:browser download utility] https://dl.example.com/big.zip?sig=x');
+  assert.deepStrictEqual(r.out.map(([, t]) => t), ['[agent:browser] error: DOWNLOAD_FAILED: larger than 500 MB: 600 MB declared from https://dl.example.com']);
+  await r.submit('hand-a', '[agent:browser read utility]');
+  assert.strictEqual(r.out.length, 2);
+  assert.match(r.out[1][1], /^\[agent:browser\] read utility /);
+  assert.deepStrictEqual(r.router.waiters, []);
+});
+
+test('download notes: the other cancel paths each tell the seat once, with the literal reason', async () => {
+  const blocker = path.join(mkTmpRoot('clodex-bp-dlnotes-'), 'not-a-dir');
+  fs.writeFileSync(blocker, 'x');
+  const u = rig({ downloadsRoot: blocker });
+  await u.submit('hand-a', '[agent:browser read utility]');
+  u.out.splice(0);
+  u.download(fakeItem());
+  assert.deepStrictEqual(u.out, [['hand-a', '[agent:browser] download not saved: f.zip — download folder not writable']]);
+
+  const t = rig();
+  await t.submit('hand-a', '[agent:browser read utility]');
+  t.out.splice(0);
+  const w = t.router.expect({ dir: path.join(t.root, 'to'), wc: t.wc, watch: true });
+  t.router.arm(w, t.clock.now());
+  const slow = fakeItem({ filename: 'slow.zip' });
+  t.download(slow, t.wc);
+  fs.writeFileSync(slow.getSavePath(), 'PK');
+  t.clock.advance(299999);
+  assert.deepStrictEqual(t.out, []);
+  t.clock.advance(1);
+  assert.strictEqual(slow.cancelled, true);
+  assert.strictEqual(fs.existsSync(slow.getSavePath()), false);
+  assert.deepStrictEqual(t.out, [['hand-a', '[agent:browser] download not saved: slow.zip — not finished after 300s']]);
+
+  const o = rig();
+  await o.submit('hand-a', '[agent:browser read utility]');
+  o.out.splice(0);
+  o.router.arm(o.router.expect({ dir: path.join(o.root, 'to'), wc: o.wc, watch: true }), o.clock.now());
+  o.router.acting('utility', 'hand-b')();
+  assert.deepStrictEqual(o.out, [['hand-a', '[agent:browser] no download started after your click; destination disarmed by another seat\'s action on this service']]);
+});
+
+test('replies: the size refusal quotes the one cap constant and drops a query string from the origin', () => {
+  assert.strictEqual(R.DOWNLOAD_MAX_BYTES, 500 * MB);
+  assert.strictEqual(R.downloadReason('too-large'), 'larger than 500 MB');
+  assert.strictEqual(R.downloadLost('a.zip', 'too-large', { bytes: 612 * MB, declared: true, origin: 'https://x.example.com/p?q=SECRET' }),
+    'download not saved: a.zip — larger than 500 MB: 612 MB declared from https://x.example.com');
+  assert.strictEqual(R.downloadLost('a.zip', 'too-large', { bytes: 501 * MB, declared: false, origin: 'not a url' }),
+    'download not saved: a.zip — larger than 500 MB: 501 MB received with no size declared');
+  const src = fs.readFileSync(path.join(__dirname, '..', 'plugins', 'browser-pane', 'child.js'), 'utf8');
+  assert.ok(!/500 \* 1024/.test(src));
 });

@@ -501,7 +501,7 @@ function createScheduler({
     const line = frame.event === 'download-late' ? replies.downloadFinished(frame)
       : frame.event === 'download-disarmed' ? replies.downloadDisarmed(frame.reason)
         : frame.event === 'nav-blocked' ? replies.navBlocked(frame.scheme, frame.host, frame.reason)
-          : replies.downloadLost(frame.name, frame.reason);
+          : replies.downloadLost(frame.name, frame.reason, frame);
     const seat = frame.seat != null ? String(frame.seat) : lastActor(service);
     const handle = seat ? handles.get(seat) : null;
     if (!handle) return;

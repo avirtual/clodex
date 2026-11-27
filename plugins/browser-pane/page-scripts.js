@@ -446,14 +446,22 @@ const SCROLLER_INFO = `(() => { const el = document.querySelector('[data-cxb-scr
 
 const BUSY = `
   const busyScan = () => {
+    const animated = e => {
+      const s = getComputedStyle(e);
+      return !!s.animationName && s.animationName !== 'none' && s.animationPlayState !== 'paused';
+    };
+    const underBusy = e => {
+      for (let p = e; p; p = upOf(p)) if (p.getAttribute && p.getAttribute('aria-busy') === 'true') return true;
+      return false;
+    };
     const small = e => {
+      if (e.getAttribute('role') === 'progressbar' && e.getAttribute('aria-valuenow') != null) return animated(e) || underBusy(e);
       if (e.getAttribute('aria-busy') === 'true' || e.getAttribute('role') === 'progressbar') return true;
       const r = e.getBoundingClientRect();
       if (r.width * r.height >= 0.25 * innerWidth * innerHeight) return false;
       const t = (e.innerText || e.textContent || '').slice(0, 200).trim();
       if (t.length > 80) return false;
-      const s = getComputedStyle(e);
-      return t.length > 0 || (!!s.animationName && s.animationName !== 'none' && s.animationPlayState !== 'paused');
+      return t.length > 0 || animated(e);
     };
     const seen = [...document.querySelectorAll(${JSON.stringify(BUSY_SEL)})].filter(vis);
     const busyEls = seen.filter(small);
