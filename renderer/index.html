@@ -1613,12 +1613,14 @@
       </div>
       <span id="test-activity-summary" class="hint-text"></span>
       <span id="test-activity-box" class="hint-text"></span>
-      <h5>Running and waiting</h5>
-      <div id="test-activity-live"></div>
-      <details id="test-activity-recent-wrap" open>
-        <summary>Last ten finished</summary>
-        <div id="test-activity-recent"></div>
-      </details>
+      <div id="test-activity-lists">
+        <h5>Running and waiting</h5>
+        <div id="test-activity-live"></div>
+        <details id="test-activity-recent-wrap" open>
+          <summary>Last ten finished</summary>
+          <div id="test-activity-recent"></div>
+        </details>
+      </div>
       <div id="test-output-pane" class="hidden">
         <div class="test-output-head">
           <h5 id="test-output-title"></h5>
@@ -1631,7 +1633,7 @@
           <label id="test-output-follow-wrap"><input type="checkbox" id="test-output-follow" checked> Follow</label>
         </div>
         <span id="test-output-status" class="hint-text"></span>
-        <pre id="test-output-text"></pre>
+        <pre id="test-output-text" tabindex="0"></pre>
       </div>
     </div>
   </div>
