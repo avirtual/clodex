@@ -227,3 +227,10 @@ test('t2428: no setTestjobExclusive dep: the exclusive route answers 501', async
   const r = await post(port, '/api/testjobs/exclusive', '{"exclusive":"ignore"}');
   assert.deepStrictEqual([r.status, r.json], [501, { ok: false, error: 'testjobs not available' }]);
 });
+
+test('t2455: GET /api/testjobs passes the source ledger picks through when the activity source carries them', async (t) => {
+  const picks = [{ id: 'j1', phase: 'start', pick: { chosen: 'a', considered: [{ member: 'a', state: 'chosen' }] } }];
+  const port = await startNode(t, { listTestjobs: () => ({ enabled: true, snapshot: SNAPSHOT, picks }) });
+  const r = await req(port, '/api/testjobs');
+  assert.deepStrictEqual([r.status, r.json], [200, { ok: true, enabled: true, snapshot: SNAPSHOT, picks }]);
+});

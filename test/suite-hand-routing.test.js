@@ -1320,3 +1320,15 @@ test('t2439: a hand run whose pick skipped a member ends its digest with the poo
   const u = await runWithHost(root, '{}', path.join(root, 'h2'), () => [{ run: 'remote', runner: 'runner-a', unknown: 'runner unreachable', note: '(pool: skipped runner-b: no answer)' }]);
   assert.strictEqual(u.digest.endsWith('runner unreachable (pool: skipped runner-b: no answer)'), true, u.digest);
 });
+
+const WAITED_PICK = { chosen: 'runner-1', considered: [{ member: 'runner-1', state: 'chosen' }, { member: 'runner-2', state: 'no-answer', why: 'timeout' }] };
+
+for (const [queueMs, note] of [[180000, '(waited 3m on runner-1; runner-2 no answer (timeout))'], [45000, null]]) {
+  test(`t2455: a hand job that waited ${queueMs} ms ${note ? 'gains one waited clause' : 'gains no clause'} in its reply note`, async () => {
+    const client = stubClient({ result: { unknown: null, res: { status: 0, signal: null, stdout: 'x', stderr: '', treeHash: TREE }, record: { where: 'runner-1', queueMs, pick: WAITED_PICK } } });
+    const f = hostFor({ client, pool: async () => ({ chosen: 'runner-1', repick: null, reroute: null, pick: WAITED_PICK }) });
+    f.host.onMessage(ask(f.dir));
+    const m = await f.done;
+    assert.deepStrictEqual([m.runner, m.unknown, m.note], ['runner-1', null, note]);
+  });
+}

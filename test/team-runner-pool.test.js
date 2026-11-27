@@ -1008,6 +1008,7 @@ const { baseRunnerLoad, basePickRunner } = require('./lib/base-suite-pick');
 
 const POOL_OF_TWO = { testRunner: { peer: 'runner-1', hands: 'all', pool: [{ peer: 'runner-2' }] } };
 const IDLE_ONE = (extra = {}) => ({ ok: true, limits: {}, env: { envKey: 'k' }, slots: { total: 1, inUse: 0 }, queue: { running: null, queued: [] }, ...extra });
+const IDLE_LOAD = { total: 1, inUse: 0, free: 1, queue: 0, pending: 0 };
 const QUIET_LOG = (lines) => ({ info: (tag, m) => lines.push([tag, m]), warn: () => {}, error: () => {}, debug: () => {} });
 
 function infoConn(info, calls = []) {
@@ -1135,7 +1136,7 @@ test('t2439: a member whose info call rejects is skipped as no answer in the log
   const reply = await done;
   const picks = r.lines.filter(([tag]) => tag === 'suite-client');
   assert.deepStrictEqual(picks, [['suite-client', 'pool pick for job job1-000: chosen runner-1; runner-1 slots 0/1, pending 0, queue 0, box tier 0, exclusive rank 0; runner-2 skipped: no answer']]);
-  assert.deepStrictEqual(r.ends().map((x) => [x.where, x.outcome, x.pick]), [['runner-1', 'pass', { chosen: 'runner-1', skipped: [{ member: 'runner-2', reason: 'no answer' }] }]]);
+  assert.deepStrictEqual(r.ends().map((x) => [x.where, x.outcome, x.pick]), [['runner-1', 'pass', { chosen: 'runner-1', skipped: [{ member: 'runner-2', reason: 'no answer' }], considered: [{ member: 'runner-1', state: 'chosen', load: IDLE_LOAD, tier: 0, rank: 0, exclusive: null }, { member: 'runner-2', state: 'no-answer', why: 'error' }] }]]);
   assert.deepStrictEqual([reply.runner, reply.unknown, reply.note], ['runner-1', null, '(pool: skipped runner-2: no answer)']);
 });
 
@@ -1225,7 +1226,7 @@ function moveRig({ info = {}, poll = {}, del = {}, post = {}, manifestExtra = PO
   };
   const base = { peer: 'p1', name: 'runner-1', tree: '/w', kind: 'hand', team: 'team', queueBudgetMs: 300000, runBudgetMs: 600000, budgetMs: 900000 };
   const posts = () => events.filter((e) => / POST /.test(e));
-  return { client, clock, events, posts, asked, requeue, base, f, tr };
+  return { client, clock, events, posts, asked, requeue, base, f, tr, ledgerFile };
 }
 
 const QUEUED_ON_1 = (id) => jobAt(id, 'queued');
@@ -1258,7 +1259,7 @@ for (const [name, manifestExtra, boxed, other, moves, mine = { exclusive: 'honou
     if (moves) {
       assert.deepStrictEqual(r.posts(), ['0 p1 POST run-1', '60000 p2 POST run-1-2']);
       assert.deepStrictEqual([out.record.outcome, out.record.where, out.record.endedAt], ['pass', 'runner-2', '1970-01-01T00:02:15.000Z']);
-      assert.deepStrictEqual(out.record.moved, [{ from: 'runner-1', to: 'runner-2', at: '1970-01-01T00:01:00.000Z' }]);
+      assert.deepStrictEqual(out.record.moved.map(({ considered, ...m }) => [m, considered.map((c) => [c.member, c.state])]), [[{ from: 'runner-1', to: 'runner-2', at: '1970-01-01T00:01:00.000Z' }, [['runner-2', 'chosen'], ['runner-1', 'ranked-lower']]]]);
     } else {
       assert.deepStrictEqual(r.posts(), ['0 p1 POST run-1']);
       assert.deepStrictEqual(r.asked.map(([, t]) => t), [60000, 120000, 180000, 240000]);
@@ -1428,7 +1429,7 @@ test('t2440: a caller stop while the moved job is set up on runner-2 ends it wit
   });
   const out = await r.client.run({ ...r.base, requeue: r.requeue(), shouldStop: () => stop });
   assert.ok(stop, 'ENTER: the stop came during the setup on runner-2');
-  assert.deepStrictEqual([r.posts(), out.record.moved], [['0 p1 POST run-1'], [{ from: 'runner-1', to: 'runner-2', at: '1970-01-01T00:01:00.000Z' }]]);
+  assert.deepStrictEqual([r.posts(), out.record.moved.map(({ considered, ...m }) => m)], [['0 p1 POST run-1'], [{ from: 'runner-1', to: 'runner-2', at: '1970-01-01T00:01:00.000Z' }]]);
 });
 
 test('t2449: a pool member whose info call timed out is skipped as timeout in the pick record, and one refusing as refused', async () => {
@@ -1440,8 +1441,29 @@ test('t2449: a pool member whose info call timed out is skipped as timeout in th
   const f = mkFixture({ manifestExtra: { testRunner: { peer: 'runner-1', gate: 'shadow', pool: [{ peer: 'runner-2' }] } }, peers: [R1, R2], client });
   const tr = f.tm.loadManifest('team').testRunner;
   assert.deepStrictEqual((await f.m._pickPool(tr, false, [], { claim: false, record: false })).pick,
-    { chosen: 'runner-1', skipped: [{ member: 'runner-2', reason: 'timeout' }] });
+    { chosen: 'runner-1', skipped: [{ member: 'runner-2', reason: 'timeout' }], considered: [{ member: 'runner-1', state: 'chosen', load: IDLE_LOAD, tier: 0, rank: 0, exclusive: null }, { member: 'runner-2', state: 'no-answer', why: 'timeout' }] });
   answers.p2 = { ok: false, why: 'runner refused the token (status 401)' };
   assert.deepStrictEqual((await f.m._pickPool(tr, false, [], { claim: false, record: false })).pick,
-    { chosen: 'runner-1', skipped: [{ member: 'runner-2', reason: 'refused' }] });
+    { chosen: 'runner-1', skipped: [{ member: 'runner-2', reason: 'refused' }], considered: [{ member: 'runner-1', state: 'chosen', load: IDLE_LOAD, tier: 0, rank: 0, exclusive: null }, { member: 'runner-2', state: 'no-answer', why: 'refused' }] });
+});
+
+test('t2455: a moved job writes its pick on the start row and the end row, and the move appends its own considered list', async () => {
+  const r = moveRig({
+    info: { p1: () => BUSY_WITH(['run-1'], { exclusive: 'honour' }), p2: (t) => (t < 60000 ? BUSY_WITH(['x', 'y']) : IDLE_ONE()) },
+    poll: { p1: QUEUED_ON_1, p2: RAN_ON_2 },
+  });
+  const p = await r.f.m._pickPool(r.tr(), false, [], { claim: false, record: false });
+  const first = [
+    { member: 'runner-1', state: 'chosen', load: { total: 1, inUse: 1, free: 0, queue: 1, pending: 0 }, tier: 0, rank: 0, exclusive: 'honour' },
+    { member: 'runner-2', state: 'ranked-lower', load: { total: 1, inUse: 1, free: 0, queue: 2, pending: 0 }, tier: 0, rank: 0, exclusive: null },
+  ];
+  assert.deepStrictEqual(p.pick, { chosen: 'runner-1', considered: first });
+  await r.client.run({ ...r.base, pick: p.pick, requeue: r.requeue() });
+  const rows = fs.readFileSync(r.ledgerFile, 'utf8').trim().split('\n').map((l) => JSON.parse(l));
+  const move = [
+    { member: 'runner-2', state: 'chosen', load: IDLE_LOAD, tier: 0, rank: 0, exclusive: null },
+    { member: 'runner-1', state: 'ranked-lower', load: { total: 1, inUse: 1, free: 0, queue: 1, pending: 0 }, tier: 0, rank: 0, exclusive: 'honour' },
+  ];
+  const hop = [{ from: 'runner-1', to: 'runner-2', at: '1970-01-01T00:01:00.000Z', considered: move }];
+  assert.deepStrictEqual(rows.map((x) => [x.phase, x.where, x.pick, x.moved]), [['start', 'runner-2', { chosen: 'runner-1', considered: first }, hop], ['end', 'runner-2', { chosen: 'runner-1', considered: first }, hop]]);
 });

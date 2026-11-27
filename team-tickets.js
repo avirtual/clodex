@@ -21,7 +21,7 @@ const { trackedSessionIds: entrySessionIds } = require('./session-info');
 const { hostNotice } = require('./host-stamp');
 const { idleClearAfterMs, IDLE_CLEAR_MIN_MS } = require('./assistant-sleep');
 const { localHalf, failingNames } = require('./suite-client');
-const { boxVerdict, fallbackOf, FALLBACK_CODES, pickRunner, runnerLoad, pickRecord, pickLine, aloneNote, BUILD_BUDGET_MS, HUNG_RE, HAND_QUEUE_MS } = require('./suite-client');
+const { boxVerdict, fallbackOf, FALLBACK_CODES, pickRunner, runnerLoad, pickRecord, consideredOf, pickLine, aloneNote, BUILD_BUDGET_MS, HUNG_RE, HAND_QUEUE_MS } = require('./suite-client');
 const {
   matchSeatRole, nameRole, defaultLeadSeat, ROLE_RE, RESERVED_ROLE_KEYS, STOCK_ROLE_DEFS,
   DEFAULT_ROLE_DISPATCH, TRUNK_HEAD, normalizeTestRoots, TEST_ROOTS_MAX, effectiveHandCap, DONE_VALUES, normalizeDone, NAME_RE: NODE_NAME_RE, TEST_RUNNER_HANDS, TEST_RUNNER_GATE, TEST_RUNNER_FALLBACK, TEST_RUNNER_WIRE_PUSH: WIRE_PUSH, TEST_RUNNER_POOL_MAX,
@@ -3286,7 +3286,8 @@ function createTicketMethods(deps, shared) {
       if (record) log.info('suite-client', pickLine(id || runId, pick));
       const ranked = pick.chosen ? pick.ranks.find((r) => !r.skipped && r.member === pick.member.peer) : null;
       return {
-        chosen: pick.chosen ? { peer: pick.member.peer, wire: pick.member.wire } : null, runId, pick: pickRecord(pick),
+        chosen: pick.chosen ? { peer: pick.member.peer, wire: pick.member.wire } : null, runId,
+        pick: { ...pickRecord(pick), considered: consideredOf(pick, this._runnerMembers(tr).map((m) => m.peer).filter((p) => exclude.includes(p))) },
         fit: ranked ? { load: ranked.load, tier: ranked.tier, exclusive: pick.member.info.exclusive || null } : null,
       };
     },
@@ -3340,7 +3341,7 @@ function createTicketMethods(deps, shared) {
         if (!idle) return null;
         const { via } = this._runnerVia(p.chosen);
         if (via) log.info('suite-client', `pool move for job ${String(id || 'none').slice(0, 8)}: ${current} -> ${p.chosen.peer} (slots ${load.inUse}/${load.total}, box tier ${fit.tier})`);
-        return via || null;
+        return via ? { ...via, considered: p.pick.considered } : null;
       };
     },
 

@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+- Test runners: a job's record now lists every pool member that was considered and why each was not chosen, from the moment the job starts.
+
 ## 5.211.0 — 2026-11-27
 
 - Team tickets: a verify held because the test runner was busy now retries by itself when the runner has a free slot, and `queue:` also sets how long a deciding run waits.
