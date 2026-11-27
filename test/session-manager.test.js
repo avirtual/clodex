@@ -25582,6 +25582,20 @@ test('t1908 watchdog: a seat held by a permission dialog alarms as waiting on it
   assert.match(f.gated[0].body, /^\[ticket t1\] stalled: hand waiting on a permission dialog since 31m — Bash: node scripts\/x\.js\. Only the operator can answer/);
 });
 
+test('t2443 watchdog: a seat held by a boot dialog seen on its screen alarms in the boot-dialog wording', async () => {
+  const f = mkTasks();
+  const stallMs = 30 * 60 * 1000;
+  f.team.watchdogMs = stallMs;
+  f.seat('lead');
+  const now = Date.now();
+  f.seat('team-hand-1', '/proj', { needsAttention: { kind: 'permission', source: 'screen', ts: now - 31 * 60 * 1000, message: 'Claude Code boot dialog (added-folder-trust): /m — answer it in the seat terminal' } });
+  orphanedTicket(f, { stallMs });
+  await f.m._sweepTickets(now);
+  assert.strictEqual(f.gated.length, 1, 'ENTER: exactly one alarm to inspect');
+  assert.strictEqual(f.gated[0].body, '[ticket t1] stalled: hand held at a Claude Code boot dialog since 31m — Claude Code boot dialog (added-folder-trust): /m — answer it in the seat terminal. '
+    + 'Only the operator can answer it, in the seat terminal; it is in their inbox, and nothing is typed into it until then.');
+});
+
 test('t1911 watchdog: a compacting seat with a pending call alarms as compacting, not wedged', async () => {
   const f = mkTasks();
   const stallMs = 30 * 60 * 1000;
@@ -25716,6 +25730,116 @@ test('t2349 inbox: a boot dialog seen on a ticket seat\'s screen is named with i
     from: 'clodex', workspaceId: null,
     body: 'Seat team-hand-1 (ticket t1) cannot start: a Claude Code boot dialog is up in its terminal: /home/bogdan/.clodex/messages. Answer it in that terminal; nothing is typed into it, and it holds the ticket until you do.',
   }]);
+});
+
+function mkBootTrustRig() {
+  const homeOs = tmpHomeOs();
+  const root = mkTmpRoot('clx-boot-trust-');
+  const records = { 'team-hand-1': { name: 'team-hand-1', type: 'claude', cwd: '/proj', ticketId: 't1' } };
+  const warns = [];
+  const notes = [];
+  const f = mkTasks({
+    REGISTRY_DIR: root,
+    stripLevelOf: () => 0,
+    os: homeOs,
+    log: { info() {}, warn: (...a) => warns.push(a[1]), error() {}, debug() {} },
+    getPersistence: () => ({ list: () => Object.values(records), get: (n) => records[n] || null, upsert() {}, setStripLevel() {}, setLabel() {} }),
+    getNotifications: () => ({ add: (rec) => { notes.push(rec); return rec; } }),
+  });
+  const msgDir = pathReal.join(root, 'sessions', 'team-hand-1', 'messages');
+  fsReal.mkdirSync(msgDir, { recursive: true, mode: 0o700 });
+  fsReal.chmodSync(msgDir, 0o700);
+  const configPath = pathReal.join(homeOs.homedir(), '.claude.json');
+  fsReal.writeFileSync(configPath, JSON.stringify({ hasCompletedOnboarding: true, projects: {} }));
+  const trusted = () => {
+    const j = JSON.parse(fsReal.readFileSync(configPath, 'utf8'));
+    return !!(j.projects[msgDir] && j.projects[msgDir].hasTrustDialogAccepted === true);
+  };
+  const screenFor = (p) => ` Adding a new directory:\n ${p}\n This session hasn't worked here before. Is this a directory you created or one you trust?\n\n ❯ No, exit\n   Yes, add it\n\n Enter to confirm · Esc to cancel\n`;
+  const writes = [];
+  const order = [];
+  const seat = (props = {}) => f.seat('team-hand-1', '/proj', {
+    pty: { pid: 4242, write: (d) => writes.push(d) },
+    _bootScreenWatch: true, _bootScreenText: screenFor(msgDir), _bootTrust: { dirs: [msgDir], configDir: null },
+    ...props,
+  });
+  f.m.kill = async (n, opts) => { order.push(['kill', n, opts, trusted()]); f.m.sessions.delete(n); };
+  f.m._preserveAcrossRestart = () => {};
+  f.m.resumeCwdOf = () => '/proj';
+  let created;
+  const respawned = new Promise((resolve) => { created = resolve; });
+  f.m.create = async (...a) => { order.push(['create', a[0], a[1], a[2], a[4], trusted()]); created(); };
+  return { f, root, records, warns, notes, msgDir, trusted, screenFor, writes, order, seat, respawned };
+}
+
+const BOOT_HELD = (p) => `[team team] seat team-hand-1 is held at a boot dialog (added-folder-trust): ${p}. Only the operator can answer it; it is in their inbox.`;
+
+test('t2443 recovery: an added-folder-trust dialog for the seat messages dir Clodex added, before any turn, kills, re-seeds, then respawns once, typing nothing', async () => {
+  const r = mkBootTrustRig();
+  const s = r.seat();
+  r.f.m._scanBootScreen(s);
+  assert.strictEqual(s._reloadInFlight, true, 'the respawn was scheduled');
+  await r.respawned;
+  assert.deepStrictEqual(r.order, [
+    ['kill', 'team-hand-1', { respawn: true }, false],
+    ['create', 'team-hand-1', 'claude', '/proj', null, true],
+  ]);
+  assert.ok(r.trusted(), 'the key is on disk');
+  assert.deepStrictEqual(r.writes, []);
+  assert.strictEqual(s.needsAttention, undefined, 'no hold raised for the operator');
+  assert.deepStrictEqual(r.notes, []);
+  assert.deepStrictEqual(r.f.gated, [{
+    target: 'lead', sender: 'clodex-team',
+    body: `[team team] seat team-hand-1 is held at a boot dialog (added-folder-trust): ${r.msgDir}. Clodex added that directory at this spawn and its trust entry was lost: re-seeded and respawned once.`,
+  }]);
+  assert.ok(r.warns.includes(`team-hand-1: re-seeded trust for ${r.msgDir} (${fsReal.realpathSync(r.msgDir) === r.msgDir ? 2 : 3} key(s) written); respawning once`), JSON.stringify(r.warns));
+
+  const again = r.seat();
+  r.f.m._scanBootScreen(again);
+  await new Promise((res) => setImmediate(res));
+  assert.strictEqual(r.order.length, 2, 'a second hit on the same seat does not respawn again');
+  assert.strictEqual(again.needsAttention.source, 'screen', 'the second hit is held as before');
+  assert.deepStrictEqual(r.f.gated.map((g) => g.body).slice(1), [BOOT_HELD(r.msgDir)]);
+  assert.deepStrictEqual(r.writes, []);
+});
+
+for (const [label, setup] of [
+  ['a path Clodex did not add', (r) => ({ _bootScreenText: r.screenFor('/home/elsewhere/messages') })],
+  ['a seat that already started a turn', () => ({ _turnStartedAt: 1 })],
+  ['a messages dir that fails the spawn-time check', (r) => { fsReal.writeFileSync(pathReal.join(r.msgDir, '.mcp.json'), '{}'); return {}; }],
+  ['a seat whose spawn added no dir', () => ({ _bootTrust: null })],
+]) {
+  test(`t2443 recovery: ${label} is held as today, notified once, never killed and never typed into`, async () => {
+    const r = mkBootTrustRig();
+    const s = r.seat(setup(r));
+    r.f.m._scanBootScreen(s);
+    r.f.m._scanBootScreen(s);
+    await new Promise((res) => setImmediate(res));
+    assert.deepStrictEqual(r.order, []);
+    assert.strictEqual(s.needsAttention.source, 'screen', 'ENTER: the seat is held');
+    assert.strictEqual(r.f.gated.length, 1, 'one lead notice for two scans');
+    assert.match(r.f.gated[0].body, /^\[team team\] seat team-hand-1 is held at a boot dialog \(added-folder-trust\): .*\. Only the operator can answer it; it is in their inbox\.$/);
+    assert.deepStrictEqual(r.writes, []);
+  });
+}
+
+test('t2443 lead notice: once per seat and dialog class, and a variant dialog is held and notified under its own class', () => {
+  const r = mkBootTrustRig();
+  const s = r.seat({ _bootTrust: null });
+  r.f.m._scanBootScreen(s);
+  s._bootScreenText = '';
+  r.f.m._scanBootScreen(s);
+  assert.strictEqual(s._bootDialog, null, 'ENTER: the dialog left the screen');
+  s._bootScreenText = r.screenFor(r.msgDir);
+  r.f.m._scanBootScreen(s);
+  s._bootScreenText = ' Moving to a new directory:\n /home/b/proj\n This session hasn\'t worked here before.\n ❯ No, stay put\n   Yes, move here\n Enter to confirm · Esc to cancel\n';
+  r.f.m._scanBootScreen(s);
+  assert.strictEqual(s._bootDialog.kind, 'folder-trust-variant', 'ENTER: the variant holds the seat');
+  assert.deepStrictEqual(r.f.gated, [
+    { target: 'lead', sender: 'clodex-team', body: BOOT_HELD(r.msgDir) },
+    { target: 'lead', sender: 'clodex-team', body: '[team team] seat team-hand-1 is held at a boot dialog (folder-trust-variant): /home/b/proj. Only the operator can answer it; it is in their inbox.' },
+  ]);
+  assert.deepStrictEqual(r.writes, []);
 });
 
 test('the muse sse rule lives in mcp-plan museExpressible, not as a type literal in session-manager or ipc-handlers', () => {

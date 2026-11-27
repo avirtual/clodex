@@ -233,6 +233,10 @@ function formatStallBody({ ticketId, who, age, repeat = 0, tool = null, commits 
     const lead = repeat > 0
       ? `[ticket ${ticketId}] STILL stalled (repeat ${repeat}): ${who}`
       : `[ticket ${ticketId}] stalled: ${who}`;
+    if (dialog.source === 'screen') {
+      return `${lead} held at a Claude Code boot dialog since ${dialog.age} — ${msg}. `
+        + 'Only the operator can answer it, in the seat terminal; it is in their inbox, and nothing is typed into it until then.';
+    }
     return `${lead} waiting on a permission dialog since ${dialog.age} — ${msg}. `
       + 'Only the operator can answer it (Requests list in the attention view). Deny leaves the hand to report the refusal; a respec is yours if the command was wrong.';
   }

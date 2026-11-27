@@ -253,3 +253,45 @@ test('t2442: under node --test a uid without a passwd entry falls back to homedi
       /refusing to write/);
   } finally { os.userInfo = saved; }
 });
+
+test('t2443: a rename clobbered by another writer is detected on re-read and retried; the loss is logged and the key lands', () => {
+  const home = tmpHome();
+  const p = path.join(home, '.claude.json');
+  const theirs = JSON.stringify({ hasCompletedOnboarding: true, numStartups: 7 });
+  fs.writeFileSync(p, theirs);
+  let renames = 0;
+  const racyFs = { ...fs, renameSync: (a, b) => { fs.renameSync(a, b); if (++renames === 1) fs.writeFileSync(p, theirs); } };
+  const sleeps = [];
+  const warns = [];
+  const out = {};
+  const ok = preseedClaudeOnboarding({ fs: racyFs, path, homeDir: home, cwd: '/tmp/p1', log: { warn: (...a) => warns.push(a) }, sleepFn: (ms) => sleeps.push(ms), out });
+  assert.strictEqual(ok, true);
+  assert.deepStrictEqual(JSON.parse(fs.readFileSync(p, 'utf8')), { hasCompletedOnboarding: true, numStartups: 7, projects: { '/tmp/p1': { hasTrustDialogAccepted: true } } });
+  assert.strictEqual(renames, 2);
+  assert.deepStrictEqual(sleeps, [25]);
+  assert.deepStrictEqual(warns, [['session', `preseed ${p}: attempt 1: /tmp/p1 missing after the rename (another writer replaced the file)`]]);
+  assert.deepStrictEqual(out, { keys: ['/tmp/p1'], attempts: 2 });
+});
+
+test('t2443: a key lost on every attempt is retried three times, then given up on with a log line, and false', () => {
+  const home = tmpHome();
+  const p = path.join(home, '.claude.json');
+  const theirs = JSON.stringify({ hasCompletedOnboarding: true });
+  fs.writeFileSync(p, theirs);
+  const racyFs = { ...fs, renameSync: (a, b) => { fs.renameSync(a, b); fs.writeFileSync(p, theirs); } };
+  const sleeps = [];
+  const warns = [];
+  const ok = preseedClaudeOnboarding({ fs: racyFs, path, homeDir: home, cwd: '/tmp/p1', log: { warn: (...a) => warns.push(a[1]) }, sleepFn: (ms) => sleeps.push(ms) });
+  assert.strictEqual(ok, false);
+  assert.deepStrictEqual(sleeps, [25, 50, 100]);
+  assert.deepStrictEqual(warns, [1, 2, 3, 4].map((n) => `preseed ${p}: attempt ${n}: /tmp/p1 missing after the rename (another writer replaced the file)`)
+    .concat([`preseed ${p}: gave up after 4 attempts`]));
+});
+
+test('t2443: a write that throws is logged with its reason instead of swallowed', () => {
+  const home = tmpHome();
+  const warns = [];
+  const brokenFs = { ...fs, writeFileSync: () => { throw new Error('EROFS: read-only file system'); } };
+  assert.strictEqual(preseedClaudeOnboarding({ fs: brokenFs, path, homeDir: home, cwd: '/tmp/p1', log: { warn: (...a) => warns.push(a[1]) }, sleepFn: () => { throw new Error('no retry on a throw'); } }), false);
+  assert.deepStrictEqual(warns, [`preseed ${path.join(home, '.claude.json')}: attempt 1 failed: EROFS: read-only file system`]);
+});

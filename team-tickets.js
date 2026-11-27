@@ -10018,7 +10018,7 @@ function createTicketMethods(deps, shared) {
               wake: wakeAge > 0 ? { age: humanizeAge(now - after.wakeAt) } : null,
               apiError: ev.apiError,
               dialog: wakeSeat && wakeSeat.needsAttention && wakeSeat.needsAttention.kind === 'permission'
-                ? { message: wakeSeat.needsAttention.message, age: humanizeAge(now - wakeSeat.needsAttention.ts) }
+                ? { message: wakeSeat.needsAttention.message, age: humanizeAge(now - wakeSeat.needsAttention.ts), source: wakeSeat.needsAttention.source || null }
                 : null,
               compacting: wakeSeat && wakeSeat.compacting ? { age: humanizeAge(now - wakeSeat.compacting.since) } : null,
               parkedDms: seatNow ? this.pendingCountFor(seatNow) : null,
