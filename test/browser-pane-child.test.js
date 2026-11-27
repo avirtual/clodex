@@ -1408,6 +1408,21 @@ test('page scripts: a text-less, unanimated loading placeholder is not busy; an 
   assert.match(scripts.BUSY, /\[role=progressbar\]/);
 });
 
+test('page scripts: a determinate progressbar is busy only when animated or under aria-busy; an indeterminate one always is', () => {
+  const make = new Function('getComputedStyle', 'document', 'scrollX', 'scrollY', 'innerWidth', 'innerHeight', `${scripts.DEEP}${scripts.BUSY}\nreturn busyScan();`);
+  const el = (b, attrs = {}, innerText = '') => ({ ...b, innerText, getAttribute: (k) => (k in attrs ? attrs[k] : null) });
+  const scan = (els) => make((e) => ({ visibility: 'visible', display: 'block', opacity: '1', clip: 'auto', clipPath: 'none', overflow: 'visible', overflowX: 'visible', animationName: 'none', animationPlayState: 'running', ...e.style }),
+    { documentElement: { scrollWidth: 1200, scrollHeight: 3000 }, querySelectorAll: () => els }, 0, 0, 1200, 800);
+  const busyParent = { ...box(0, 0, 1200, 800), getAttribute: (k) => (k === 'aria-busy' ? 'true' : null) };
+  const rows = [
+    ['determinate static', el(box(10, 10, 200, 8), { role: 'progressbar', 'aria-valuenow': '9' }, '1.4 GB used'), 0],
+    ['determinate animated', el(box(10, 10, 200, 8, { animationName: 'grow' }), { role: 'progressbar', 'aria-valuenow': '45' }), 1],
+    ['determinate under aria-busy', el(box(10, 10, 200, 8, {}, busyParent), { role: 'progressbar', 'aria-valuenow': '45' }), 1],
+    ['indeterminate', el(box(10, 10, 200, 8), { role: 'progressbar' }), 1],
+  ];
+  for (const [label, e, want] of rows) assert.strictEqual(scan([e]).count, want, label);
+});
+
 test('page scripts: PAGE_TEXT renders tables as cell | cell rows with the same code as READ_TEXT', () => {
   const rows = /const cellText = [\s\S]*?t\.replaceWith\(box\);\n {2}\}/;
   const a = rows.exec(scripts.PAGE_TEXT);

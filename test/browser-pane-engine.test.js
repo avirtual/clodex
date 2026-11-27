@@ -579,6 +579,20 @@ test('engine: a burst of operator navigations within 5 s tells the lease holder 
   assert.strictEqual(injected.length, before, 'no seat holds the other lease: no injection');
 });
 
+test('engine: download-lost, late-download, disarmed and navigation-blocked frames are each one host-log line naming the service', async (t) => {
+  const { emit, logs } = boot(t);
+  await emit('[agent:browser open utility] https://portal.example.com/dlevents?token=SECRET');
+  const want = [
+    'download not saved on utility: folder.zip — larger than 500 MB: 600 MB declared from https://usercontent.example.com',
+    'late download on utility: /w/dl/late.zip',
+    'download destination disarmed on utility: no download started within 120 s of your click; destination disarmed',
+    'navigation blocked on utility: blob: — not allowed as a navigation',
+  ];
+  for (let i = 0; i < 500 && !want.every((l) => logs.includes(l)); i += 1) await new Promise((r) => setImmediate(r));
+  for (const l of want) assert.strictEqual(logs.filter((x) => x === l).length, 1, `${l}\n${logs.join('\n')}`);
+  assert.ok(!logs.some((l) => l.includes('SECRET')), logs.join('\n'));
+});
+
 test('engine: the denied host-log line redacts a secret query value in the refused url', async (t) => {
   const { emit, engine, logs } = boot(t);
   await emit('[agent:browser open utility] https://portal.example.com/opnav');

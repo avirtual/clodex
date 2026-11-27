@@ -71,6 +71,13 @@ function answer(f) {
     return send({ id: f.id, ok: true, result: { status: 200, url: f.args.url, title: JSON.stringify(f.args.policy), doc,
       idle: { ok: true, ms: 1 }, login: {} } });
   }
+  if (f.op === 'open' && /dlevents/.test(f.args.url)) {
+    send({ id: f.id, ok: true, result: { status: 200, url: f.args.url, title: 'Events', doc, idle: { ok: true, ms: 1 }, login: {} } });
+    send({ event: 'download-lost', service: f.service, seat: f.seat, name: 'folder.zip', reason: 'too-large', bytes: 600 * 1024 * 1024, declared: true, origin: 'https://usercontent.example.com' });
+    send({ event: 'download-late', service: f.service, seat: f.seat, file: path.join(f.args.dir || '/w/dl', 'late.zip'), bytes: 7, mime: 'application/zip' });
+    send({ event: 'download-disarmed', service: f.service, seat: f.seat, reason: 'expired' });
+    return send({ event: 'nav-blocked', service: f.service, seat: f.seat, scheme: 'blob', host: '', reason: 'scheme' });
+  }
   if (f.op === 'open' && /opnav/.test(f.args.url)) {
     send({ event: 'state', service: f.service, state: 'idle', reason: null, url: f.args.url, title: 'Nav' });
     send({ id: f.id, ok: true, result: { status: 200, url: f.args.url, title: 'Nav', doc, idle: { ok: true, ms: 1 }, login: {} } });
