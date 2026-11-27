@@ -21958,10 +21958,12 @@ function mkTrustSeedSeat(t) {
   const home = mkTmpRoot('clx-trust-home-');
   const ptyArgs = [];
   const fakePty = { pid: 8101, onData: () => {}, onExit: () => {}, write: () => {}, resize: () => {}, kill: () => {} };
+  const notes = [];
   const h = mkStreamSeatManager({
     extraDeps: {
       os: { ...require('node:os'), homedir: () => home },
       pty: { spawn: (cmd, args) => { ptyArgs.push(args); return fakePty; } },
+      getNotifications: () => ({ add: (n) => notes.push(n) }),
     },
   });
   t.after(() => h.stopAll());
@@ -21969,8 +21971,62 @@ function mkTrustSeedSeat(t) {
   fsReal.writeFileSync(p.join(h.root, 'sessions', '.migrated'), '');
   const seeded = () => JSON.parse(fsReal.readFileSync(p.join(home, '.claude.json'), 'utf8')).projects;
   const addDirs = (args) => args.flatMap((a, i) => (a === '--add-dir' ? [args[i + 1]] : []));
-  return { h, ptyArgs, seeded, addDirs, cwd: require('node:os').tmpdir() };
+  return { h, ptyArgs, seeded, addDirs, notes, cwd: require('node:os').tmpdir() };
 }
+
+test('t2441: a seat messages dir that is a symlink, holds a dotfile or holds a subdirectory is neither added nor trusted, with one WARN and one inbox note', async (t) => {
+  const p = require('node:path');
+  const os = require('node:os');
+  const run = async (plant) => {
+    const rig = mkTrustSeedSeat(t);
+    const own = p.join(rig.h.root, 'sessions', 'tt1', 'messages');
+    fsReal.mkdirSync(p.dirname(own), { recursive: true });
+    if (plant) plant(own, rig.h.root);
+    await rig.h.create('tt1', null, 'pty');
+    assert.strictEqual(rig.ptyArgs.length, 1, 'ENTER: the seat spawned a pty');
+    const shape = rig.ptyArgs[0].map((a) => String(a).split(rig.h.root).join('<root>'))
+      .map((a) => (/^[0-9a-f]{8}-[0-9a-f-]{27}$/.test(a) ? '<uuid>' : a));
+    return { ...rig, own, shape };
+  };
+  const clean = await run(null);
+  assert.deepStrictEqual(clean.shape, [
+    '--session-id', '<uuid>', '--settings', '<root>/settings.json',
+    '--add-dir', '<root>/messages', '--add-dir', '<root>/sessions/tt1/messages',
+    '--strict-mcp-config', '--mcp-config', '<root>/run/tt1/mcp.json',
+    '--append-system-prompt-file', '<root>/run/tt1/append-prompt.md',
+  ]);
+  assert.ok(clean.seeded()[clean.own], 'ENTER: the clean dir is seeded');
+  assert.deepStrictEqual(clean.notes, []);
+  const withoutOwn = clean.shape.filter((a, i, all) => a !== '<root>/sessions/tt1/messages' && all[i + 1] !== '<root>/sessions/tt1/messages');
+
+  const cases = [
+    ['symlink', (own) => fsReal.symlinkSync(fsReal.mkdtempSync(p.join(os.tmpdir(), 'clx-msg-elsewhere-')), own), 'is a symlink'],
+    ['.mcp.json', (own) => { fsReal.mkdirSync(own, { mode: 0o700 }); fsReal.writeFileSync(p.join(own, '.mcp.json'), '{}'); }, "holds '.mcp.json', which is not a delivered message file"],
+    ['subdirectory', (own) => { fsReal.mkdirSync(p.join(own, '.claude'), { recursive: true, mode: 0o700 }); fsReal.chmodSync(own, 0o700); }, "holds '.claude', which is not a delivered message file"],
+  ];
+  for (const [label, plant, why] of cases) {
+    const r = await run(plant);
+    assert.deepStrictEqual(r.shape, withoutOwn, `${label}: the argv is the clean one minus the seat messages dir`);
+    assert.strictEqual(r.seeded()[r.own], undefined, `${label}: no trust entry under its path`);
+    const reason = `${r.own} ${why}`;
+    assert.deepStrictEqual(r.notes.map((n) => n.body), [`seat tt1: messages dir not trusted — ${reason}`], label);
+    assert.deepStrictEqual(r.h.logs.filter((l) => l[0] === 'warn' && /messages dir/.test(l[2])),
+      [['warn', 'session', `seat tt1: messages dir not trusted — ${reason}`]], label);
+  }
+});
+
+test('t2441: a seat messages dir wider than 0700 is ours, so it is repaired and still added', async (t) => {
+  const p = require('node:path');
+  const { h, ptyArgs, addDirs, notes } = mkTrustSeedSeat(t);
+  const own = p.join(h.root, 'sessions', 'tt1', 'messages');
+  fsReal.mkdirSync(own, { recursive: true });
+  fsReal.chmodSync(own, 0o755);
+  fsReal.writeFileSync(p.join(own, 'msg-12-3.txt'), 'x');
+  await h.create('tt1', null, 'pty');
+  assert.deepStrictEqual(addDirs(ptyArgs[0]), [p.join(h.root, 'messages'), own]);
+  assert.strictEqual(fsReal.statSync(own).mode & 0o777, 0o700);
+  assert.deepStrictEqual(notes, []);
+});
 
 test('t2348: every --add-dir a claude terminal seat is launched with has a seeded trust entry, under its path and its realpath', async (t) => {
   const p = require('node:path');

@@ -293,7 +293,7 @@ const { seatHasPlugin } = require('./plugin-api');
 const { classifyBootScreen, bootDialogNote } = require('./attention');
 const BOOT_SCREEN_TAIL = 16 * 1024;
 const { readTeamJson } = require('./team-prompt-dir');
-const { ensureSeatLink, renameSeat, removeSeat, renameTargets, pathInUse } = require('./seat-layout');
+const { ensureSeatLink, renameSeat, removeSeat, renameTargets, pathInUse, seatMessagesDirRefusal } = require('./seat-layout');
 const { SEAT_KINDS, seatPathFor, legacySeatPathFor, claudeProjectSlug } = require('./clodex-paths');
 const { LIVING_MARK } = require('./intent-catalog');
 const { resolveSubagent, nameOfSubagent, clearSubq, SUBQ_DM_SUFFIX, SUBQ_NAME_RE } = require('./subq');
@@ -2019,7 +2019,7 @@ function createSessionManager(deps) {
           ensureDir(MSG_DIR);
           if (!args.includes(MSG_DIR)) args.push('--add-dir', MSG_DIR);
           const seatMsgDir = seatPathFor(REGISTRY_DIR, name, 'messages');
-          if (ensureSeatLink({ root: REGISTRY_DIR, name, kind: 'messages', fs, log }) && !args.includes(seatMsgDir)) args.push('--add-dir', seatMsgDir);
+          if (ensureSeatLink({ root: REGISTRY_DIR, name, kind: 'messages', fs, log }) && !args.includes(seatMsgDir) && this._seatMessagesDirTrusted(name, workspaceId)) args.push('--add-dir', seatMsgDir);
           if (plan.writeConfig) {
             writeMcpConfig(name, mcpSel.servers);
             warnings.push(...mcpSel.warnings);
@@ -6142,6 +6142,20 @@ function createSessionManager(deps) {
       if (typeof scheduleTrayRefresh === 'function') scheduleTrayRefresh();
       if (!attn) this._maybeFlushInjectQueue(session);
       if (attn && attn.kind === 'permission') this._notePermissionInbox(session, attn);
+    }
+
+    _seatMessagesDirTrusted(name, workspaceId) {
+      const { reason, repaired } = seatMessagesDirRefusal({ root: REGISTRY_DIR, name, fs });
+      if (repaired) log.info('session', `seat ${name}: messages dir mode repaired to 0700`);
+      if (!reason) return true;
+      log.warn('session', `seat ${name}: messages dir not trusted — ${reason}`);
+      try {
+        const store = getNotifications && getNotifications();
+        if (store) store.add({ from: 'clodex', workspaceId: workspaceId || null, body: `seat ${name}: messages dir not trusted — ${reason}` });
+      } catch (e) {
+        this._shadowLog({ type: 'messages-dir-inbox-error', agent: name, error: e.message });
+      }
+      return false;
     }
 
     _notePermissionInbox(session, attn) {

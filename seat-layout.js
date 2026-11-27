@@ -1,5 +1,6 @@
 const path = require('path');
 const { seatDirFor, seatPathFor, legacySeatPathFor, runDirFor, SEAT_KINDS } = require('./clodex-paths');
+const { isSeatMessageFileName } = require('./seat-message-names');
 
 const MARKER = '.migrated';
 
@@ -226,6 +227,38 @@ function ensureSeatLink({ root, name, kind, fs = require('fs'), log = null } = {
   }
 }
 
+function shownEntryName(name) {
+  return String(name).replace(/[^\x20-\x7e]/g, '?').slice(0, 64);
+}
+
+function seatMessagesDirRefusal({ root, name, fs = require('fs'), uid = typeof process.getuid === 'function' ? process.getuid() : null } = {}) {
+  const dir = seatPathFor(root, name, 'messages');
+  let st;
+  try { st = fs.lstatSync(dir); } catch (e) { return { reason: `cannot stat ${dir} (${e.code || e.message})` }; }
+  if (st.isSymbolicLink()) return { reason: `${dir} is a symlink` };
+  if (!st.isDirectory()) return { reason: `${dir} is not a directory` };
+  let repaired = false;
+  if (uid !== null && uid !== undefined) {
+    if (st.uid !== uid) return { reason: `${dir} is owned by uid ${st.uid}, not ${uid}` };
+    if ((st.mode & 0o777) !== 0o700) {
+      try { fs.chmodSync(dir, 0o700); } catch (e) { return { reason: `cannot set ${dir} to mode 0700 (${e.code || e.message})` }; }
+      repaired = true;
+    }
+  }
+  let real, base;
+  try {
+    real = fs.realpathSync(dir);
+    base = fs.realpathSync(seatDirFor(root, name));
+  } catch (e) { return { reason: `cannot resolve ${dir} (${e.code || e.message})` }; }
+  const rel = path.relative(base, real);
+  if (!rel || rel.startsWith('..') || path.isAbsolute(rel)) return { reason: `${dir} resolves to ${real}, outside ${base}` };
+  let entries;
+  try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch (e) { return { reason: `cannot list ${dir} (${e.code || e.message})` }; }
+  const stray = entries.find((e) => !e.isFile() || !isSeatMessageFileName(e.name));
+  if (stray) return { reason: `${dir} holds '${shownEntryName(stray.name)}', which is not a delivered message file` };
+  return { reason: null, repaired };
+}
+
 function renameTargets(root, newName) {
   const out = [seatDirFor(root, newName)];
   for (const kind of Object.keys(SEAT_KINDS)) {
@@ -241,6 +274,6 @@ function pathInUse(fs, p) {
 
 module.exports = {
   migrateSeatLayout, ensureSeatLink, seatLayoutActive, readMarker,
-  renameSeat, removeSeat, renameTargets, pathInUse,
+  renameSeat, removeSeat, renameTargets, pathInUse, seatMessagesDirRefusal,
   MARKER, DEFERRED_KINDS, LEGACY_MARKER_KINDS,
 };
