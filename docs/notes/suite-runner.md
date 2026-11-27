@@ -82,3 +82,6 @@ With `box` null, or a `labelsOnly` box and no named want, `info.box` is null and
 
 ## detachTree
 `detachTree` runs after the tree-hash proof and before the deps key, for box jobs only; `HEAD` and the index survive the repack, so `git status`, `git log -1` and `git rev-parse HEAD` work in a detached tree with the mirror gone (pinned in `test/suite-runner.test.js`). `runJob` binds `isolation` to the job's adapter so the source-shape pin on `isolation.prepare` keeps applying to both adapters.
+
+## MAX_SLOTS
+A runner's `slots` is written by the Preferences Apply (`suiteRunner:set`) and by `setSuiteRunnerSlots` in remote-wiring.js (`POST /api/testjobs/slots`, `clodexctl patch testjobs --slots N`), which validates against this constant. Either write applies through `applySuiteRunner`: at once on an idle runner, else after the running jobs drain.

@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+- Test runners: a runner's slot count can be set with `clodexctl` (and by the node's own agent), not only in Preferences. A change waits for running suites to finish.
+
 ## 5.199.0 — 2026-11-26
 
 - Peers: a peer you add now has its own tick, 'Share my agents with this peer', so the peer's agents can see yours in `who` without enabling relay. Relay now covers only the agents of your other peers. Existing peers keep their current behaviour.

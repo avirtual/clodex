@@ -1093,6 +1093,10 @@ alone; naming a pool member there is refused. Bare `[agent:team runner]` on a po
 prints a head line, one line per member (name, wire, reach with its queue, and
 `slots <in use>/<total> in use` from the runner's info), then the tally; under
 `gate:on` the tally adds `per runner: <name> <n> box, <m> home`.
+A runner's slot count is set in Preferences or, on the runner node itself, with
+`clodexctl patch testjobs --slots N` (an agent there: `[agent:ctl <ctx>] patch
+testjobs --slots N`, where `<ctx>` names the node's own engine); a change waits
+for the runner's running jobs to finish.
 
 With more than one member, every gate submit (`_shadowSubmit`, `_boxDecide`, so
 the verify, its re-measure and post-merge) asks `pickRunner` (suite-client.js):
