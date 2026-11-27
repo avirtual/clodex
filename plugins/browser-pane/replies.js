@@ -49,8 +49,8 @@ function withPath(head, tail) {
 function ignoredTail(ig) {
   if (!ig) return '';
   const hosts = Array.isArray(ig.hosts) ? ig.hosts.map((h) => oneLine(String(h), 60)) : [];
-  const req = ig.requests > 0 ? `${ig.requests} repeating requests${hosts.length ? ` to ${hosts.slice(0, 3).join(', ')}${hosts.length > 3 ? ` +${hosts.length - 3} more` : ''}` : ''}` : '';
-  const tick = ig.ticking > 0 ? `${ig.ticking} ticking elements` : '';
+  const req = ig.requests > 0 ? `${ig.requests} repeating request${ig.requests === 1 ? '' : 's'}${hosts.length ? ` to ${hosts.slice(0, 3).join(', ')}${hosts.length > 3 ? ` +${hosts.length - 3} more` : ''}` : ''}` : '';
+  const tick = ig.ticking > 0 ? `${ig.ticking} ticking element${ig.ticking === 1 ? '' : 's'}` : '';
   const both = [req, tick].filter(Boolean).join(' and ');
   return both ? ` (ignoring ${both})` : '';
 }

@@ -293,12 +293,28 @@ test('driver armIdle: a chain reopened 400 ms after each end is not learned and 
   watch.detach();
 });
 
+test('driver armIdle: one request held 1200 ms followed by two sends 5 ms and 10 ms after its end is one link, not learned, and the act stays busy', async () => {
+  const clk = timeline();
+  const f = fakeWc();
+  const watch = await driver.armIdle(f.wc, { now: clk.now });
+  const { idle } = await driver.act(f.wc, async () => {
+    const t0 = clk.t;
+    f.sent('g0', 'https://x.example/api/graphql', 'Fetch', 'POST');
+    clk.at(t0 + 1200, () => f.finished('g0'));
+    clk.at(t0 + 1205, () => f.sent('g1', 'https://x.example/api/graphql', 'Fetch', 'POST'));
+    clk.at(t0 + 1210, () => f.sent('g2', 'https://x.example/api/graphql', 'Fetch', 'POST'));
+  }, { now: clk.now, sleepFn: clk.sleepFn, timeoutMs: 3000 });
+  assert.strictEqual(idle.ok, false);
+  assert.strictEqual(idle.reason, 'timeout');
+  assert.strictEqual(watch.background(), 0);
+  assert.strictEqual(watch.size(), 2);
+  watch.detach();
+});
+
 test('driver armIdle: a single 60000 ms stream still ages out at STREAM_MS and is not reported as repeating', async () => {
   const clk = timeline();
   const f = fakeWc();
-  f.sent('stream', 'https://x.example/stream', 'Fetch', 'POST');
-  clk.at(clk.t + 60000, () => f.finished('stream'));
-  const { idle } = await driver.act(f.wc, async () => f.sent('s2', 'https://x.example/stream2', 'Fetch', 'POST'), { now: clk.now, sleepFn: clk.sleepFn, timeoutMs: 15000 });
+  const { idle } = await driver.act(f.wc, async () => { f.sent('stream', 'https://x.example/stream', 'Fetch', 'POST'); clk.at(clk.t + 60000, () => f.finished('stream')); }, { now: clk.now, sleepFn: clk.sleepFn, timeoutMs: 15000 });
   assert.strictEqual(idle.ok, true);
   assert.ok(idle.ms >= 8000 && idle.ms < 9000, String(idle.ms));
   assert.ok(!('ignored' in idle));
@@ -337,14 +353,15 @@ test('driver waitIdle: a request opened before the wait starts is waited for (30
 function fakePage(clk, mutate) {
   const g = {};
   const el = (tag, parent, cls) => ({ nodeType: 1, tagName: tag.toUpperCase(), id: '', classList: cls ? [cls] : [], parentElement: parent });
-  const page = { el, body: el('body', null), probes: 0 };
+  const html = el('html', null);
+  const page = { el, html, body: el('body', html), probes: 0 };
   page.run = (code) => {
     page.probes++;
     let ms = 0;
     let obs = null;
     const timers = [];
     class MO { constructor(cb) { obs = cb; } observe() {} disconnect() { obs = null; } }
-    const p = new Function('globalThis', 'document', 'MutationObserver', 'performance', 'setTimeout', `return ${code}`)(g, { readyState: 'complete' }, MO, { now: () => ms }, (fn, d) => timers.push({ at: ms + d, fn }));
+    const p = new Function('globalThis', 'document', 'MutationObserver', 'performance', 'setTimeout', `return ${code}`)(g, { readyState: 'complete', body: page.body, documentElement: html }, MO, { now: () => ms }, (fn, d) => timers.push({ at: ms + d, fn }));
     while (timers.length && ms < 20000) {
       ms += 50;
       if (obs) { const recs = mutate(ms, page); if (recs.length) obs(recs); }
@@ -379,4 +396,24 @@ test('driver armIdle: twelve ticking elements churn the first probe and are quie
   const r2 = await w2.wait({ quietMs: 500, timeoutMs: 5000 });
   assert.strictEqual(r2.ok, false);
   assert.deepStrictEqual(r2.churn, ['div.g-Td-Jb', 'div.g-Td-Jb', 'div.g-Td-Jb']);
+});
+
+test('driver armIdle: body and a container of churning elements mutated 3 times in the first probe are never learned, so a node added under them later is still busy', async () => {
+  const clk = timeline();
+  const f = fakeWc();
+  const tickers = [];
+  let app = null;
+  const page = fakePage(clk, (ms, pg) => [
+    ...(ms % 100 === 50 ? tickers.map((e) => ({ type: 'characterData', target: { nodeType: 3, parentElement: e } })) : []),
+    ...(pg.probes === 1 && [300, 600, 900].includes(ms) ? [{ type: 'attributes', target: pg.body }, { type: 'attributes', target: app }] : []),
+    ...(pg.probes > 1 && ms === 250 ? [{ type: 'childList', target: app }] : []),
+  ]);
+  app = page.el('div', page.body, 'app');
+  for (let i = 0; i < 12; i++) tickers.push(page.el('div', app, 'g-Td-Jb'));
+  f.wc.executeJavaScript = async (code) => page.run(code);
+  const w = await driver.armIdle(f.wc, { now: clk.now, sleepFn: clk.sleepFn });
+  const r = await w.wait({ quietMs: 500, timeoutMs: 9000 });
+  assert.strictEqual(r.ok, false);
+  assert.ok(page.probes >= 2, String(page.probes));
+  assert.deepStrictEqual(r.churn, ['div.g-Td-Jb', 'div.g-Td-Jb', 'div.g-Td-Jb']);
 });

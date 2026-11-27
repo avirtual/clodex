@@ -32,7 +32,8 @@ function learnOf(wc) {
       const k = keyOf(v);
       const p = last.get(k);
       if (!p) return;
-      p.run = p.held >= CHAIN_HELD_MS && v.at - p.end <= CHAIN_GAP_MS ? p.run + 1 : 0;
+      if (!(p.held >= CHAIN_HELD_MS && v.at - p.end <= CHAIN_GAP_MS)) p.run = 0;
+      else if (!p.credited) { p.credited = true; p.run += 1; }
       if (p.run >= CHAIN_RUN) bg.add(k);
     },
     ended(id, at) {
@@ -43,6 +44,7 @@ function learnOf(wc) {
       const p = last.get(k) || { run: 0 };
       p.end = at;
       p.held = at - v.at;
+      p.credited = false;
       last.set(k, p);
     },
     reset() { open.clear(); last.clear(); bg.clear(); },
@@ -146,7 +148,7 @@ async function armIdle(wc, { network = true, now = Date.now, sleepFn = sleep, wo
           const code = `new Promise(fin => {
             const seen = globalThis.__clodexChurn || (globalThis.__clodexChurn = new WeakSet()); const known = new Map(); let foreign = false; const inKnown = k => { for (let e = k; e; e = e.parentElement) if (seen.has(e)) return true; return false; };
             let last = performance.now(); const hits = new Map(); const label = k => k.tagName.toLowerCase() + (k.id ? '#' + k.id : '') + (k.classList && k.classList[0] ? '.' + k.classList[0] : '');
-            const res = v => { if (v.churn || v.ticker) for (const [k, n] of hits) if (n >= 2) seen.add(k); if (known.size && !foreign) v.ticking = known.size; fin(v); };
+            const res = v => { if (v.churn || v.ticker) { const anc = new Set(); for (const k of hits.keys()) for (let e = k.parentElement; e; e = e.parentElement) anc.add(e); for (const [k, n] of hits) if (n >= 3 && !anc.has(k) && k !== document.body && k !== document.documentElement) seen.add(k); } if (known.size && !foreign) v.ticking = known.size; fin(v); };
             const mo = new MutationObserver(ms => { for (const m of ms) { const k = m.target.nodeType === 1 ? m.target : m.target.parentElement; if (!foreign && k && inKnown(k)) { known.set(k, (known.get(k) || 0) + 1); continue; } if (!foreign && m.type === 'childList') { foreign = true; for (const [e, n] of known) hits.set(e, (hits.get(e) || 0) + n); } last = performance.now(); if (k) hits.set(k, (hits.get(k) || 0) + 1); } });
             mo.observe(document, { subtree: true, childList: true, attributes: true, characterData: true });
             const t0 = performance.now(); const tick = () => { const q = performance.now() - last; if (q >= ${quietMs}) { mo.disconnect(); res({ state: document.readyState }); return; } if (performance.now() - t0 >= ${quietMs} * 4 && hits.size > 0 && hits.size <= 8 && [...hits.values()].every(n => n >= 3)) { mo.disconnect(); const k = [...hits.entries()].sort((a, b) => b[1] - a[1])[0][0]; res({ state: document.readyState, ticker: label(k) }); return; } if (performance.now() - t0 >= ${quietMs} * 4 + 2000) { mo.disconnect(); res({ state: document.readyState, churn: [...hits.entries()].sort((a, b) => b[1] - a[1]).slice(0, 3).map(([k]) => label(k)) }); return; } setTimeout(tick, 100); }; setTimeout(tick, 100); })`;

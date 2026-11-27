@@ -828,6 +828,8 @@ test('replies: an idle that ignored repeating requests or ticking elements says 
     '[agent:browser] clicked drive [4] clickable "Files" · same page · idle 6.6s (ignoring 12 ticking elements)');
   assert.strictEqual(R.waitReply('drive', { ok: true, ms: 3100, ignored: { requests: 5, hosts: ['signaler-pa.example.com'], ticking: 0 } }),
     '[agent:browser] drive idle after 3.1s (ignoring 5 repeating requests to signaler-pa.example.com)');
+  assert.strictEqual(R.waitReply('drive', { ok: true, ms: 3100, ignored: { requests: 1, hosts: ['signaler-pa.example.com'], ticking: 1 } }),
+    '[agent:browser] drive idle after 3.1s (ignoring 1 repeating request to signaler-pa.example.com and 1 ticking element)');
   assert.strictEqual(R.waitReply('drive', { ok: false, ms: 15000, inflight: ['https://x.example/a'], ignored: { requests: 5, hosts: ['signaler-pa.example.com'], ticking: 0 } }),
     '[agent:browser] drive still busy after 15s (1 requests in flight: https://x.example/a)');
 });
