@@ -94,3 +94,9 @@ Every box change the runner makes itself (a build ending, an image it prunes) dr
 
 ## NAMED_BOX_MAX
 `namedBoxes` is keyed by definition hash and rev and evicts in insertion order; the bound caps it against a source that asks for many hashes.
+
+## NAMED_BOX_RETRY_MS
+An `unavailable` box state (a Docker timeout, an unreachable daemon) or an unread free-space reading in `rooms` is refreshed after 5 s instead of 30 s, so one Docker hiccup does not keep a member out of picks for the full TTL.
+
+## cachedRead
+An expired entry still answers its last value while one refresh runs in the background; the refresh writes only while the key still maps to the same entry, so a `forgetBox` during it is never undone. The first-ever read of a key is the only one that waits on Docker. `rooms` caches `box.freeBytes` for `buildAnswer` on the info path only; `submit` and `buildBox` read it live through `readRoom`.

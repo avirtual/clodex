@@ -1276,7 +1276,7 @@ reroute repeats. The held-ticket retry sweep does not reroute; its pick may choo
 the lost member again once that member answers info. Compare rows of a pooled team carry `runner: <member>`, the member that
 ran the job, and a superseded job's cancel goes to that member.
 
-A runner answers a named info call (`definitionHash` and `rev`) from a per-hash cache of its Docker box state (`namedBoxes` in suite-runner.js; 30 s, 32 entries, one shared probe per name, dropped when the runner finishes or fails a build of that hash or prunes its image, and empty on every enable); while the first probe of a name is still running after 2.5 s it answers `probing` with the hash instead of making the source time out. Slots, pending and queue are always read live. A 5.208 source skips a `probing` member as `no box for this job`.
+A runner answers a named info call (`definitionHash` and `rev`) from a per-hash cache of its Docker box state (`namedBoxes` in suite-runner.js; 30 s, 5 s for an `unavailable` state, 32 entries, one shared probe per name, dropped when the runner finishes or fails a build of that hash or prunes its image, and empty on every enable), with its free-space reading for `can-build` cached the same way; past the TTL it answers the last known state while one refresh runs. Only while the first probe of a name is still running after 2.5 s does it answer `probing` with the hash instead of making the source time out. Slots, pending and queue are always read live. A 5.208 source skips a `probing` member as `no box for this job`.
 
 On a pool, a hand, verify or shadow job that its runner accepted but has not
 started (state `queued`) re-asks the pick every 60 s (`MOVE_CHECK_MS`,
