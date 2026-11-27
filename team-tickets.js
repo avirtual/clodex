@@ -7869,7 +7869,7 @@ function createTicketMethods(deps, shared) {
         const tag = `[ticket ${ticketId} HELD]`;
         const tries = `${attempts} automatic box ${attempts === 1 ? 'retry' : 'retries'}`;
         const why = cause === 'limit'
-          ? `the box did not decide (${fallback}) and automatic retries stopped at the ${BOX_RETRY_WINDOW_MS / 60000} min limit after ${tries}`
+          ? `the box did not decide (${fallback}) and automatic retries stopped at the ${BOX_RETRY_WINDOW_MS / 60000} min limit (${attempts} of ${BOX_RETRY_MAX} tried)`
           : `${tries} did not decide (${fallback})`;
         const waited = `${Math.round(waitedMs / 60000)} min`;
         const body = `${tag} ${why}; it waited ${waited} in total. Try again with [agent:task verify ${ticketId}].`;
