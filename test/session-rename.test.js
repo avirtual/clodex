@@ -422,7 +422,7 @@ for (const row of [
   { what: 'an empty name', to: '', error: /1–64 chars/ },
   { what: 'a non-string name', to: null, error: /1–64 chars/ },
   { what: 'the SAME name', to: 'seat', error: /already called that/ },
-  { what: 'the pending-store reserved name', to: '.claims', error: /\.claims is a reserved name/ },
+  { what: 'the pending-store reserved name', to: '.claims', error: /"\.claims" is a reserved name/ },
 ]) {
   test(`rename refuses ${row.what}, and nothing moves`, async () => {
     const root = mkTmpRoot('clodex-rename-');

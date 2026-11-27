@@ -5,7 +5,7 @@ const crypto = require('crypto');
 
 const { SEAT_KINDS, seatDirFor, seatPathFor, legacySeatPathFor, claudeProjectSlug } = require('./clodex-paths');
 const { ensureSeatLink, renameTargets, pathInUse } = require('./seat-layout');
-const { isReservedSeatName } = require('./pending-store');
+const { isReservedSeatName, reservedSeatError } = require('./pending-store');
 const { isReservedSenderName, reservedSenderError } = require('./system-senders');
 const { isSeatMessageFileName } = require('./seat-message-names');
 
@@ -213,7 +213,7 @@ function createSeatImport({
 
   function begin({ name, record } = {}) {
     if (typeof name !== 'string' || !SEAT_NAME_RE.test(name)) return fail(`invalid seat name '${name}'`);
-    if (isReservedSeatName(name)) return fail(`reserved seat name '${name}'`);
+    if (isReservedSeatName(name)) return fail(reservedSeatError(name));
     if (isReservedSenderName(name)) return fail(reservedSenderError(name));
     if (!record || typeof record !== 'object' || Array.isArray(record)) return fail('record must be an object');
     if (record.type !== 'claude' && record.type !== 'codex') return fail(`unsupported seat type '${record.type}'`);
@@ -343,7 +343,7 @@ function createSeatImport({
 
     const { name, record } = manifest;
     if (typeof name !== 'string' || !SEAT_NAME_RE.test(name)) return fail(`invalid seat name '${name}'`);
-    if (isReservedSeatName(name)) return fail(`reserved seat name '${name}'`);
+    if (isReservedSeatName(name)) return fail(reservedSeatError(name));
     if (isReservedSenderName(name)) return fail(reservedSenderError(name));
     if (!record || typeof record !== 'object') return fail('staging manifest has no record');
 

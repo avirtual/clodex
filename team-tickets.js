@@ -3,6 +3,7 @@ const teamCost = require('./team-cost');
 const { defuseSenderLines } = require('./review-gate');
 const { bootDialogNote } = require('./attention');
 const { isReservedSenderName, reservedSenderError } = require('./system-senders');
+const { isReservedSeatName, reservedSeatError } = require('./pending-store');
 const { buildReviewScope, reviewBeginLine } = require('./ticket-review-scope');
 const { projectDirFor } = require('./clodex-paths');
 const { TEST_ROOTS } = require('./scripts/clodex-run-tests');
@@ -577,6 +578,7 @@ function createTicketMethods(deps, shared) {
       if (!AGENT_NAME_RE.test(name)) {
         return { ok: false, error: `invalid name "${name}" — allowed [a-zA-Z0-9._-], 1-64 chars` };
       }
+      if (isReservedSeatName(name)) return { ok: false, error: reservedSeatError(name) };
       if (isReservedSenderName(name)) return { ok: false, error: reservedSenderError(name) };
       if (this.sessions.has(name) || getPersistence().get(name)) {
         return { ok: false, error: `name taken "${name}"` };

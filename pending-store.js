@@ -28,7 +28,8 @@ const { isAlive } = require('./stream-seat');
 //     claim with a copy and deliver the same message twice.
 
 const CLAIMS = '.claims';
-const RESERVED_SEAT_NAMES = new Set([CLAIMS]);
+const CLI_CONFIG_SEAT_NAMES = new Set(['.claude', 'claude.md', '.mcp.json']);
+const RESERVED_SEAT_NAMES = new Set([CLAIMS, ...CLI_CONFIG_SEAT_NAMES]);
 const LEGACY_CLAIM_RE = /^\.resend\.|\.draining\.[a-z]+\.\d+$/i;
 const CLAIM_TAG_RE = /^[a-z]+\.(\d+)(?:-([0-9a-f]+))?$/;
 const LAUNCH_NONCE = crypto.randomBytes(4).toString('hex');
@@ -51,6 +52,8 @@ function claimPath(root, entry) {
 
 function isClaimEntry(name) { return name === CLAIMS || LEGACY_CLAIM_RE.test(name); }
 function isReservedSeatName(name) { return RESERVED_SEAT_NAMES.has(String(name).toLowerCase()) || LEGACY_CLAIM_RE.test(String(name)); }
+function isCliConfigSeatName(name) { return CLI_CONFIG_SEAT_NAMES.has(String(name).toLowerCase()); }
+function reservedSeatError(name) { return `"${name}" is a reserved name`; }
 
 // Does parked file `f` carry resend id `id`? STRUCTURAL match, not a suffix
 // endsWith: an id-tagged basename is `<ts>.<counter>.<id>.json` (4 dot-segments,
@@ -423,4 +426,4 @@ function claimParkedByKey(root, name, key) {
   return { ids, claimed };
 }
 
-module.exports = { isClaimEntry, parkDelivery, drainPending, rehomeOrphans, hasPending, hasActivePending, countPending, peekPending, oldestActiveParkTs, oldestDueRide, parkedTexts, allParkedTexts, parkIdInUse, claimParkedById, claimParkedByKey, agentDir, claimsDir, CLAIM_STALE_MS, RESERVED_SEAT_NAMES, LEGACY_CLAIM_RE, CLAIM_TAG_RE, claimTag, isReservedSeatName };
+module.exports = { isClaimEntry, parkDelivery, drainPending, rehomeOrphans, hasPending, hasActivePending, countPending, peekPending, oldestActiveParkTs, oldestDueRide, parkedTexts, allParkedTexts, parkIdInUse, claimParkedById, claimParkedByKey, agentDir, claimsDir, CLAIM_STALE_MS, RESERVED_SEAT_NAMES, LEGACY_CLAIM_RE, CLAIM_TAG_RE, claimTag, isReservedSeatName, isCliConfigSeatName, reservedSeatError };

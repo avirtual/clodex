@@ -110,7 +110,7 @@ const CASES = [
   { name: '   ', kind: 'empty', ok: false, message: '' },
   { name: 'bob', kind: 'free', ok: true, message: '' },
   { name: '.hidden', kind: 'free', ok: true, message: '' },
-  { name: '.claims', kind: 'reserved', ok: false, message: 'That name is reserved by the mail store — pick another name.' },
+  { name: '.claims', kind: 'reserved', ok: false, message: 'That name is reserved by Clodex — pick another name.' },
   { name: '  bob  ', kind: 'free', ok: true, message: '' },
 ];
 

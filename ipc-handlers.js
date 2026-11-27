@@ -2,6 +2,7 @@
 
 const { pathFor, fixDirFor, seatDirFor } = require('./clodex-paths');
 const { nameConflict } = require('./session-manager');
+const { isReservedSeatName, reservedSeatError } = require('./pending-store');
 const { stampServedAge } = require('./proxy-util');
 // Required directly, not injected: a second draft predicate would drift from the one the
 // inject queue gates deliveries on.
@@ -166,6 +167,7 @@ function registerIpcHandlers(deps) {
     let written = false;
     let res;
     try {
+      if (isReservedSeatName(p.name)) throw new Error(reservedSeatError(p.name));
       createTeam({ name: teamName, root: p.cwd, lead: p.name, kit: p.kit, shareRoot: p.shareRoot === true });
       written = true;
       res = await spawnFromParams(e, p);

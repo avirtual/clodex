@@ -11,7 +11,7 @@ const nameValidity = require('../renderer/lib/name-validity');
 const { mk } = require('./lib/session-fixtures');
 
 test('the renderer copy of the reserved seat names agrees with pending-store', () => {
-  assert.deepStrictEqual([...RESERVED_SEAT_NAMES], ['.claims']);
+  assert.deepStrictEqual([...RESERVED_SEAT_NAMES], ['.claims', '.claude', 'claude.md', '.mcp.json']);
   assert.deepStrictEqual([...nameValidity.RESERVED_SEAT_NAMES], [...RESERVED_SEAT_NAMES]);
   assert.strictEqual(nameValidity.LEGACY_CLAIM_RE.source, LEGACY_CLAIM_RE.source);
   assert.strictEqual(nameValidity.LEGACY_CLAIM_RE.flags, LEGACY_CLAIM_RE.flags);
@@ -47,7 +47,7 @@ for (const name of ['.CLAIMS', '.Claims']) {
   test(`rename refuses ${name} as reserved`, async () => {
     const m = mk({});
     const r = await m.rename('alpha', name);
-    assert.deepStrictEqual(r, { ok: false, error: `${name} is a reserved name` });
+    assert.deepStrictEqual(r, { ok: false, error: `"${name}" is a reserved name` });
   });
 }
 
