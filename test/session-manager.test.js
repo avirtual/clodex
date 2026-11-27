@@ -1541,7 +1541,11 @@ function mkReboot({ intents = ['reboot'], lastRebootAt = 0, relaunchThrows = fal
   const relaunches = [];
   const injected = [];
   const broadcasts = [];
+  const parks = [];
   const m = mk({
+    parkDelivery: (_dir, name, text) => { parks.push({ name, text }); },
+    PENDING_DIR: '/tmp/pending-reboot-x',
+    INJECT_QUIET_MAXWAIT: 3_600_000,
     getPersistence: () => ({ list: () => [], get: (n) => (n === 'a' ? { intents } : null) }),
     getUiSettings: () => ({
       get: () => ({ ...state }),
@@ -1554,12 +1558,12 @@ function mkReboot({ intents = ['reboot'], lastRebootAt = 0, relaunchThrows = fal
     // rather than a timestamp — the give-up path is only reachable through them.
     relaunchApp: (opts) => { if (relaunchThrows) throw new Error('relaunch boom'); relaunches.push(opts || {}); },
     ...(suiteRestartJobs ? { suiteRestartJobs } : {}),
-    log: { info: () => {}, error: () => {}, warn: () => {} },
+    log: { info: () => {}, error: () => {}, warn: () => {}, debug: () => {} },
   });
   m._injectText = (_s, text) => injected.push(text);
   m._broadcast = (_ch, msg) => broadcasts.push(msg);
   m.sessions.set('a', { name: 'a', agentType: 'claude', workspaceId: 'ws1' });
-  return { m, state, relaunches, injected, broadcasts };
+  return { m, state, relaunches, injected, broadcasts, parks };
 }
 
 test('reboot: a seat granted the reboot intent → seam fires once, confirm injected, stamp written', async () => {
@@ -2013,6 +2017,55 @@ test('reboot notice: no armed notice → a clean no-op (no deliver, no park, no 
   m.maybeDeliverRebootNotice();
   assert.strictEqual(delivered.length, 0);
   assert.strictEqual(parks.length, 0);
+});
+
+const REQUESTED_AT = 1795751258620;
+
+test('reboot notice: the process that requested the reboot never delivers its own notice', async (t) => {
+  t.mock.method(Date, 'now', () => REQUESTED_AT);
+  const { m, state, parks } = mkReboot({ intents: ['reboot'] });
+  await m._handleIntent('a', { type: 'reboot', body: 'x' });
+  assert.ok(state.pendingRebootNotice, 'ENTER: the request armed a notice');
+  assert.strictEqual(typeof m._launchId, 'string');
+  assert.strictEqual(state.pendingRebootNotice.launch, m._launchId, 'ENTER: the record names this launch');
+  m.maybeDeliverRebootNotice();
+  assert.strictEqual(parks.length, 0, 'nothing parked in the requesting process');
+  assert.deepStrictEqual(state.pendingRebootNotice, { name: 'a', at: 1795751258620, reason: 'x', launch: m._launchId });
+  assert.strictEqual(m.sessions.get('a')._rebootNoticeRetryTimer, undefined, 'no retry timer armed');
+  assert.strictEqual(m.sessions.get('a')._rebootNoticeFlushTimer, undefined, 'no flush timer armed');
+});
+
+test('reboot notice: the next launch over the same record delivers it exactly once', async (t) => {
+  t.mock.method(Date, 'now', () => REQUESTED_AT);
+  const first = mkReboot({ intents: ['reboot'] });
+  await first.m._handleIntent('a', { type: 'reboot', body: 'suite wait' });
+  const record = first.state.pendingRebootNotice;
+  assert.ok(record && record.launch, 'ENTER: the first launch wrote a launch-stamped record');
+  Date.now.mock.mockImplementation(() => REQUESTED_AT + 180_000);
+  const { m, parks, disarm } = mkNotice({ notice: record, live: true });
+  assert.notStrictEqual(m._launchId, record.launch, 'ENTER: a second manager is a different launch');
+  m.maybeDeliverRebootNotice();
+  disarm();
+  assert.strictEqual(parks.length, 1);
+  assert.strictEqual(parks[0].text, '[agent:from reboot] notice: Clodex restarted and is running again (reboot requested at 2026-11-27T03:47:38.620Z: suite wait).');
+});
+
+test('reboot notice: a legacy record with no launch still delivers', () => {
+  const { m, parks, disarm } = mkNotice({ notice: { name: 'a', at: Date.now(), reason: 'upgrade' }, live: true });
+  m.maybeDeliverRebootNotice();
+  disarm();
+  assert.strictEqual(parks.length, 1);
+  assert.match(parks[0].text, /restarted and is running again \(reboot requested at .+: upgrade\)/);
+});
+
+test('reboot notice: a held notice is still cleared when the reboot is abandoned', async () => {
+  const { m, state, relaunches, parks } = mkReboot({ intents: ['reboot'] });
+  await m._handleIntent('a', { type: 'reboot', body: 'x' });
+  m.maybeDeliverRebootNotice();
+  assert.strictEqual(parks.length, 0, 'ENTER: the requesting launch held the notice');
+  assert.ok(state.pendingRebootNotice, 'ENTER: the held notice is still armed');
+  relaunches[0].onAbandon('timeout');
+  assert.strictEqual(state.pendingRebootNotice, null, 'an abandoned reboot leaves nothing for a later restart to announce');
 });
 
 // ── Task 28 amendment (contrarian review) ───────────────────────────────────

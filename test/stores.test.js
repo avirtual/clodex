@@ -626,6 +626,10 @@ test('uiSettings: pendingRebootNotice ships null, round-trips, sanitizes, and cl
     // false against the ceiling forever and re-announce on every launch.
     uiSettings.set({ pendingRebootNotice: { name: 'x', at: 'soon', reason: 42, attempts: 'lots' } });
     assert.deepStrictEqual(uiSettings.get().pendingRebootNotice, { name: 'x', at: 0, reason: '', attempts: 0 });
+    uiSettings.set({ pendingRebootNotice: { name: 'clodex', at: 1234567890, reason: 'nightly', attempts: 0, launch: 'L1' } });
+    assert.deepStrictEqual(uiSettings.get().pendingRebootNotice, { name: 'clodex', at: 1234567890, reason: 'nightly', attempts: 0, launch: 'L1' });
+    uiSettings.set({ pendingRebootNotice: { name: 'clodex', at: 1, reason: '', launch: 42 } });
+    assert.deepStrictEqual(uiSettings.get().pendingRebootNotice, { name: 'clodex', at: 1, reason: '', attempts: 0 });
     uiSettings.set({ pendingRebootNotice: { at: 5 } }); // no name
     assert.strictEqual(uiSettings.get().pendingRebootNotice, null);
     // Explicit null is a real clear (one-shot), not "keep".

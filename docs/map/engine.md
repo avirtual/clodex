@@ -296,7 +296,7 @@ seams.skillLister         — (tests only)                     — (tests only) 
 - `restartSession` and `applySessionArgs` wait for the old process to leave `manager.sessions` before `create`, so the re-create does not race "session already exists".
 - `waitForSessionExit` keeps its default above kill's SIGKILL fallback, so a stuck process is reaped before the restart gives up.
 - `applySessionArgs` passes `create` the resolved value for every edited field, never `beforeKill`'s, because create rebuilds the record from its positional arguments alone.
-- `restoreSessionsForWorkspace` runs on every workspace open, so the reboot notice and lost-exec delivery it fires must stay idempotent.
+- `restoreSessionsForWorkspace` runs on every workspace open, so the reboot notice and lost-exec delivery it fires must stay idempotent, and the reboot notice is never delivered within the launch that requested it.
 - `readCtxFor` is a const declared after the SessionManager deps object, which is why that object reaches it through an arrow wrapper rather than by value.
 
 ### Hazards
