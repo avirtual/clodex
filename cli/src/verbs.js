@@ -305,12 +305,20 @@ async function apiResources({ client, ctx, printer, flags }) {
   printer.line(out.renderResources(doc.resources || []));
 }
 
-async function version({ client, printer, flags }) {
-  const hello = await client.get('/api/peer/hello', 'version');
+async function version({ client, printer, flags, dial = (fn) => fn(client) }) {
+  if (!flags.json) printer.line(VERSION);
+  let hello;
+  try {
+    hello = await dial((c) => c.get('/api/peer/hello', 'version'));
+  } catch (e) {
+    const reason = (e && e.message) || String(e);
+    if (flags.json) { printer.json({ client: VERSION, server: null, error: reason }); return; }
+    printer.line(`node: unreachable (${reason})`);
+    return;
+  }
   const host = hello.host || '?';
   const ver = hello.version || '?';
   if (flags.json) { printer.json({ client: VERSION, server: { host, version: ver } }); return; }
-  printer.line(VERSION);
   printer.line(`Server: ${host} ${ver}`);
 }
 

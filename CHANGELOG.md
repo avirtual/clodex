@@ -13,6 +13,9 @@ blocks a release.
 
 ## Unreleased
 
+- Browser pane: buttons that share a label are listed with the row they belong to; the prompt names the batched browser tool for bulk work; the docs show quoted flag values.
+- clodexctl: `version` prints the client version even when the node cannot be reached.
+
 ## 5.204.0 — 2026-11-27
 
 - Test boxes: a node's offer now shows the CPUs and memory of its container runtime, which is what its boxes share, with the host's numbers beside it when they differ.

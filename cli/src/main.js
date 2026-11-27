@@ -239,6 +239,11 @@ async function run(argv, io = {}) {
     if (!handler) throw new CliError(EXIT.USAGE, `unknown verb: ${verb} (try --help)`);
     V.checkResourceWord(verb, rest);
     preflightResourceWord(verb, rest);
+    if (verb === 'version') {
+      const dial = async (fn) => { let out; await withWire(flags, io, async (client) => { out = await fn(client); }); return out; };
+      await V.version({ printer, flags, dial });
+      return EXIT.OK;
+    }
     // io.prompt is an injectable confirm seam (tests pass a canned answerer);
     // absent → the verb falls back to its readline-over-stderr default. attach
     // needs the resolved ctx (for its banner) + io (its TTY seam), so withWire
