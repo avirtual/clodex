@@ -7065,7 +7065,7 @@ function createTicketMethods(deps, shared) {
         .catch((e) => ({ unknown: `client error: ${e && e.message ? e.message : e}`, res: null, record: null }));
       const buildable = def && typeof def.definition === 'string';
       const guardMs = Number.isFinite(deps.boxDecideGuardMs) ? deps.boxDecideGuardMs
-        : TICKET_SUITE_TIMEOUT + this._runnerRunExtra(tr) + gateQueueExtra + BOX_DECIDE_GUARD_SLACK_MS + (buildable ? BOX_DECIDE_QUEUE_MS + BUILD_BUDGET_MS : 0);
+        : TICKET_SUITE_TIMEOUT + this._runnerRunExtra(tr) + gateQueueExtra + BOX_DECIDE_GUARD_SLACK_MS + (buildable ? gateQueueMs + BUILD_BUDGET_MS : 0);
       const timers = deps.boxDecideTimers || { setTimeout, clearTimeout };
       let timer = null;
       const LATE = {};
