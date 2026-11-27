@@ -218,6 +218,7 @@ test('ledger: a named run\'s start says named:<file count>, and the digest hands
   assert.strictEqual(own.totals, 'TOTALS: 3 pass, 0 fail, 3 tests', 'ENTER: the own run was green');
   const starts = readLedger(file).filter((r) => r.phase === 'start');
   assert.deepStrictEqual(starts.map((r) => [r.id, r.scope, r.named]), [['run-9', 'own', 2], ['run-10', 'own', undefined]]);
+  assert.deepStrictEqual(starts.map((r) => [r.id, 'files' in r, 'filesCut' in r]), [['run-9', true, false], ['run-10', false, false]]);
 
   const probeRoot = fs.realpathSync(mkTmpRoot('clx-ledger-named-'));
   const probe = path.join(probeRoot, 'probe.json');
@@ -235,4 +236,32 @@ test('ledger: a named run\'s start says named:<file count>, and the digest hands
   const res = spawnSync(process.execPath, [DIGEST], { cwd: probeRoot, input: '{"files":["test/a.test.js","test/b.test.js"]}', encoding: 'utf8', timeout: 60000, env });
   assert.ok(fs.existsSync(probe), `ENTER: the stub runner ran (${res.stderr})`);
   assert.strictEqual(JSON.parse(fs.readFileSync(probe, 'utf8')), '2');
+});
+
+test('t2459: a named local run\'s start lists the named files in order; the end keeps only the count', () => {
+  const { root } = mkRunnerRoot();
+  fs.writeFileSync(path.join(root, 'two.test.js'), GREEN);
+  const file = path.join(root, 'ledger.jsonl');
+  const r = runRunner(root, { CLODEX_SUITE_LEDGER: file, CLODEX_SUITE_RUN_ID: 'run-11', CLODEX_SUITE_NAMED: '2' }, ['two.test.js', 'one.test.js']);
+  assert.strictEqual(r.totals, 'TOTALS: 6 pass, 0 fail, 6 tests', 'ENTER: both named files ran');
+  const [start, end] = readLedger(file);
+  assert.deepStrictEqual([start.phase, start.named, start.files, 'filesCut' in start], ['start', 2, ['two.test.js', 'one.test.js'], false]);
+  assert.deepStrictEqual([end.phase, 'files' in end], ['end', false]);
+});
+
+test('t2459: a named local run over the limits keeps the first 20 paths, cuts a path to 300 bytes, and says filesCut', () => {
+  const { root } = mkRunnerRoot();
+  const longDir = `${'d'.repeat(50)}/`.repeat(6);
+  fs.mkdirSync(path.join(root, longDir), { recursive: true });
+  const long = `${longDir}x.test.js`;
+  fs.writeFileSync(path.join(root, long), GREEN);
+  const rest = Array.from({ length: 20 }, (_, i) => `f${i}.test.js`);
+  for (const f of rest) fs.writeFileSync(path.join(root, f), GREEN);
+  const file = path.join(root, 'ledger.jsonl');
+  const r = runRunner(root, { CLODEX_SUITE_LEDGER: file, CLODEX_SUITE_RUN_ID: 'run-12', CLODEX_SUITE_NAMED: '21' }, [long, ...rest]);
+  assert.strictEqual(r.totals, 'TOTALS: 63 pass, 0 fail, 63 tests', 'ENTER: all 21 named files ran');
+  const [start] = readLedger(file);
+  assert.deepStrictEqual([start.named, start.filesCut, start.files.length], [21, true, 20]);
+  assert.strictEqual(start.files[0], `${'d'.repeat(50)}/`.repeat(5) + 'd'.repeat(45));
+  assert.deepStrictEqual(start.files.slice(1), ['f0.test.js', 'f1.test.js', 'f2.test.js', 'f3.test.js', 'f4.test.js', 'f5.test.js', 'f6.test.js', 'f7.test.js', 'f8.test.js', 'f9.test.js', 'f10.test.js', 'f11.test.js', 'f12.test.js', 'f13.test.js', 'f14.test.js', 'f15.test.js', 'f16.test.js', 'f17.test.js', 'f18.test.js']);
 });

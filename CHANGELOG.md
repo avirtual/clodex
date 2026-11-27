@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+- Test runners: the record of a hand's named test run now lists the files it named, not only how many.
+
 ## 5.212.0 — 2026-11-28
 
 - Test runners: a job's record now lists every pool member that was considered and why each was not chosen, from the moment the job starts.

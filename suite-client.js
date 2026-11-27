@@ -34,6 +34,28 @@ const KILLED_TAIL_LINES = 3;
 const KILLED_LINE_MAX = 200;
 const HUNG_RE = /^run-tests: TIMEOUT after .* in .+$/;
 const flatLine = (l) => l.replace(/[\x00-\x1f\x7f]+/g, ' ').trim().slice(0, KILLED_LINE_MAX);
+const LEDGER_FILES_MAX = 20;
+const LEDGER_PATH_MAX = 300;
+
+function ledgerPathBytes(s) {
+  return Buffer.byteLength(JSON.stringify(s)) - 2;
+}
+
+function ledgerFiles(list) {
+  const all = Array.isArray(list) ? list.map(String) : [];
+  let cut = all.length > LEDGER_FILES_MAX;
+  const files = all.slice(0, LEDGER_FILES_MAX).map((f) => {
+    if (ledgerPathBytes(f) <= LEDGER_PATH_MAX) return f;
+    cut = true;
+    let out = '';
+    for (const ch of f) {
+      if (ledgerPathBytes(out + ch) > LEDGER_PATH_MAX) break;
+      out += ch;
+    }
+    return out;
+  });
+  return cut ? { files, filesCut: true } : { files };
+}
 
 function killedTail(stdout, stderr) {
   const last = String(stdout || '').split('\n').map(flatLine).filter(Boolean).slice(-KILLED_TAIL_LINES);
@@ -173,6 +195,7 @@ function createSuiteClient({
     const ctx = {
       id: opts.runId || randomUUID(), peer, box: box === true || boxDefOf(box) != null, boxDef: boxDefOf(box), wire: opts.wire === 'pull' ? 'pull' : 'push', where: opts.name || peer, route: opts.route || null, override: opts.override || null,
       tree: typeof tree === 'string' && tree ? path.resolve(tree) : null, kind, scope, named: Number.isInteger(opts.named) && opts.named > 0 ? opts.named : null, team, ticket, seat,
+      namedFiles: Number.isInteger(opts.named) && opts.named > 0 ? ledgerFiles(files) : null,
       jobId: null, attempt: 0, treeHash: null, sha: null, dirty: null, queuedAt: null, startedAt: null, env: null, started: false,
       t0: now(), budgetMs, queueBudgetMs, runBudgetMs, buildBudgetMs, buildSince: null, timeoutMs, onSubmitted, onDetach, onState,
       shouldStop: () => ctx.stopWhy != null || shouldStop(), stopWhy: null,
@@ -461,7 +484,7 @@ function createSuiteClient({
     ctx.startedAt = job.state === 'done' && job.queueMs != null ? ctx.queuedAt + job.queueMs : now();
     appendLedger({
       id: ctx.id, phase: 'start', where: ctx.where, runner: ctx.peer, wire: ctx.wire, jobId: ctx.jobId, attempt: ctx.attempt,
-      kind: ctx.kind, scope: ctx.scope, ...(ctx.named ? { named: ctx.named } : {}), team: ctx.team, ticket: ctx.ticket, seat: ctx.seat,
+      kind: ctx.kind, scope: ctx.scope, ...(ctx.named ? { named: ctx.named } : {}), ...(ctx.namedFiles || {}), team: ctx.team, ticket: ctx.ticket, seat: ctx.seat,
       tree: ctx.tree, sha: ctx.sha, treeHash: ctx.treeHash, dirty: ctx.dirty, pid: null, route: ctx.route, override: ctx.override,
       queuedAt: iso(ctx.queuedAt), startedAt: iso(ctx.startedAt), env: ctx.env,
       ...(ctx.pick ? { pick: ctx.pick } : {}),
@@ -1089,12 +1112,16 @@ function ledgerPicks(file, { fsImpl = fs, maxBytes = 512 * 1024, limit = 20 } = 
   for (const line of text.split('\n')) {
     let row;
     try { row = JSON.parse(line); } catch { continue; }
-    if (!row || typeof row !== 'object' || !row.id || !row.pick) continue;
+    if (!row || typeof row !== 'object' || !row.id) continue;
+    const prev = jobs.get(row.id);
+    const listed = Array.isArray(row.files) ? row : prev && prev.files ? prev : null;
+    if (!row.pick && !listed) continue;
     jobs.delete(row.id);
     jobs.set(row.id, {
       id: row.id, phase: row.phase, team: row.team, ticket: row.ticket, seat: row.seat, kind: row.kind, where: row.where,
       queuedAt: row.queuedAt, ...(row.startedAt ? { startedAt: row.startedAt } : {}), ...(row.endedAt ? { endedAt: row.endedAt, outcome: row.outcome } : {}),
-      ...(Number.isInteger(row.queueMs) ? { queueMs: row.queueMs } : {}), pick: row.pick, ...(row.moved ? { moved: row.moved } : {}),
+      ...(Number.isInteger(row.queueMs) ? { queueMs: row.queueMs } : {}), ...(row.pick ? { pick: row.pick } : {}), ...(row.moved ? { moved: row.moved } : {}),
+      ...(listed ? { files: listed.files, ...(listed.filesCut === true ? { filesCut: true } : {}) } : {}),
     });
   }
   return [...jobs.values()].slice(-limit);
@@ -1296,4 +1323,4 @@ function createChannelHost({
   };
 }
 
-module.exports = { createSuiteClient, createChannelHost, route, lastTotals, localHalf, failingNames, agreement, boxVerdict, fallbackOf, FALLBACK_CODES, pickRunner, runnerLoad, pickRecord, consideredOf, waitNote, ledgerPicks, CONSIDERED_MAX, pickLine, poolNote, aloneNote, HAND_QUEUE_MS, HAND_RUN_MS, handSlackMs, handExecSlackMs, HUNG_RE, BUILD_BUDGET_MS, LOST_AFTER_MS };
+module.exports = { createSuiteClient, createChannelHost, route, lastTotals, localHalf, failingNames, agreement, boxVerdict, fallbackOf, FALLBACK_CODES, pickRunner, runnerLoad, pickRecord, consideredOf, waitNote, ledgerPicks, ledgerFiles, LEDGER_FILES_MAX, LEDGER_PATH_MAX, CONSIDERED_MAX, pickLine, poolNote, aloneNote, HAND_QUEUE_MS, HAND_RUN_MS, handSlackMs, handExecSlackMs, HUNG_RE, BUILD_BUDGET_MS, LOST_AFTER_MS };
