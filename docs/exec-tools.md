@@ -443,7 +443,10 @@ no terminal tabs `no terminal on this host`. The `term_read` MCP tool
   `CLODEX_SUITE_TEST_ROOTS` (a JSON array, empty when unset) in that child's
   env, and the def's schema refuses a `testRoots` payload key, so a hand cannot
   move or widen them. The selected files reach the project's
-  `scripts/run-tests.js` as positional arguments.
+  `scripts/run-tests.js` as positional arguments. An empty selection sends no
+  request and spawns no runner: the digest reads `own: 0 test files selected
+  for this branch (nothing run)`, exit 0, and the wrapper writes the ledger rows
+  itself (`named: 0`, `where: "none"`).
 - **`[agent:exec status] {}` is a reserved name, not a registered command.** It
   answers from `session.execRuns` (last 3 runs, newest first, or one via
   `{"seq":N}`) without a grant and without spawning; a registry def named
