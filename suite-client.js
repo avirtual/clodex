@@ -1254,7 +1254,8 @@ function createChannelHost({
     const d = route({ team, ticket, kind: 'hand', scope: msg.scope, local: msg.local === true });
     if (d.where === 'local') {
       if (d.override) notifyLead(`${seat}: clodex-run-tests ran here on request ({"local": true}); team ${team.name} routes hand runs to ${team.testRunner.peer}`);
-      return say({ run: 'local', why: d.why, override: d.override || null, env: localPhaseEnv(team.testRunner, 'hand') });
+      const env = localPhaseEnv(team.testRunner, 'hand');
+      return say({ run: 'local', why: d.why, override: d.override || null, ...(Object.keys(env).length ? { env } : {}) });
     }
     if (!client) return say({ run: 'remote', runner: d.peer, unknown: 'no suite client on this node' });
     let box;

@@ -280,7 +280,7 @@ test('exec: a disconnect after the result arrived cancels nothing', async (t) =>
 
 const ARGV_FILE = 'stub-argv.json';
 
-function mkRoot(captured) {
+function mkRoot(captured, envKeys = null) {
   const root = fs.realpathSync(mkTmpRoot('suite-route-bin-'));
   fs.mkdirSync(path.join(root, 'scripts'));
   fs.writeFileSync(path.join(root, 'scripts', 'run-tests.js'), [
@@ -290,6 +290,7 @@ function mkRoot(captured) {
     "  channel: typeof process.send === 'function' ? 'ipc' : (process.env.NODE_CHANNEL_FD || null),",
     '  route: process.env.CLODEX_SUITE_ROUTE || null,',
     '  override: process.env.CLODEX_SUITE_OVERRIDE || null,',
+    ...(envKeys ? [`  env: Object.fromEntries(${JSON.stringify(envKeys)}.map((k) => [k, process.env[k] === undefined ? null : process.env[k]])),`] : []),
     '}));',
     `process.stdout.write(${JSON.stringify(captured.stdout)});`,
     `process.stderr.write(${JSON.stringify(captured.stderr)});`,
@@ -418,6 +419,30 @@ test('no channel: the run is local, as today', () => {
   const r = runPlain(root, '{}', path.join(root, 'h'));
   assert.strictEqual(r.code, 0);
   assert.deepStrictEqual(r.ran, { channel: null, route: null, override: null });
+});
+
+const TEAM_ENV_KEYS = ['T2458_A', 'T2458_B', 'CLODEX_SUITE_ROUTE', 'CLODEX_SUITE_KIND', 'CLODEX_TEST_LOCK_DIR'];
+
+test('t2458: a local answer\'s env reaches the runner, under the route, kind and lock keys the script sets', async () => {
+  const root = mkRoot(CAPTURED.green, TEAM_ENV_KEYS);
+  const env = { T2458_A: '1', T2458_B: 'hand', CLODEX_SUITE_ROUTE: 'team', CLODEX_SUITE_KIND: 'verify', CLODEX_TEST_LOCK_DIR: '/team' };
+  const r = await runWithHost(root, '{}', path.join(root, 'h'), () => [{ run: 'local', why: 'hands:off', override: null, env }]);
+  assert.strictEqual(r.code, 0, 'ENTER: the local run went green');
+  assert.deepStrictEqual(r.ran.env, { T2458_A: '1', T2458_B: 'hand', CLODEX_SUITE_ROUTE: 'hands:off', CLODEX_SUITE_KIND: 'hand', CLODEX_TEST_LOCK_DIR: path.join(root, '.test-digest.lock') });
+});
+
+test('t2458: a local answer with no env runs as before, with no team variable', async () => {
+  const root = mkRoot(CAPTURED.green, TEAM_ENV_KEYS);
+  const r = await runWithHost(root, '{}', path.join(root, 'h'), () => [{ run: 'local', why: 'hands:off', override: null }]);
+  assert.strictEqual(r.code, 0, 'ENTER: the local run went green');
+  assert.deepStrictEqual(r.ran.env, { T2458_A: null, T2458_B: null, CLODEX_SUITE_ROUTE: 'hands:off', CLODEX_SUITE_KIND: 'hand', CLODEX_TEST_LOCK_DIR: path.join(root, '.test-digest.lock') });
+});
+
+test('t2458: a hand run that stays local is answered with env and handEnv over it, minus the names a runner refuses, and no gate map', async () => {
+  const tr = { peer: 'runner-1', hands: 'off', env: { A: '1', B: '2', PATH: '/x' }, handEnv: { B: 'hand', C: '3', CLODEX_SUITE_KIND: 'verify' }, verifyEnv: { V: '1' }, mergeEnv: { M: '1' } };
+  const f = hostFor({ client: stubClient(), team: { ...teamWith('off'), testRunner: tr } });
+  f.host.onMessage(ask(f.dir));
+  assert.deepStrictEqual(await f.done, { run: 'local', why: 'hands:off', override: null, env: { A: '1', B: 'hand', C: '3' } });
 });
 
 test('local:true: the request carries it, and the runner gets the route and override to record; its env has no channel variable', async () => {
@@ -951,7 +976,7 @@ test('t2418: a runner that reports its ceiling has it named in the refusal', asy
 
 test('t2418: a hand run sends env with handEnv over it, and its whole budget is queue plus run plus the setup slack', async () => {
   const client = stubClient({ result: { unknown: null, res: { status: 0, signal: null, stdout: '', stderr: '', treeHash: TREE } } });
-  const team = { ...teamWith('all'), testRunner: { peer: 'runner-1', hands: 'all', runMs: 30 * 60 * 1000, env: { A: '1', B: '2' }, handEnv: { B: 'hand', C: '3' } } };
+  const team = { ...teamWith('all'), testRunner: { peer: 'runner-1', hands: 'all', runMs: 30 * 60 * 1000, env: { A: '1', B: '2' }, handEnv: { B: 'hand', C: '3' }, verifyEnv: { V: '1' }, mergeEnv: { M: '1' } } };
   const f = hostFor({ client, team });
   f.host.onMessage(ask(f.dir));
   await f.done;

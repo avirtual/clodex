@@ -1003,6 +1003,34 @@ for (const [name, extra, wantTimeout, wantBudget] of RUN_LIMIT_ROWS) {
   });
 }
 
+const PHASE_ENV_TR = { env: { A: '1', B: 'env' }, handEnv: { B: 'hand', H: '1' }, verifyEnv: { B: 'verify', V: '1' }, mergeEnv: { B: 'merge', M: '1' } };
+const PHASE_SUBMIT_ROWS = [
+  ['shadow', 'verify', {}, { A: '1', B: 'verify', V: '1' }],
+  ['shadow', 'post-merge', { merge: true }, { A: '1', B: 'merge', M: '1' }],
+  ['box decide', 'verify', {}, { A: '1', B: 'verify', V: '1' }],
+  ['box decide', 'post-merge', { merge: true }, { A: '1', B: 'merge', M: '1' }],
+];
+
+for (const [how, kind, opts, want] of PHASE_SUBMIT_ROWS) {
+  test(`t2458: a ${how} ${kind} submit sends env with its own phase map over it and no other phase's`, async () => {
+    const sent = [];
+    if (how === 'shadow') {
+      const client = { reachable: async () => ({ ok: true, info: {} }), shadow: async (o) => { sent.push(o); return null; } };
+      const f = mkFixture({ manifestExtra: { testRunner: { peer: 'runner-1', gate: 'shadow', ...PHASE_ENV_TR } }, peers: [R1], client });
+      await f.m._shadowSubmit(f.tm.loadManifest('team'), { id: 't1' }, '/w', opts);
+    } else {
+      const timers = { setTimeout: () => 1, clearTimeout: () => {} };
+      const client = { run: async (o) => { sent.push(o); return { unknown: 'runner unreachable', res: null, record: null }; } };
+      const f = mkFixture({ manifestExtra: { testRunner: { ...PUSH_ON, ...PHASE_ENV_TR } }, peers: [R1], client, extraDeps: { boxDecideTimers: timers } });
+      const team = f.tm.loadManifest('team');
+      require('../team-box').writeBox(team.dir, BOX_TEXT);
+      await f.m._boxDecide(team, { id: 't1' }, '/w', opts);
+    }
+    assert.strictEqual(sent.length, 1, 'ENTER: the job was submitted');
+    assert.deepStrictEqual([sent[0].kind, sent[0].env], [kind, want]);
+  });
+}
+
 const { createChannelHost, pickLine, poolNote } = require('../suite-client');
 const { baseRunnerLoad, basePickRunner } = require('./lib/base-suite-pick');
 
