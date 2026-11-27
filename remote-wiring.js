@@ -18,7 +18,7 @@ const { withoutExecGrants, withoutLocalOnly } = require('./session-args');
 // knows only core's verbs, so it passes plugin verbs — which are forced
 // privileged — straight through to a remote caller's grant.
 const { withoutPrivilegedIntentsFor } = require('./intent-registry');
-const { isClaimEntry, isReservedSeatName } = require('./pending-store');
+const { isClaimEntry, isReservedSeatName, reservedSeatError } = require('./pending-store');
 // Env scopes cross the wire on a create body — never trust the client: sanitize
 // server-side (drops invalid/denied/newline keys) before it reaches create().
 const { sanitizeFlat } = require('./env-scopes');
@@ -699,7 +699,7 @@ function createRemoteWiring(deps) {
     if (typeof name !== 'string' || !AGENT_NAME_RE.test(name)) {
       return { ok: false, error: `invalid name "${name}" — allowed [a-zA-Z0-9._-], 1-64 chars` };
     }
-    if (isReservedSeatName(name)) return { ok: false, code: 400, error: 'reserved name' };
+    if (isReservedSeatName(name)) return { ok: false, code: 400, error: reservedSeatError(name) };
     if (isReservedSenderName(name)) return { ok: false, code: 400, error: reservedSenderError(name) };
     if (manager.sessions.has(name) || getPersistence().get(name)) {
       return { ok: false, error: `name taken "${name}"` };
@@ -954,6 +954,7 @@ function createRemoteWiring(deps) {
           if (clientToken != null && !(typeof clientToken === 'string' && CLIENT_TOKEN_RE.test(clientToken))) return { ok: false, code: 400, error: 'bad client token' };
           const b = withoutExecGrants(body) || {};
           const name = String(b.name || '').trim();
+          if (isReservedSeatName(name)) return { ok: false, code: 400, error: reservedSeatError(name) };
           const rawCwd = String(b.cwd || '').trim();
           const mode = String(process.env.CLODEX_REMOTE_CREATE || '').trim();
           if (mode === 'template' && !(typeof b.template === 'string' && b.template.trim())) return { ok: false, code: 403, error: 'create: this host accepts template creates only' };

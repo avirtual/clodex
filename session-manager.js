@@ -138,7 +138,7 @@ const voiceEngineSpec = require('./voice-engine');
 const { effectiveWindowSize, ctxWindowSource } = require('./argv-merge');
 const { contextStatusOf } = require('./ctx-reminder');
 const { CTRLU_SETTLE_MS } = require('./inject-queue');
-const { agentDir: pendingAgentDir, claimsDir: pendingClaimsDir, isReservedSeatName, claimTag, rehomeOrphans, CLAIM_TAG_RE, LEGACY_CLAIM_RE } = require('./pending-store');
+const { agentDir: pendingAgentDir, claimsDir: pendingClaimsDir, isReservedSeatName, isCliConfigSeatName, reservedSeatError, claimTag, rehomeOrphans, CLAIM_TAG_RE, LEGACY_CLAIM_RE } = require('./pending-store');
 const { VOICE_MODES, voiceModeOf } = require('./voice-settings');
 const { fmtAge, parseProfileValue, PROFILE_KEY_RE } = require('./memory-store');
 const { mcpArgvPlan, claudeMcpServers, codexMcpArgs, museExpressible, secretRefs, discoverMcpSources } = require('./mcp-plan');
@@ -1722,7 +1722,7 @@ function createSessionManager(deps) {
       if (this.sessions.has(name) || this._creating.has(name)) {
         throw new Error(`Session "${name}" already exists`);
       }
-      if (isReservedSeatName(name)) throw new Error(`"${name}" is a reserved name`);
+      if (isReservedSeatName(name) && !(isCliConfigSeatName(name) && getPersistence().get(name))) throw new Error(reservedSeatError(name));
       if (isReservedSenderName(name) && !getPersistence().get(name)) throw new Error(reservedSenderError(name));
       const reserve = adapterFor(type)?.account.bootstrap === 'xdg-overlay';
       if (reserve) this._creating.add(name);
@@ -4502,7 +4502,7 @@ function createSessionManager(deps) {
       if (typeof newName !== 'string' || !/^(?!\.+$)[a-zA-Z0-9._-]{1,64}$/.test(newName)) {
         return { ok: false, error: 'Name must be 1–64 chars: letters, digits, . _ - (and not only dots)' };
       }
-      if (isReservedSeatName(newName)) return { ok: false, error: `${newName} is a reserved name` };
+      if (isReservedSeatName(newName)) return { ok: false, error: reservedSeatError(newName) };
       if (isReservedSenderName(newName)) return { ok: false, error: reservedSenderError(newName) };
       if (newName === name) return { ok: false, error: `${name} is already called that` };
       const entry = getPersistence().get(name);

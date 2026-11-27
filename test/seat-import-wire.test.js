@@ -458,7 +458,7 @@ test('begin refuses a legacy-claim name with 400 reserved name, before any stagi
     const res = await call(s.port, 'POST', '/api/import/begin',
       { body: { name: 'alice.draining.rehome.999999', record: record({ cwd: path.join(w.home, 'proj') }) } });
     assert.strictEqual(res.status, 400);
-    assert.strictEqual(res.body.error, 'reserved name');
+    assert.strictEqual(res.body.error, '"alice.draining.rehome.999999" is a reserved name');
   });
   assert.ok(!fs.existsSync(path.join(w.root, 'import')), 'no staging directory was created');
 });

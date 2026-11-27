@@ -16,7 +16,7 @@ const { validateSeatImages, SEAT_IMAGE_MAX, SEAT_IMAGE_MAX_BYTES } = require('./
 const { kernelStartTime } = require('./stream-seat');
 const { DM_REF_RE } = require('./intent-registry');
 const { annotate: annotateNote } = require('./open-requests');
-const { isReservedSeatName } = require('./pending-store');
+const { isReservedSeatName, isCliConfigSeatName, reservedSeatError } = require('./pending-store');
 const { isReservedSenderName, reservedSenderError } = require('./system-senders');
 const { sanitizeWireOffers, wireOffers, OFFERS_WIRE_VERSION } = require('./box-offer');
 const { suiteDispatch, suiteRoute } = require('./suite-dispatch');
@@ -1262,7 +1262,7 @@ class RemoteServer {
       try { name = decodeURIComponent(rest[0]); }
       catch { return this._json(res, 400, { ok: false, error: 'bad session name' }); }
       const sub = rest.length > 1 ? rest.slice(1).join('/') : undefined;
-      if (!NAME_RE.test(name) || isReservedSeatName(name)) return this._json(res, 400, { ok: false, error: 'bad session name' });
+      if (!NAME_RE.test(name) || (isReservedSeatName(name) && !isCliConfigSeatName(name))) return this._json(res, 400, { ok: false, error: 'bad session name' });
       if (req.method === 'GET' && sub === undefined) return this._handleSessionGet(name, res);
       if (req.method === 'GET' && sub === 'transcript') return this._handleTranscript(name, url, res);
       if (req.method === 'GET' && sub === 'describe') return this._handleDescribe(name, res);
@@ -1513,7 +1513,7 @@ class RemoteServer {
       return this._readBody(req, res, (body) => {
         const msg = parseJsonObject(body);
         if (!msg) return this._json(res, 400, { ok: false, error: 'bad JSON' });
-        if (typeof msg.name === 'string' && isReservedSeatName(msg.name.trim())) return this._json(res, 400, { ok: false, error: 'reserved name' });
+        if (typeof msg.name === 'string' && isReservedSeatName(msg.name.trim())) return this._json(res, 400, { ok: false, error: reservedSeatError(msg.name.trim()) });
         if (typeof msg.name === 'string' && isReservedSenderName(msg.name.trim())) return this._json(res, 400, { ok: false, error: reservedSenderError(msg.name.trim()) });
         Promise.resolve()
           .then(() => this._createSession(msg))
