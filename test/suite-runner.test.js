@@ -1803,13 +1803,14 @@ test('t2428: a queue head blocked by a box hold lets a later job start, but neve
   await f.spawned(['hb1']);
   await f.upload(f.body('hn0'));
   await f.spawned(['hn0']);
-  assert.strictEqual((await f.runner.submit(f.body('hb2', 'hand', { isolation: 'container' }))).state, 'queued');
-  assert.strictEqual((await f.runner.submit(f.body('hx', 'hand', ALONE))).state, 'queued');
   f.held.get('hb1').stdout.write('TOTALS: 1 pass, 0 fail, 1 tests\n');
   f.held.get('hb1').finish(0);
   await waitState(f.runner, 'hb1', 'done');
   await drain();
   assert.strictEqual(fs.existsSync(path.join(f.root, 'suite-runner', 'box-hold.json')), true, 'ENTER: the failed reap holds the box');
+  assert.strictEqual((await f.runner.submit(f.body('hb2', 'hand', { isolation: 'container' }))).state, 'queued');
+  assert.strictEqual((await f.runner.submit(f.body('hx', 'hand', ALONE))).state, 'queued');
+  await drain();
   assert.deepStrictEqual([await slotsOf(f.runner), f.calls.map((c) => c.job)], [{ slots: { total: 3, inUse: 1 }, running: ['hn0'], waiting: ['hb2', 'hx'] }, ['hb1', 'hn0']]);
   f.held.get('hn0').finish(0);
   await f.spawned(['hx']);
