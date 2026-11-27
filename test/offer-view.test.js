@@ -36,6 +36,19 @@ test('the facts line shows os/arch, cores, memory and the runtime or none found'
   );
 });
 
+test('the facts line shows the runtime capacity its boxes share, with the host beside it only when it differs', () => {
+  assert.strictEqual(
+    ownFactsLine({ os: 'darwin', arch: 'arm64', cpus: 14, memMb: 49152, runtime: { platforms: ['linux/arm64'], cpus: 8, memMb: 21094 } }),
+    'darwin/arm64 · linux/arm64 boxes · 8 cores · 21 GB (host: 14 cores, 48 GB)',
+  );
+  assert.strictEqual(
+    ownFactsLine({ os: 'linux', arch: 'x64', cpus: 16, memMb: 65536, runtime: { platforms: ['linux/amd64'], cpus: 16, memMb: 65400 } }),
+    'linux/x64 · linux/amd64 boxes · 16 cores · 64 GB',
+  );
+  const rich = { ...MURMUR_ROW, offer: { ...MURMUR_ROW.offer, facts: { ...MURMUR_ROW.offer.facts, runtime: { platforms: ['linux/amd64'], cpus: 8, memMb: 21094 } } } };
+  assert.strictEqual(peerOfferLine([rich], 'murmur'), '2 boxes · open now · linux/x64 · linux/amd64 boxes · 8 cores · 21 GB (host: 16 cores, 64 GB)');
+});
+
 test('the peer note says the list is not an access control and how a dialing node is named', () => {
   assert.strictEqual(PEER_NOTE, 'This list decides which peers are shown this offer. It is not an access control. Nothing runs on this machine because of it yet. A node that dials this machine is named by its own label, which is its hostname unless it set one.');
   assert.ok(!/can use/.test(PEER_NOTE));

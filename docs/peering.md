@@ -922,10 +922,18 @@ or run) or `run` (see **Run scope**). remote-wiring injects `offerFor`,
 - **Hello.** Cap `offers` means this node reads `?origin=<name>` on
   `GET /api/peer/hello` and serves `POST /api/peer/offers`. When the origin is a
   valid node name listed in the offer's `peers` and the offer is enabled, hello
-  carries `offers: { own }`; otherwise the key is absent. `own` is exactly
+  carries `offers: { own, capacity? }`; otherwise the key is absent. `own` is exactly
   `{scope:'discovery', boxes, open, kinds:['container'], facts:{os, arch, cpus,
   memMb, runtime}}`; `runtime` is `null` when no container runtime answers (or
-  the node has no sandbox manager), else `{platforms:[…]}`. Facts are probed
+  the node has no sandbox manager), else `{platforms:[…]}`. `cpus` and `memMb`
+  in facts are the host's. `capacity` is `{cpus?, memMb?}`, what the container
+  runtime reports (`docker info` `.NCPU`, `.MemTotal`), sent only with a
+  runtime and beside `own` rather than inside it (`wireOffers`), because an
+  older node refuses an entry with any key it does not know and ignores
+  a sibling of `own`. On receipt `sanitizeWireOffers` joins it into the stored
+  offer's `facts.runtime` as bounded non-negative integers, dropping anything
+  else; it drops an unknown key in the entry, the facts or the runtime instead
+  of refusing the entry. Facts are probed
   when the entry is built, never stored; no host name, version or schedule
   times cross the wire.
 - **Dialers.** Every operator hello (not a suite-scoped one) whose `origin` is a
@@ -933,8 +941,8 @@ or run) or `run` (see **Run scope**). remote-wiring injects `offerFor`,
   `createDialerLog`): name and last-seen time only, in memory, at most 64 names,
   the least recently seen dropped first. No token or address is kept.
 - **`POST /api/peer/offers`** (a dialer's announce): body
-  `{v:1, from:<dialer label>, own:<entry>|null}`. `own` is sanitised by
-  `sanitizeWireOffers`; an entry with an unknown key, a missing fact or a scope
+  `{v:1, from:<dialer label>, own:<entry>|null, capacity?}`. `own` is sanitised by
+  `sanitizeWireOffers`, and a `capacity` sibling is joined as for hello; an entry with a missing fact or a scope
   other than `discovery` or `run` is a 400 and nothing is stored. A `null` own removes that
   dialer's row. Any `relayed` field is ignored. Reply `{ok:true}`, or 503
   `{ok:false, error:'offers directory full'}` when the directory refused a new
@@ -989,7 +997,12 @@ or run) or `run` (see **Run scope**). remote-wiring injects `offerFor`,
   machine" (`run`). Under `run` a line states the test runner's isolation in
   force, or why nothing runs yet (runner off, or waiting for phone access), and Apply on an enabled `run` offer
   first asks for confirmation listing every ticked peer. A read-only line shows the facts this machine
-  would announce. It saves through IPC `offer:set(record, confirm)`, which runs
+  would announce (`ownFactsLine`): with the runtime's figures known it reads
+  `darwin/arm64 · linux/arm64 boxes · 8 cores · 21 GB (host: 14 cores, 48 GB)`,
+  the parenthesis left out when the host's figures match; without them, host
+  cores and memory and the runtime platforms. The peers popover's
+  `peerOfferLine` and `clodex get offers` show the runtime's figures the same
+  way when a peer sends them. It saves through IPC `offer:set(record, confirm)`, which runs
   `sanitizeBoxOffer` and refuses an invalid record (the stored one is kept),
   refuses an enabled `run` record unless `confirm.peers` names exactly the record's peers
   (`runConfirmed`), and

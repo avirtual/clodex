@@ -18,7 +18,7 @@ const { DM_REF_RE } = require('./intent-registry');
 const { annotate: annotateNote } = require('./open-requests');
 const { isReservedSeatName } = require('./pending-store');
 const { isReservedSenderName, reservedSenderError } = require('./system-senders');
-const { sanitizeWireOffers, OFFERS_WIRE_VERSION } = require('./box-offer');
+const { sanitizeWireOffers, wireOffers, OFFERS_WIRE_VERSION } = require('./box-offer');
 const { suiteDispatch, suiteRoute } = require('./suite-dispatch');
 const { SUITE_DESK_V, CALL_ID_RE: SUITE_CALL_ID_RE, SUITE_DESK_REPLY_MAX } = require('./suite-desk');
 
@@ -711,7 +711,7 @@ class RemoteServer {
     if (!this._offerFor || !this._receiveOffers || !origin || !NAME_RE.test(origin)) return null;
     let own = null;
     try { own = this._offerFor(origin); } catch { return null; }
-    return own ? { own } : null;
+    return own ? wireOffers(own) : null;
   }
 
   _webHost() {

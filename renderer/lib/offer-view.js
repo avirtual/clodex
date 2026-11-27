@@ -21,10 +21,29 @@ function runtimeText(runtime) {
   return platforms.length ? `container runtime ${platforms.join(', ')}` : 'container runtime: none found';
 }
 
+const coresText = (cpus) => (Number.isInteger(cpus) ? `${cpus} cores` : '? cores');
+
+function sizeText(memMb) {
+  if (!Number.isInteger(memMb)) return '? memory';
+  return memMb < 1024 ? `${memMb} MB` : `${Math.round(memMb / 1024)} GB`;
+}
+
+function boxCapacityText(facts) {
+  const f = facts || {};
+  const r = f.runtime;
+  const platforms = r && Array.isArray(r.platforms) ? r.platforms : [];
+  if (!platforms.length || !Number.isInteger(r.cpus)) return null;
+  const box = `${coresText(r.cpus)} · ${sizeText(r.memMb)}`;
+  const host = `${coresText(f.cpus)}, ${sizeText(f.memMb)}`;
+  const same = coresText(r.cpus) === coresText(f.cpus) && sizeText(r.memMb) === sizeText(f.memMb);
+  return `${platforms.join(', ')} boxes · ${box}${same ? '' : ` (host: ${host})`}`;
+}
+
 function ownFactsLine(facts) {
   const f = facts || {};
-  const cpus = Number.isInteger(f.cpus) ? `${f.cpus} cores` : '? cores';
-  return `${osArch(f)} · ${cpus} · ${memoryText(f.memMb)} · ${runtimeText(f.runtime)}`;
+  const capacity = boxCapacityText(f);
+  if (capacity) return `${osArch(f)} · ${capacity}`;
+  return `${osArch(f)} · ${coresText(f.cpus)} · ${memoryText(f.memMb)} · ${runtimeText(f.runtime)}`;
 }
 
 function peerOfferLine(rows, peerLabel) {
@@ -33,9 +52,10 @@ function peerOfferLine(rows, peerLabel) {
   if (!row) return null;
   const { boxes, open, facts } = row.offer;
   const count = `${boxes} box${boxes === 1 ? '' : 'es'}`;
-  const runtime = facts && facts.runtime && Array.isArray(facts.runtime.platforms) && facts.runtime.platforms.length
+  const capacity = boxCapacityText(facts);
+  const runtime = capacity || (facts && facts.runtime && Array.isArray(facts.runtime.platforms) && facts.runtime.platforms.length
     ? `runtime ${facts.runtime.platforms.join(', ')}`
-    : 'no container runtime';
+    : 'no container runtime');
   return `${count} · ${open ? 'open now' : 'closed now'} · ${osArch(facts)} · ${runtime}`;
 }
 

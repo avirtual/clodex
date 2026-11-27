@@ -456,8 +456,9 @@ bundle), whose packaged form is the Docker image under
 - **offer-directory.js** — the in-memory offers directory
   (`createOfferDirectory`: rows keyed by provenance and source in a `Map`, an
   opaque route handle each, `OFFER_TTL_MS` swept on read, injectable clock),
-  `createRuntimeProbe` (one bounded, cached `docker` call behind an injected
-  `run`) and `hostFacts`. Built in engine.js; served by remote.js through
+  `createRuntimeProbe` (bounded, cached `docker` calls behind an injected
+  `run` for platforms and `info` for the runtime's CPUs and memory) and
+  `hostFacts`. Built in engine.js; served by remote.js through
   remote-wiring's `offerCallbacks`. In SCANNED_MODULES.
 - **git-safe.js** — `safeGitArgs` prefixes app-process git calls in a seat cwd
   with `-c` overrides for core.fsmonitor, core.hooksPath (/dev/null by

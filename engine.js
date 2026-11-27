@@ -1911,6 +1911,9 @@ const runtimeProbe = createRuntimeProbe({
   run: (timeoutMs) => new Promise((resolve, reject) => {
     execFile('docker', ['version', '--format', '{{.Server.Os}}/{{.Server.Arch}}'], { timeout: timeoutMs }, (err, stdout) => (err ? reject(err) : resolve(stdout)));
   }),
+  info: (timeoutMs) => new Promise((resolve, reject) => {
+    execFile('docker', ['info', '--format', '{{.NCPU}} {{.MemTotal}}'], { timeout: timeoutMs }, (err, stdout) => (err ? reject(err) : resolve(stdout)));
+  }),
 });
 const getBoxOffer = () => (envBoxOffer !== undefined ? envBoxOffer : uiSettings.get().boxOffer);
 const getOfferFacts = () => hostFacts({ osModule: os, platform: process.platform, arch: process.arch, runtime: runtimeProbe.current() });

@@ -4,7 +4,7 @@ const { test } = require('node:test');
 const assert = require('node:assert');
 
 const {
-  createOfferDirectory, createRuntimeProbe, parsePlatforms, hostFacts, OFFER_TTL_MS,
+  createOfferDirectory, createRuntimeProbe, parsePlatforms, parseCapacity, hostFacts, OFFER_TTL_MS,
 } = require('../offer-directory');
 
 const ENTRY = {
@@ -124,6 +124,23 @@ test('the runtime probe caches for its interval', async () => {
   probe.current();
   await probe.refresh();
   assert.strictEqual(calls, 2);
+});
+
+test('the runtime probe adds the runtime cpus and memory from info, and keeps platforms when info fails', async () => {
+  const timers = manualTimers();
+  const probe = createRuntimeProbe({ run: async () => 'linux/arm64', info: async () => '8 22118338560\n', ...timers });
+  assert.deepStrictEqual(await probe.refresh(), { platforms: ['linux/arm64'], cpus: 8, memMb: 21094 });
+  const failing = createRuntimeProbe({ run: async () => 'linux/arm64', info: async () => { throw new Error('ENOENT'); }, ...timers });
+  assert.deepStrictEqual(await failing.refresh(), { platforms: ['linux/arm64'] });
+  const noRuntime = createRuntimeProbe({ run: async () => { throw new Error('ENOENT'); }, info: async () => '8 22118338560', ...timers });
+  assert.strictEqual(await noRuntime.refresh(), null);
+});
+
+test('parseCapacity reads NCPU and MemTotal bytes, omitting zero or unparsable figures', () => {
+  assert.deepStrictEqual(parseCapacity('8 22118338560'), { cpus: 8, memMb: 21094 });
+  assert.deepStrictEqual(parseCapacity('0 22118338560'), { memMb: 21094 });
+  assert.deepStrictEqual(parseCapacity('<no value> 1'), {});
+  assert.deepStrictEqual(parseCapacity(''), {});
 });
 
 test('hostFacts reads os, arch, cores and memory', () => {

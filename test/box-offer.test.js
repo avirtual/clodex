@@ -6,10 +6,11 @@ const fs = require('fs');
 const path = require('path');
 
 const {
-  sanitizeBoxOffer, offerFromEnv, scheduleOpen, wireEntry, offerEntry, sanitizeWireOffers, warnStoredOffer, bootOffer, offerEnabled, runGrant,
+  sanitizeBoxOffer, offerFromEnv, scheduleOpen, wireEntry, offerEntry, sanitizeWireOffers, wireOffers, warnStoredOffer, bootOffer, offerEnabled, runGrant,
 } = require('../box-offer');
 const { initStores } = require('../stores.js');
 const { mkTmpRoot } = require('./lib/tmp-roots');
+const { baseSanitizeWireOffers } = require('./lib/base-wire-offers');
 
 const VALID = {
   scope: 'discovery',
@@ -127,16 +128,67 @@ test('sanitizeWireOffers accepts own and drops relayed', () => {
 });
 
 const WIRE_REFUSALS = [
-  ['an extra entry key', { ...WIRE_OWN, host: 'murmur' }],
   ['scope: "build"', { ...WIRE_OWN, scope: 'build' }],
   ['an unknown kind', { ...WIRE_OWN, kinds: ['vm'] }],
   ['empty kinds', { ...WIRE_OWN, kinds: [] }],
-  ['an extra fact', { ...WIRE_OWN, facts: { ...WIRE_OWN.facts, version: '5.176.0' } }],
   ['a missing fact', { ...WIRE_OWN, facts: { os: 'linux', arch: 'x64', cpus: 8, memMb: 16384 } }],
   ['cpus: 0', { ...WIRE_OWN, facts: { ...WIRE_OWN.facts, cpus: 0 } }],
   ['a runtime with no platform', { ...WIRE_OWN, facts: { ...WIRE_OWN.facts, runtime: { platforms: [] } } }],
   ['runtime: true', { ...WIRE_OWN, facts: { ...WIRE_OWN.facts, runtime: true } }],
 ];
+
+const withRuntime = (runtime) => ({ ...WIRE_OWN, facts: { ...WIRE_OWN.facts, runtime } });
+
+test('wireOffers sends the runtime capacity beside own, and the base validator accepts the bytes unchanged in meaning', () => {
+  const facts = { os: 'darwin', arch: 'arm64', cpus: 14, memMb: 49152, runtime: { platforms: ['linux/arm64'], cpus: 8, memMb: 21094 } };
+  const bytes = JSON.stringify({ v: 1, from: 'laptop', ...wireOffers(offerEntry(ALWAYS, facts)) });
+  const base = { scope: 'discovery', boxes: 1, open: true, kinds: ['container'], facts: { ...facts, runtime: { platforms: ['linux/arm64'] } } };
+  assert.deepStrictEqual(JSON.parse(bytes), { v: 1, from: 'laptop', own: base, capacity: { cpus: 8, memMb: 21094 } });
+  assert.deepStrictEqual(baseSanitizeWireOffers(JSON.parse(bytes)), { own: base });
+  assert.deepStrictEqual(sanitizeWireOffers(JSON.parse(bytes)), { own: { ...base, facts } });
+  assert.deepStrictEqual(wireOffers(null), { own: null });
+  assert.deepStrictEqual(wireOffers(WIRE_OWN), { own: WIRE_OWN });
+});
+
+test('sanitizeWireOffers joins the capacity as bounded counts, dropping bad values and capacity with no runtime', () => {
+  assert.deepStrictEqual(
+    sanitizeWireOffers({ own: WIRE_OWN, capacity: { cpus: 8, memMb: 21094 } }),
+    { own: withRuntime({ platforms: ['linux/amd64'], cpus: 8, memMb: 21094 }) },
+  );
+  assert.deepStrictEqual(
+    sanitizeWireOffers({ own: WIRE_OWN, capacity: { cpus: -1, memMb: 1.5, gpu: 'x' } }),
+    { own: WIRE_OWN },
+  );
+  assert.deepStrictEqual(
+    sanitizeWireOffers({ own: WIRE_OWN, capacity: { cpus: 4097, memMb: '20000' } }),
+    { own: WIRE_OWN },
+  );
+  assert.deepStrictEqual(
+    sanitizeWireOffers({ own: withRuntime({ platforms: ['linux/amd64'], cpus: 8 }) }),
+    { own: WIRE_OWN },
+  );
+  const native = withRuntime(null);
+  assert.deepStrictEqual(sanitizeWireOffers({ own: native, capacity: { cpus: 8 } }), { own: native });
+});
+
+const UNKNOWN_KEYS = [
+  ['the entry', { ...WIRE_OWN, host: 'murmur' }],
+  ['the facts', { ...WIRE_OWN, facts: { ...WIRE_OWN.facts, version: '5.176.0' } }],
+  ['the runtime', withRuntime({ platforms: ['linux/amd64'], gpu: 'm3' })],
+];
+
+for (const [label, own] of UNKNOWN_KEYS) {
+  test(`sanitizeWireOffers drops an unknown key in ${label} and keeps the known fields`, () => {
+    assert.deepStrictEqual(sanitizeWireOffers({ own }), { own: WIRE_OWN });
+  });
+}
+
+test('offerEntry carries the runtime cpus and memMb the probe reported', () => {
+  const facts = { os: 'darwin', arch: 'arm64', cpus: 14, memMb: 49152, runtime: { platforms: ['linux/arm64'], cpus: 8, memMb: 21094, extra: 1 } };
+  assert.deepStrictEqual(offerEntry(ALWAYS, facts).facts, {
+    os: 'darwin', arch: 'arm64', cpus: 14, memMb: 49152, runtime: { platforms: ['linux/arm64'], cpus: 8, memMb: 21094 },
+  });
+});
 
 for (const [label, own] of WIRE_REFUSALS) {
   test(`sanitizeWireOffers refuses an own with ${label} whole`, () => {

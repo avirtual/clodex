@@ -8,6 +8,7 @@ const http = require('node:http');
 const { RemoteServer } = require('../remote');
 const { offerCallbacks } = require('../remote-wiring');
 const { createOfferDirectory } = require('../offer-directory');
+const { baseSanitizeWireOffers } = require('./lib/base-wire-offers');
 
 const OP_TOKEN = 'operator-token-offers-1';
 const SUITE_TOKEN = 'suite-token-offers-PLANTED';
@@ -42,12 +43,12 @@ function req(port, pathname, { method = 'GET', token = OP_TOKEN, body = null } =
   });
 }
 
-async function startNode(t, { offer = OFFER, wired = true, maxRows } = {}) {
+async function startNode(t, { offer = OFFER, wired = true, maxRows, facts = FACTS } = {}) {
   let n = 0;
   const state = { offer, clock: 5000, factsCalls: 0 };
   const offerDirectory = createOfferDirectory({ now: () => state.clock, newRoute: () => `route-${++n}`, ...(maxRows ? { maxRows } : {}) });
   const callbacks = wired
-    ? offerCallbacks({ getBoxOffer: () => state.offer, getOfferFacts: () => { state.factsCalls++; return FACTS; }, offerDirectory })
+    ? offerCallbacks({ getBoxOffer: () => state.offer, getOfferFacts: () => { state.factsCalls++; return facts; }, offerDirectory })
     : {};
   const server = new RemoteServer({
     port: 0, host: '127.0.0.1', pagePath: '/nonexistent', hostLabel: 'murmur', version: '9.9.9',
@@ -126,9 +127,22 @@ test('POST /api/peer/offers stores a valid own as an announce row with a route h
   ]);
 });
 
-test('POST /api/peer/offers refuses an own with an extra key or an unknown scope whole', async (t) => {
+test('POST /api/peer/offers drops an extra key and keeps the offer', async (t) => {
   const { port, offerDirectory } = await startNode(t);
-  assert.strictEqual((await announce(port, 'laptop', { ...ANNOUNCED, host: 'laptop.local' })).status, 400);
+  assert.strictEqual((await announce(port, 'laptop', { ...ANNOUNCED, host: 'laptop.local' })).status, 200);
+  assert.deepStrictEqual(offerDirectory.list().map((r) => r.offer), [ANNOUNCED]);
+});
+
+test('hello sends the runtime capacity beside own, which a base node reads as the offer it knew', async (t) => {
+  const facts = { ...FACTS, runtime: { platforms: ['linux/arm64'], cpus: 8, memMb: 21094 } };
+  const { port } = await startNode(t, { facts });
+  const hello = (await req(port, '/api/peer/hello?origin=laptop')).json;
+  assert.deepStrictEqual(hello.offers, { own: OWN, capacity: { cpus: 8, memMb: 21094 } });
+  assert.deepStrictEqual(baseSanitizeWireOffers(hello.offers), { own: OWN });
+});
+
+test('POST /api/peer/offers refuses an unknown scope whole', async (t) => {
+  const { port, offerDirectory } = await startNode(t);
   assert.strictEqual((await announce(port, 'laptop', { ...ANNOUNCED, scope: 'build' })).status, 400);
   assert.strictEqual((await announce(port, 'bad name', ANNOUNCED)).status, 400);
   const badVersion = await req(port, '/api/peer/offers', { method: 'POST', body: JSON.stringify({ v: 2, from: 'laptop', own: ANNOUNCED }) });
