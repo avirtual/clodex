@@ -317,6 +317,7 @@ const VERB_REGISTRY = [
       'patch session <name> [--arg X…] [--proxy URL] [--restart] [--idle-clear MS|off] [-o json|yaml]',
       'patch session <name> --subresource profile -f <file.yaml|file.json> [--replace] [-o json|yaml]',
       'patch testjobs --slots N [-o json|yaml]',
+      'patch testjobs --exclusive honour|ignore [-o json|yaml]',
     ],
     args: [['resource', 'session (singular or plural spelling), or testjobs'], ['name', 'session to patch (session form only)']],
     flags: [
@@ -328,11 +329,12 @@ const VERB_REGISTRY = [
       ['-f, --filename F', 'with --subresource profile: the YAML or JSON (.json) file to send'],
       ['--replace', 'with --subresource profile: replace the whole profile (merge=0) instead of merging by key'],
       ['--slots N', 'testjobs form: how many suite jobs the node\'s test runner runs at once (1 to 4)'],
+      ['--exclusive honour|ignore', 'testjobs form: whether the node\'s test runner runs a job that asks to run alone by itself (honour, the default) or as an ordinary job (ignore)'],
     ],
     examples: ['clodexctl patch session bob --arg --model --arg opus --restart', 'clodexctl patch session asst --subresource profile -f profile.yaml', 'clodexctl patch testjobs --slots 1'],
     notes: [
       'Needs at least one of --arg / --proxy / --restart / --idle-clear. Undefined keys are left untouched owner-side.',
-      'patch testjobs changes only the runner\'s slot count; it is refused when the node has no runner or the runner is off. With jobs running it prints how many it waits for; the change applies when they finish. In the ctl tab and [agent:ctl] it runs only against the node\'s own engine.',
+      'patch testjobs changes only the runner\'s slot count or its exclusive setting, one per call; it is refused when the node has no runner or the runner is off. With jobs running it prints how many it waits for; the change applies when they finish. In the ctl tab and [agent:ctl] it runs only against the node\'s own engine.',
       'To READ the same args: clodexctl get session <name> --subresource args.',
     ],
   },

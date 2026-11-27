@@ -153,6 +153,7 @@ function suiteRunnerOptions(env, root, { platform = process.platform, setting = 
     ...(Number.isInteger(s.slots) && s.slots > 1 ? { slots: s.slots } : {}),
     ...(Array.isArray(s.shares) && s.shares.length ? { shares: s.shares } : {}),
     ...(s.buildBoxes === true ? { buildBoxes: true } : {}),
+    ...(s.exclusive === 'ignore' ? { exclusive: 'ignore' } : {}),
     forced,
   };
 }
@@ -844,6 +845,7 @@ function createRemoteWiring(deps) {
         suiteRunnerError: () => suiteRunnerError,
         listTestjobs: suiteActivity,
         setTestjobSlots: setSuiteRunnerSlots,
+        setTestjobExclusive: setSuiteRunnerExclusive,
         readTestjobOutput: suiteOutput,
         suiteDesk: suiteDesk || null,
         suiteToken: process.env.CLODEX_SUITE_TOKEN || null,
@@ -1587,6 +1589,25 @@ function createRemoteWiring(deps) {
     return { ok: true, slots, applied: applied.pending ? 'after-drain' : 'now', running: applied.running };
   }
 
+  function setSuiteRunnerExclusive(exclusive) {
+    if (exclusive !== 'honour' && exclusive !== 'ignore') return { ok: false, status: 400, error: 'exclusive must be honour or ignore' };
+    const store = getUiSettings();
+    const cur = store.get().suiteRunner;
+    if (!cur) return { ok: false, status: 409, error: 'this node has no test runner setting' };
+    if (!suiteRunnerOptions(process.env, REGISTRY_DIR, { setting: cur })) return { ok: false, status: 409, error: 'the test runner is off on this node' };
+    const next = sanitizeSuiteRunner({ ...cur, exclusive });
+    if (JSON.stringify(next) === JSON.stringify(cur)) {
+      const running = drainPending && suiteRunner && typeof suiteRunner.activeCount === 'function' ? suiteRunner.activeCount() : 0;
+      return { ok: true, exclusive, applied: drainPending ? 'after-drain' : 'now', running };
+    }
+    store.set({ suiteRunner: next });
+    const applied = applySuiteRunner();
+    log.info('remote', applied.pending
+      ? `test runner exclusive requests set to ${exclusive}, applies when ${applied.running} running job(s) finish`
+      : `test runner exclusive requests set to ${exclusive}`);
+    return { ok: true, exclusive, applied: applied.pending ? 'after-drain' : 'now', running: applied.running };
+  }
+
   function shutdownRemoteServer() {
     closed = true;
     if (suiteRunner) suiteRunner.close();
@@ -1597,7 +1618,7 @@ function createRemoteWiring(deps) {
   }
 
   return {
-    syncRemoteServer, refreshRemoteToken, shutdownRemoteServer, suiteRunnerState, suiteRunnerBusy, reloadSuiteRunner, applySuiteRunner, setSuiteRunnerSlots,
+    syncRemoteServer, refreshRemoteToken, shutdownRemoteServer, suiteRunnerState, suiteRunnerBusy, reloadSuiteRunner, applySuiteRunner, setSuiteRunnerSlots, setSuiteRunnerExclusive,
     suiteActivity, suiteActivityNow, refreshSuiteActivity: refreshActivity, suiteOutput, fenceSuiteRunner, suiteRestartJobs,
     getSuiteEngine:() => (closed ? null : getSuiteRunner()),
   };

@@ -1899,7 +1899,10 @@ function registerIpcHandlers(deps) {
     handle('suiteRunner:output', (_e, id, opts) => (typeof suiteOutput === 'function'
       ? suiteOutput(id, opts)
       : { ok: false, status: 501, error: 'the test runner is off' }));
-    handle('suiteRunner:set', (_e, rec) => {
+    handle('suiteRunner:set', (_e, sent) => {
+      const kept = uiSettings.get().suiteRunner;
+      const rec = sent && typeof sent === 'object' && !Array.isArray(sent) && sent.exclusive === undefined && kept && kept.exclusive
+        ? { ...sent, exclusive: kept.exclusive } : sent;
       const clean = rec === null ? null : sanitizeSuiteRunner(rec);
       if (rec !== null && !clean) return { ok: false, error: 'invalid test runner setting', state: suiteRunnerState() };
       if (rec && Array.isArray(rec.shares) && rec.shares.length && !clean.shares) {
