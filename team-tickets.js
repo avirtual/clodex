@@ -24,6 +24,7 @@ const { boxVerdict, fallbackOf, FALLBACK_CODES, pickRunner, runnerLoad, BUILD_BU
 const {
   matchSeatRole, nameRole, defaultLeadSeat, ROLE_RE, RESERVED_ROLE_KEYS, STOCK_ROLE_DEFS,
   DEFAULT_ROLE_DISPATCH, TRUNK_HEAD, effectiveHandCap, DONE_VALUES, normalizeDone, NAME_RE: NODE_NAME_RE, TEST_RUNNER_HANDS, TEST_RUNNER_GATE, TEST_RUNNER_FALLBACK, TEST_RUNNER_WIRE_PUSH: WIRE_PUSH, TEST_RUNNER_POOL_MAX,
+  TEST_RUNNER_ENV_RE, TEST_RUNNER_ENV_MAX, TEST_RUNNER_ENV_VALUE_MAX, TEST_RUNNER_RUN_STEP_MS, TEST_RUNNER_RUN_MIN_MS, TEST_RUNNER_RUN_MAX_MS, TEST_RUNNER_RUN_DEFAULT_MS,
 } = require('./team-manifest');
 const {
   readTeamJson, teamTemplatePath, teamTemplateSave, mayGrantOf, ownTeamExecGrants, clampToGrantor, teamTemplateRemove, teamPromptSave, teamPromptRemove,
@@ -3242,6 +3243,14 @@ function createTicketMethods(deps, shared) {
       };
     },
 
+    _runnerTimeout(tr) {
+      return tr && Number.isInteger(tr.runMs) ? { timeoutMs: tr.runMs } : {};
+    },
+
+    _runnerRunExtra(tr) {
+      return tr && Number.isInteger(tr.runMs) ? Math.max(0, tr.runMs - TEST_RUNNER_RUN_DEFAULT_MS) : 0;
+    },
+
     _runnerReroute(tr, box) {
       return async (lost) => {
         const next = await this._pickGateRunner(tr, box, [lost]);
@@ -3358,7 +3367,7 @@ function createTicketMethods(deps, shared) {
     async _runnerPoolText(team, cur) {
       const want = this._runnerWant(team, cur);
       const probes = await this._runnerPoolLines(cur, want);
-      const lines = [`test runner of ${team.name}: ${probes.length} runners, hands ${cur.hands} (hand runs use ${cur.peer} only), gate ${cur.gate || 'off'}${cur.fallback === 'hold' ? ', fallback hold' : ''}`];
+      const lines = [`test runner of ${team.name}: ${probes.length} runners, hands ${cur.hands} (hand runs use ${cur.peer} only), gate ${cur.gate || 'off'}${cur.fallback === 'hold' ? ', fallback hold' : ''}${this._runnerLimitsText(cur)}`];
       for (const p of probes) lines.push(p.line);
       const seen = probes[0].seen;
       const tally = cur.box === true && seen.reachable === true && (want || !seen.box) ? this._runnerLabelTally(team, cur) : this._runnerTally(team, cur, cur.box === true ? seen.boxEnvKey : seen.envKey);
@@ -3430,8 +3439,68 @@ function createTicketMethods(deps, shared) {
       reply(`test runner ${name} added to ${team.name}, wire ${wire} — ${this._runnerMembers(m.testRunner).length} runners; ${reach}`);
     },
 
+    _runnerLimitsText(cur) {
+      const run = Number.isInteger(cur.runMs) ? `run ${cur.runMs / TEST_RUNNER_RUN_STEP_MS} min` : `run ${TEST_RUNNER_RUN_DEFAULT_MS / TEST_RUNNER_RUN_STEP_MS} min (default)`;
+      const flat = (v) => String(v).replace(/[\x00-\x1f\x7f]+/g, ' ').slice(0, 60);
+      const keys = Object.entries(cur.handEnv || {});
+      return `, ${run}${keys.length ? `, hand-env ${keys.map(([k, v]) => `${flat(k)}=${flat(v)}`).join(' ')}` : ''}`;
+    },
+
+    _handleRunnerLimits(team, cur, intent, reply) {
+      if (intent.value || intent.hands != null || intent.gate != null || intent.fallback != null) {
+        reply('error: set run: and hand-env: in their own [agent:team runner] intent, apart from the peer, hands, gate and fallback');
+        return;
+      }
+      if (!cur) {
+        reply('error: no test runner is set — name one first with [agent:team runner <peer>]');
+        return;
+      }
+      const patch = {};
+      if (intent.run != null) {
+        const min = TEST_RUNNER_RUN_MIN_MS / TEST_RUNNER_RUN_STEP_MS;
+        const max = TEST_RUNNER_RUN_MAX_MS / TEST_RUNNER_RUN_STEP_MS;
+        if (intent.run === 'off') patch.runMs = null;
+        else if (/^\d+$/.test(intent.run) && Number(intent.run) >= min && Number(intent.run) <= max) patch.runMs = Number(intent.run) * TEST_RUNNER_RUN_STEP_MS;
+        else {
+          reply(`error: run must be a whole number of minutes from ${min} to ${max}, or off — not "${intent.run}"`);
+          return;
+        }
+      }
+      if (intent.handEnv) {
+        let next = { ...(cur.handEnv || {}) };
+        for (const tok of intent.handEnv) {
+          if (tok === 'off') { next = {}; continue; }
+          const eq = tok.indexOf('=');
+          const name = eq > 0 ? tok.slice(0, eq) : tok;
+          if (eq <= 0 || !TEST_RUNNER_ENV_RE.test(name)) {
+            reply(`error: hand-env takes KEY=VALUE, KEY= or off, with KEY matching ${TEST_RUNNER_ENV_RE.source} — not "${tok}"`);
+            return;
+          }
+          const value = tok.slice(eq + 1);
+          if (value.length > TEST_RUNNER_ENV_VALUE_MAX) {
+            reply(`error: hand-env ${name} is ${value.length} characters; the most is ${TEST_RUNNER_ENV_VALUE_MAX}`);
+            return;
+          }
+          if (value === '') delete next[name];
+          else next[name] = value;
+        }
+        const merged = Object.keys({ ...(cur.env || {}), ...next }).length;
+        if (merged > TEST_RUNNER_ENV_MAX) {
+          reply(`error: env and hand-env together would name ${merged} variables; the most is ${TEST_RUNNER_ENV_MAX}`);
+          return;
+        }
+        patch.handEnv = Object.keys(next).length ? next : null;
+      }
+      const m = deps.setTeamTestRunner(team.name, patch);
+      reply(`test runner of ${team.name}${this._runnerLimitsText(m.testRunner).replace(/^,/, ':')}`);
+    },
+
     async _handleTeamRunner(team, intent, reply) {
       const cur = team.testRunner || null;
+      if (intent.run != null || intent.handEnv) {
+        this._handleRunnerLimits(team, cur, intent, reply);
+        return;
+      }
       const fb = intent.fallback != null ? intent.fallback : null;
       if (fb != null) {
         if (!TEST_RUNNER_FALLBACK.includes(fb)) {
@@ -3515,7 +3584,7 @@ function createTicketMethods(deps, shared) {
         const seen = {};
         const want = this._runnerWant(team, cur);
         const reach = await this._runnerReachFor(cur, seen, want);
-        reply(`test runner of ${team.name}: ${cur.peer}, wire ${cur.wire || WIRE_PUSH}, hands ${cur.hands}, gate ${cur.gate || 'off'}${cur.fallback === 'hold' ? ', fallback hold' : ''} — ${reach}${cur.box === true && seen.reachable === true && (want || !seen.box) ? this._runnerLabelTally(team, cur) : this._runnerTally(team, cur, cur.box === true ? seen.boxEnvKey : seen.envKey)}`);
+        reply(`test runner of ${team.name}: ${cur.peer}, wire ${cur.wire || WIRE_PUSH}, hands ${cur.hands}, gate ${cur.gate || 'off'}${cur.fallback === 'hold' ? ', fallback hold' : ''}${this._runnerLimitsText(cur)} — ${reach}${cur.box === true && seen.reachable === true && (want || !seen.box) ? this._runnerLabelTally(team, cur) : this._runnerTally(team, cur, cur.box === true ? seen.boxEnvKey : seen.envKey)}`);
         return;
       }
       if (intent.value === 'off') {
@@ -6742,7 +6811,7 @@ function createTicketMethods(deps, shared) {
         return await client.shadow({
           ...via, name: member.peer, tree: cwd, kind, team: team.name, ticket: String(ticket.id),
           setup: tr.setup || null, env: tr.env || {}, route: 'gate:shadow', box, ...(tr.shares ? { shares: tr.shares } : {}),
-          queueBudgetMs: TICKET_SUITE_LOCK_WAIT_MS, budgetMs: TICKET_SUITE_TIMEOUT,
+          queueBudgetMs: TICKET_SUITE_LOCK_WAIT_MS, budgetMs: TICKET_SUITE_TIMEOUT + this._runnerRunExtra(tr), ...this._runnerTimeout(tr),
           ...(pooled ? { pool: true } : {}),
           ...(chosen ? { repick: this._runnerRepick(tr, box) } : {}),
           reroute: this._runnerReroute(tr, box),
@@ -6816,7 +6885,7 @@ function createTicketMethods(deps, shared) {
         .then(() => client.run({
           ...via, name: member.peer, tree: cwd, kind, team: team.name, ticket: String(ticket.id), scope: 'full',
           setup: tr.setup || null, env: tr.env || {}, route: 'gate:on', box: def, ...(tr.shares ? { shares: tr.shares } : {}),
-          queueBudgetMs: BOX_DECIDE_QUEUE_MS, budgetMs: TICKET_SUITE_TIMEOUT,
+          queueBudgetMs: BOX_DECIDE_QUEUE_MS, budgetMs: TICKET_SUITE_TIMEOUT + this._runnerRunExtra(tr), ...this._runnerTimeout(tr),
           onJob: (j) => { if (j && j.jobId) jobId = j.jobId; },
           onSubmitted: (j) => { if (j && j.jobId) submittedId = j.jobId; if (stopCause) sendCancel(); },
           shouldStop: () => !!stopCause,
@@ -6842,7 +6911,7 @@ function createTicketMethods(deps, shared) {
         .catch((e) => ({ unknown: `client error: ${e && e.message ? e.message : e}`, res: null, record: null }));
       const buildable = def && typeof def.definition === 'string';
       const guardMs = Number.isFinite(deps.boxDecideGuardMs) ? deps.boxDecideGuardMs
-        : TICKET_SUITE_TIMEOUT + BOX_DECIDE_GUARD_SLACK_MS + (buildable ? BOX_DECIDE_QUEUE_MS + BUILD_BUDGET_MS : 0);
+        : TICKET_SUITE_TIMEOUT + this._runnerRunExtra(tr) + BOX_DECIDE_GUARD_SLACK_MS + (buildable ? BOX_DECIDE_QUEUE_MS + BUILD_BUDGET_MS : 0);
       const timers = deps.boxDecideTimers || { setTimeout, clearTimeout };
       let timer = null;
       const LATE = {};

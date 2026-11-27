@@ -263,7 +263,10 @@ function parseTeam(cleaned) {
     const handsM = argStr.match(/\bhands:(\S+)/);
     const gateM = argStr.match(/\bgate:(\S+)/);
     const fallbackM = argStr.match(/\bfallback:(\S+)/);
-    return { type: 'team', sub, value: positional[0] || null, hands: handsM ? handsM[1] : null, gate: gateM ? gateM[1] : null, ...(fallbackM ? { fallback: fallbackM[1] } : {}), ...(positional[0] === 'add' || positional[0] === 'rm' ? { target: positional[1] || null } : {}), body: '' };
+    const tokens = argStr.trim().split(/\s+/);
+    const runT = tokens.find((t) => t.startsWith('run:'));
+    const handEnv = tokens.filter((t) => t.startsWith('hand-env:')).map((t) => t.slice('hand-env:'.length));
+    return { type: 'team', sub, value: positional[0] || null, hands: handsM ? handsM[1] : null, gate: gateM ? gateM[1] : null, ...(fallbackM ? { fallback: fallbackM[1] } : {}), ...(runT ? { run: runT.slice('run:'.length) } : {}), ...(handEnv.length ? { handEnv } : {}), ...(positional[0] === 'add' || positional[0] === 'rm' ? { target: positional[1] || null } : {}), body: '' };
   }
   if (sub === 'role-rename') return { type: 'team', sub, name: positional[0] || null, to: positional[1] || null, body: '' };
   if (sub === 'gather') return { type: 'team', sub, dry: positional[0] === 'dry', body: '' };

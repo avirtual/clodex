@@ -26,7 +26,18 @@ const RETRY_TEXT = {
   incomplete: 'runner could not complete the pack',
 };
 
-const REPICKABLE = /^(?:runner unreachable|runner refused the (?:job|token)|runner has no box|no peer )/;
+const KILLED_TAIL_LINES = 3;
+const KILLED_LINE_MAX = 200;
+const HUNG_RE = /^run-tests: TIMEOUT after .* in .+$/;
+const flatLine = (l) => l.replace(/[\x00-\x1f\x7f]+/g, ' ').trim().slice(0, KILLED_LINE_MAX);
+
+function killedTail(stdout, stderr) {
+  const last = String(stdout || '').split('\n').map(flatLine).filter(Boolean).slice(-KILLED_TAIL_LINES);
+  const hung = String(stderr || '').split('\n').filter((l) => HUNG_RE.test(l)).map(flatLine).pop();
+  return `${last.length ? `; last output: ${last.join(' | ')}` : ''}${hung ? `; ${hung}` : ''}`;
+}
+
+const REPICKABLE =/^(?:runner unreachable|runner refused the (?:job|token)|runner has no box|no peer )/;
 const RESTARTED = Symbol('runner-restart');
 const RESTARTING_REFUSAL = 'runner refused the job: runner is restarting';
 
@@ -277,6 +288,10 @@ function createSuiteClient({
     if (sub.unreachable) return { unknown: 'runner unreachable' };
     if (restarted(sub)) return { retry: 'runner-restart' };
     if (sub.body && sub.body.code === 'runner-restarting') return { unknown: RESTARTING_REFUSAL };
+    if (sub.body && sub.body.error === 'bad timeoutMs' && ctx.timeoutMs != null) {
+      const ceiling = Number.isFinite(limits.maxTimeoutMs) ? `${limits.maxTimeoutMs}ms` : `not reported (default ${require('./suite-runner').DEFAULT_LIMITS.maxTimeoutMs}ms)`;
+      return { unknown: `runner refused the job: bad timeoutMs — the job asked for ${ctx.timeoutMs}ms, the runner's ceiling is ${ceiling}` };
+    }
     if (!sub.body || !sub.body.ok) return { unknown: `runner refused the job: ${(sub.body && sub.body.error) || sub.error || `status ${sub.status}`}` };
     ctx.submitted = true;
     ctx.failFast = false;
@@ -465,7 +480,7 @@ function createSuiteClient({
       stdout: out.stdout, stderr: out.stderr, treeHash: ctx.treeHash, jobId: ctx.jobId, attempt: ctx.attempt,
       reason: job.reason, truncated: !!(job.out && job.out.truncated),
     } : null;
-    const unknown = out.unknown || null;
+    const unknown = out.unknown ? `${out.unknown}${out.outcome === 'timeout' && res ? killedTail(res.stdout, res.stderr) : ''}` : null;
     const totals = res && !unknown ? lastTotals(res.stdout) : null;
     const outcome = out.outcome || (unknown ? 'unknown' : !totals ? 'no-summary' : res.status === 0 ? 'pass' : 'fail');
     const endedAt = now();
@@ -994,8 +1009,8 @@ function createChannelHost({
     const tr = team.testRunner;
     const out = await client.run({
       peer: via.peer, wire, name, tree, kind: 'hand', scope: msg.scope, team: team.name, ticket, seat,
-      files: msg.files || [], flags: msg.flags || {}, setup: tr.setup || null, env: tr.env || {},
-      queueBudgetMs, runBudgetMs: runMs, timeoutMs: runMs, route: d.why,
+      files: msg.files || [], flags: msg.flags || {}, setup: tr.setup || null, env: { ...(tr.env || {}), ...(tr.handEnv || {}) },
+      queueBudgetMs, runBudgetMs: runMs, timeoutMs: runMs, budgetMs: queueBudgetMs + runMs, route: d.why,
       shouldStop: () => wantCancel,
       onSubmitted: ({ jobId }) => { inflight.jobId = jobId; fireCancel(); },
       onProgress: (line) => say({ progress: line }),

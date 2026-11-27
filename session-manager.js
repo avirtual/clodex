@@ -298,10 +298,11 @@ const { SEAT_KINDS, seatPathFor, legacySeatPathFor, claudeProjectSlug } = requir
 const { LIVING_MARK } = require('./intent-catalog');
 const { resolveSubagent, nameOfSubagent, clearSubq, SUBQ_DM_SUFFIX, SUBQ_NAME_RE } = require('./subq');
 
-const { createChannelHost } = require('./suite-client');
+const { createChannelHost, HAND_RUN_MS } = require('./suite-client');
 
 const AGENT_SOCK_WRITER_BINS = new Set(['clodex-team.js', 'clodex-monitor.js', 'clodex-ctl-admin.js']);
 const SUITE_CHANNEL_BINS = new Set(['clodex-run-tests.js']);
+const SUITE_TAIL_MAX = 1400;
 
 const EXT_NAME_RE = /^(?!\.+$)[a-zA-Z0-9._-]{1,64}$/;
 
@@ -8004,13 +8005,15 @@ function createSessionManager(deps) {
         return;
       }
       const runCwd = entry.cwd ? expandVars(entry.cwd) : (session.cwd || os.homedir());
-      const timeoutMs = (typeof entry.timeoutMs === 'number' && entry.timeoutMs > 0) ? entry.timeoutMs : 10000;
       const payloadJson = JSON.stringify(v.value);
 
       const execTeam = this._teamOfOrNull(session);
       let clientToken = '';
       try { clientToken = fs.readFileSync(clientTokenPathFor(REGISTRY_DIR, who), 'utf8').trim(); } catch { clientToken = ''; }
       const suiteChannel = suiteChannelArgv(argv, CLODEX_BIN);
+      const handRunMs = suiteChannel && execTeam && execTeam.testRunner && Number.isInteger(execTeam.testRunner.runMs) ? execTeam.testRunner.runMs : null;
+      const timeoutMs = ((typeof entry.timeoutMs === 'number' && entry.timeoutMs > 0) ? entry.timeoutMs : 10000)
+        + (handRunMs != null ? Math.max(0, handRunMs - HAND_RUN_MS) : 0);
       setImmediate(() => {
         let child;
         try {
@@ -8052,6 +8055,7 @@ function createSessionManager(deps) {
             send: (m) => { if (child.connected) child.send(m); },
             notifyLead: (body) => this._broadcast('ipc-message', { type: 'task', from: 'ticket-loop', to: execTeam ? execTeam.lead : null, body }),
             log: (m) => log.warn('intent', m),
+            ...(handRunMs != null ? { runMs: handRunMs } : {}),
           });
           child.on('message', (m) => suiteHost.onMessage(m));
           child.on('disconnect', () => suiteHost.cancel());
@@ -8195,7 +8199,7 @@ function createSessionManager(deps) {
           }
           const how = signal ? `killed (${signal})` : `exit ${code}`;
           const tail = lastStderrLine();
-          const body = `${runTag}${tail ? `${how}: ${tail.slice(0, 200)}` : how}`;
+          const body = `${runTag}${tail ? `${how}: ${tail.slice(0, suiteChannel ? SUITE_TAIL_MAX : 200)}` : how}`;
           endRun('failed', body);
           fail(body);
         }));
