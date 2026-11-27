@@ -8428,9 +8428,10 @@ test('t2439: runner rm of the member a verify box job runs on stops it as supers
   l.f.m._boxFlights.set('other', { root: l.f.team.root, team: l.f.team.name, id: 't9', round: 0, runnerOf: () => 'runner-2', stop: (cause) => other.push(cause) });
   const replies = [];
   await l.f.m._handleTeamRunner(l.f.team, { value: 'rm', target: 'runner-1' }, (m) => replies.push(m));
-  await Promise.all(l.loops);
+  for (let i = 0; i < 500 && !c.cancels.length; i += 1) await new Promise((res) => setImmediate(res));
   assert.deepStrictEqual(c.cancels, [['p1', 'job-1', 'push']]);
   assert.match(replies[0], /; stopped 1 job bound to it$/);
+  await Promise.all(l.loops);
   assert.deepStrictEqual(other, []);
   assert.strictEqual(l.loops.length, 2, 'verify re-entered once');
 });
