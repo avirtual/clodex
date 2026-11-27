@@ -22001,12 +22001,18 @@ test('t2441: a seat messages dir that is a symlink, holds a dotfile or holds a s
     ['symlink', (own) => fsReal.symlinkSync(mkTmpRoot('clx-msg-elsewhere-'), own), 'is a symlink'],
     ['.mcp.json', (own) => { fsReal.mkdirSync(own, { mode: 0o700 }); fsReal.writeFileSync(p.join(own, '.mcp.json'), '{}'); }, "holds '.mcp.json', which is not a delivered message file"],
     ['subdirectory', (own) => { fsReal.mkdirSync(p.join(own, '.claude'), { recursive: true, mode: 0o700 }); fsReal.chmodSync(own, 0o700); }, "holds '.claude', which is not a delivered message file"],
+    ['symlinked seat dir', (own) => {
+      const elsewhere = mkTmpRoot('clx-seat-elsewhere-');
+      fsReal.mkdirSync(p.join(elsewhere, 'messages'), { mode: 0o700 });
+      fsReal.rmdirSync(p.dirname(own));
+      fsReal.symlinkSync(elsewhere, p.dirname(own));
+    }, (r) => `resolves to ${fsReal.realpathSync(r.own)}, outside ${p.join(fsReal.realpathSync(p.join(r.h.root, 'sessions')), 'tt1')}`],
   ];
   for (const [label, plant, why] of cases) {
     const r = await run(plant);
     assert.deepStrictEqual(r.shape, withoutOwn, `${label}: the argv is the clean one minus the seat messages dir`);
     assert.strictEqual(r.seeded()[r.own], undefined, `${label}: no trust entry under its path`);
-    const reason = `${r.own} ${why}`;
+    const reason = `${r.own} ${typeof why === 'function' ? why(r) : why}`;
     assert.deepStrictEqual(r.notes.map((n) => n.body), [`seat tt1: messages dir not trusted — ${reason}`], label);
     assert.deepStrictEqual(r.h.logs.filter((l) => l[0] === 'warn' && /messages dir/.test(l[2])),
       [['warn', 'session', `seat tt1: messages dir not trusted — ${reason}`]], label);

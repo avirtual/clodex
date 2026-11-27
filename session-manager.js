@@ -126,6 +126,7 @@ const { deepMerge, bootstrapSeatConfig, museDataHome, findMuseTranscript, oldest
 const { activationSettings } = require('./muse-skills');
 const { seatImageFileName, seatImageHead } = require('./seat-images');
 const { seatFileFileName, seatFileHead } = require('./seat-files');
+const { isSeatMessageFileName } = require('./seat-message-names');
 const MUSE_LINK_POLL_MS = 250;
 const MUSE_LINK_DEADLINE_MS = 60000;
 const CODEX_LINK_POLL_MS = 250;
@@ -4711,8 +4712,10 @@ function createSessionManager(deps) {
     _moveBadSegment(name) {
       const scan = (dir, prefix) => {
         for (const rel of seatRelFiles(fs, path, dir)) {
-          if (rel.split('/').every((seg) => IMPORT_SEGMENT_RE.test(seg))) continue;
-          return `${prefix}${rel}`;
+          if (!rel.split('/').every((seg) => IMPORT_SEGMENT_RE.test(seg))) return `${prefix}${rel} cannot travel — a peer refuses any file name outside [A-Za-z0-9._-]`;
+          if (prefix === 'seat/messages/' && (rel.includes('/') || !isSeatMessageFileName(rel))) {
+            return `${prefix}${rel} cannot travel — a peer takes only delivered msg-, img- and file- names, one level deep, under seat/messages/`;
+          }
         }
         return null;
       };
@@ -4788,9 +4791,7 @@ function createSessionManager(deps) {
         return { ok: false, error: `${name}'s conversation id '${entry.sessionId}' is not a session uuid — a peer refuses it` };
       }
       const badSegment = this._moveBadSegment(name);
-      if (badSegment) {
-        return { ok: false, error: `${badSegment} cannot travel — a peer refuses any file name outside [A-Za-z0-9._-]` };
-      }
+      if (badSegment) return { ok: false, error: badSegment };
 
       const composed = path.join(
         claudeHome(), 'projects', claudeProjectSlug(entry.cwd), `${entry.sessionId}.jsonl`,

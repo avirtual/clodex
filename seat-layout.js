@@ -248,7 +248,7 @@ function seatMessagesDirRefusal({ root, name, fs = require('fs'), uid = typeof p
   let real, base;
   try {
     real = fs.realpathSync(dir);
-    base = fs.realpathSync(seatDirFor(root, name));
+    base = path.join(fs.realpathSync(path.dirname(seatDirFor(root, name))), name);
   } catch (e) { return { reason: `cannot resolve ${dir} (${e.code || e.message})` }; }
   const rel = path.relative(base, real);
   if (!rel || rel.startsWith('..') || path.isAbsolute(rel)) return { reason: `${dir} resolves to ${real}, outside ${base}` };

@@ -777,7 +777,8 @@ the fields the far `create()` re-seeds itself (`ephemeral`, the review keys,
 `pluginGrants`, `wireLabel`, `ticketId`, `rosterSentAt`), `movedTo`
 (a seat moved on from a box it was already moved to must not carry the old
 destination), and anything behind a symlink inside a seat kind (the walk takes
-real files only). A file name outside `[A-Za-z0-9._-]` is not dropped but REFUSED,
+real files only). A file name outside `[A-Za-z0-9._-]`, or a `seat/messages/`
+entry that is not a depth-1 message name (below), is not dropped but REFUSED,
 along with a `sessionId` that is not a uuid, before the pty is touched — the far
 staging judges both, and learning that after quiescing would cost a kill and a
 respawn. For the same reason the far cwd is PROBED before the pty is touched:
