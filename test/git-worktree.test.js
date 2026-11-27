@@ -699,17 +699,12 @@ test('mergeNoFf: a side that REWROTE a CHANGELOG line is refused — a union can
   assert.strictEqual(gitOut(repo, ['status', '--porcelain']), '', 'and the tree is not wedged');
 });
 
-test('mergeNoFf: a side that inserted a `## ` heading is refused — the union would misfile the bullets', { skip: !gitAvailable() }, async () => {
+test('mergeNoFf: a branch that inserted a `## ` heading is refused — the union would misfile the bullets', { skip: !gitAvailable() }, async () => {
   const repo = makeChangelogRepo();
   commitOn(repo, 'tl-1', {
-    'CHANGELOG.md': underUnreleased(CHANGELOG_BASE, '- **B.** the branch bullet'),
-  }, 'branch bullet');
-  // Master stamps the release: `## Unreleased` becomes `## 5.1.0` and a fresh
-  // empty Unreleased opens above it. The branch's bullet belongs in the NEW
-  // section; a union would leave it under 5.1.0, in a release that shipped.
-  commitOn(repo, 'master', {
-    'CHANGELOG.md': CHANGELOG_BASE.replace('## Unreleased\n', '## Unreleased\n\n## 5.1.0 — 2026-01-01\n'),
-  }, 'master stamps a release');
+    'CHANGELOG.md': underUnreleased(CHANGELOG_BASE, '## 9.9.9 — the branch heading\n'),
+  }, 'branch heading');
+  commitOn(repo, 'master', { 'CHANGELOG.md': underUnreleased(CHANGELOG_BASE, '- **A.** the master bullet') }, 'master bullet');
 
   const probe = proveConflict(repo, 'tl-1');
   assert.match(probe.out, /CONFLICT/, 'ENTER: git refuses this merge');
@@ -721,8 +716,113 @@ test('mergeNoFf: a side that inserted a `## ` heading is refused — the union w
   assert.deepStrictEqual([r.aborted, r.wedged], [true, false]);
   assert.ok(!('unioned' in r), 'nothing was unioned');
   assert.match(r.error, /CHANGELOG-only union not applied: /);
-  assert.match(r.error, /inserted a `## ` heading/, 'the reason names the heading');
+  assert.match(r.error, /theirs inserted a `## ` heading/, 'the reason names the heading');
   assert.strictEqual(gitOut(repo, ['rev-parse', 'HEAD']), before, 'master did not move');
+});
+
+const stampRelease = (body, heading) => body.replace('## Unreleased\n', `## Unreleased\n\n${heading}\n`);
+const STAMPED = stampRelease(CHANGELOG_BASE, '## 5.1.0 — 2026-01-01');
+const atSectionEnd = (body, lines) => body.replace('- old bullet one\n', `- old bullet one\n${lines.join('\n')}\n`);
+
+const REHOME = [
+  {
+    name: 'a: cut before a stamp, clean merge',
+    branch: atSectionEnd(CHANGELOG_BASE, ['- **B.** the branch bullet']),
+    master: [STAMPED],
+    conflicts: false,
+    lines: 1,
+    expect: '# Changelog\n\nintro\n\n## Unreleased\n\n- **B.** the branch bullet\n\n## 5.1.0 — 2026-01-01\n\n- old bullet one\n\n## 5.0.0\n',
+  },
+  {
+    name: 'b: a master bullet already under the new Unreleased, conflict',
+    branch: underUnreleased(CHANGELOG_BASE, '- **B.** the branch bullet'),
+    master: [underUnreleased(STAMPED, '- **A.** the master bullet')],
+    conflicts: true,
+    lines: 1,
+    expect: '# Changelog\n\nintro\n\n## Unreleased\n\n- **A.** the master bullet\n- **B.** the branch bullet\n\n## 5.1.0 — 2026-01-01\n\n- old bullet one\n\n## 5.0.0\n',
+  },
+  {
+    name: 'c: two stamps between base and merge',
+    branch: atSectionEnd(CHANGELOG_BASE, ['- **B.** the branch bullet']),
+    master: [
+      STAMPED,
+      underUnreleased(STAMPED, '- **M.** shipped in 5.2'),
+      stampRelease(underUnreleased(STAMPED, '- **M.** shipped in 5.2'), '## 5.2.0 — 2026-02-01'),
+    ],
+    conflicts: null,
+    lines: 1,
+    expect: '# Changelog\n\nintro\n\n## Unreleased\n\n- **B.** the branch bullet\n\n## 5.2.0 — 2026-02-01\n\n- **M.** shipped in 5.2\n## 5.1.0 — 2026-01-01\n\n- old bullet one\n\n## 5.0.0\n',
+  },
+  {
+    name: 'e: two branch bullets keep their order',
+    branch: atSectionEnd(CHANGELOG_BASE, ['- **B1.** first branch bullet', '- **B2.** second branch bullet']),
+    master: [underUnreleased(STAMPED, '- **A.** the master bullet')],
+    conflicts: null,
+    lines: 2,
+    expect: '# Changelog\n\nintro\n\n## Unreleased\n\n- **A.** the master bullet\n- **B1.** first branch bullet\n- **B2.** second branch bullet\n\n## 5.1.0 — 2026-01-01\n\n- old bullet one\n\n## 5.0.0\n',
+  },
+  {
+    name: 'idempotent: the identical bullet is already under master\'s Unreleased',
+    branch: underUnreleased(CHANGELOG_BASE, '- **B.** the branch bullet'),
+    master: [underUnreleased(STAMPED, '- **B.** the branch bullet')],
+    conflicts: true,
+    lines: 0,
+    expect: '# Changelog\n\nintro\n\n## Unreleased\n\n- **B.** the branch bullet\n## 5.1.0 — 2026-01-01\n\n- old bullet one\n\n## 5.0.0\n',
+  },
+];
+
+for (const row of REHOME) {
+  test(`mergeNoFf: a branch bullet filed under a stamped release moves to Unreleased — ${row.name}`, { skip: !gitAvailable() }, async () => {
+    const repo = makeChangelogRepo();
+    commitOn(repo, 'tl-1', { 'CHANGELOG.md': row.branch, 'work.txt': 'the work\n' }, 'branch bullet');
+    row.master.forEach((body, i) => commitOn(repo, 'master', { 'CHANGELOG.md': body }, `master ${i}`));
+    const masterText = row.master[row.master.length - 1];
+    const check = await wt.mergeCheck(repo, 'master', 'tl-1');
+    if (row.conflicts !== null) {
+      assert.strictEqual(!!check.changelogOnly, row.conflicts, `ENTER: git ${row.conflicts ? 'conflicts' : 'merges cleanly'} on CHANGELOG.md`);
+    }
+    const before = gitOut(repo, ['rev-parse', 'HEAD']);
+
+    const r = await wt.mergeNoFf(repo, 'tl-1', msgFile('Merge t2446: the rehome subject'));
+
+    assert.strictEqual(r.ok, true, r.error);
+    assert.deepStrictEqual(
+      { moved: r.moved, rehomed: r.rehomed, unioned: r.unioned, headBefore: r.headBefore },
+      { moved: true, rehomed: row.lines ? { file: 'CHANGELOG.md', lines: row.lines } : undefined, unioned: undefined, headBefore: before },
+    );
+    assert.strictEqual(gitOut(repo, ['rev-parse', 'HEAD']), r.sha, 'the reported sha IS master');
+    assert.strictEqual(gitOut(repo, ['rev-parse', `${r.sha}^1`]), before, 'one merge commit on top of master, no follow-up commit');
+    assert.strictEqual(gitOut(repo, ['rev-parse', `${r.sha}^2`]), gitOut(repo, ['rev-parse', 'tl-1']), 'whose second parent is the branch');
+    assert.strictEqual(gitOut(repo, ['log', '-1', '--format=%s', r.sha]), 'Merge t2446: the rehome subject');
+    assert.strictEqual(fs.readFileSync(path.join(repo, 'CHANGELOG.md'), 'utf8'), row.expect);
+    assert.strictEqual(gitOut(repo, ['show', `${r.sha}:CHANGELOG.md`]), row.expect.trimEnd(), 'and that is what the commit carries');
+    const released = (t) => t.slice(t.indexOf('\n## 5.'));
+    assert.strictEqual(released(row.expect), released(masterText), 'the released sections are byte-identical to master\'s');
+    assert.strictEqual(gitOut(repo, ['status', '--porcelain']), '', 'the checkout is clean');
+    assert.ok(fs.existsSync(path.join(repo, 'work.txt')), 'the branch\'s other file landed too');
+  });
+}
+
+test('mergeNoFf: d — a branch that edited a released line is refused with the re-home reason', { skip: !gitAvailable() }, async () => {
+  const repo = makeChangelogRepo();
+  commitOn(repo, 'tl-1', {
+    'CHANGELOG.md': underUnreleased(CHANGELOG_BASE, '- **B.** the branch bullet').replace('- old bullet one', '- old bullet ONE, reworded'),
+  }, 'branch bullet + reword');
+  commitOn(repo, 'master', { 'CHANGELOG.md': STAMPED }, 'master stamps a release');
+
+  const probe = proveConflict(repo, 'tl-1');
+  assert.match(probe.out, /CONFLICT/, 'ENTER: git refuses this merge');
+  const before = gitOut(repo, ['rev-parse', 'HEAD']);
+
+  const r = await wt.mergeNoFf(repo, 'tl-1', msgFile('Merge t2446: should not land'));
+
+  assert.deepStrictEqual(
+    { ok: r.ok, aborted: r.aborted, wedged: r.wedged, hasRehomed: 'rehomed' in r },
+    { ok: false, aborted: true, wedged: false, hasRehomed: false },
+  );
+  assert.match(r.error, /CHANGELOG-only union not applied: ours inserted a `## ` heading \(a release stamp\) and theirs deleted or rewrote 1 line\(s\) of CHANGELOG\.md, so its CHANGELOG\.md change is not only lines added inside the merge base's `## Unreleased`/);
+  assert.strictEqual(gitOut(repo, ['rev-parse', 'HEAD']), before, 'master did not move');
+  assert.strictEqual(fs.readFileSync(path.join(repo, 'CHANGELOG.md'), 'utf8'), STAMPED, 'master\'s CHANGELOG.md is untouched');
 });
 
 test('mergeNoFf: a merge that fails without conflicting reports through the old path, unmentioned by the union', { skip: !gitAvailable() }, async () => {
