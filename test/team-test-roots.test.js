@@ -155,7 +155,7 @@ function mkVerbFixture(manifestExtra = {}) {
   return { verb, file, root };
 }
 
-test('[agent:team test-roots]: bare shows the default and that it is not set, then the set value', async () => {
+test('_handleTeamTestRoots: bare shows the default and that it is not set, then the set value', async () => {
   const f = mkVerbFixture();
   assert.deepStrictEqual(await f.verb('lead', '[agent:team test-roots]'),
     ['[agent:team] test roots of team: test cli/test (the default; not set — [agent:team test-roots <dir> …] sets it)']);
@@ -171,7 +171,7 @@ test('[agent:team test-roots]: bare shows the default and that it is not set, th
   assert.strictEqual('testRoots' in disk(f.file), false);
 });
 
-test('[agent:team test-roots]: a missing directory, a bad shape, too many, and a non-lead are refused and nothing is written', async () => {
+test('_handleTeamTestRoots: a missing directory, a bad shape, too many, and a non-lead are refused and nothing is written', async () => {
   const f = mkVerbFixture({ testRoots: ['test'] });
   fs.mkdirSync(path.join(f.root, 'test'));
   fs.writeFileSync(path.join(f.root, 'notadir'), 'x');
