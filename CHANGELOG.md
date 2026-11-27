@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+## 5.211.0 — 2026-11-27
+
 - Team tickets: a verify held because the test runner was busy now retries by itself when the runner has a free slot, and `queue:` also sets how long a deciding run waits.
 
 ## 5.210.0 — 2026-11-27
