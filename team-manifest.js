@@ -186,6 +186,29 @@ function normalizeWorktrees(v) {
   return WORKTREES_VALUES.includes(v) ? v : null;
 }
 
+const TEST_ROOTS_MAX = 8;
+const TEST_ROOT_LEN_MAX = 200;
+
+function normalizeTestRoot(v) {
+  if (typeof v !== 'string') return null;
+  const t = v.endsWith('/') ? v.slice(0, -1) : v;
+  if (!t || t.length > TEST_ROOT_LEN_MAX || /[\s\x00-\x1f\x7f]/.test(t)) return null;
+  if (t.startsWith('/') || t.startsWith('-')) return null;
+  if (t.split('/').some((seg) => !seg || seg === '..' || seg.startsWith('.'))) return null;
+  return t;
+}
+
+function normalizeTestRoots(v) {
+  if (!Array.isArray(v) || v.length < 1 || v.length > TEST_ROOTS_MAX) return null;
+  const out = [];
+  for (const r of v) {
+    const n = normalizeTestRoot(r);
+    if (!n) return null;
+    if (!out.includes(n)) out.push(n);
+  }
+  return out;
+}
+
 const DONE_VALUES = ['code', 'report'];
 const DEFAULT_DONE = 'code';
 
@@ -737,8 +760,17 @@ function createTeamManifest({ fs, clodexHome, log = null, now = () => Date.now()
         console.warn(`team "${name}": testRunner.runMs is invalid and ignored; runner runs keep the ${TEST_RUNNER_RUN_DEFAULT_MS / TEST_RUNNER_RUN_STEP_MS} min default — it must be whole minutes from ${TEST_RUNNER_RUN_MIN_MS / TEST_RUNNER_RUN_STEP_MS} to ${TEST_RUNNER_RUN_MAX_MS / TEST_RUNNER_RUN_STEP_MS} in ms (${file})`);
       }
     }
+    const testRoots = m.testRoots == null ? null : normalizeTestRoots(m.testRoots);
+    if (m.testRoots != null && !testRoots) {
+      droppedFields.push({ role: null, field: 'testRoots', status: 'invalid', remedy: null });
+      const seen = `invalid|${file}|testRoots`;
+      if (!warnedDrops.has(seen)) {
+        warnedDrops.add(seen);
+        console.warn(`team "${name}": testRoots is invalid and ignored; own test runs look under test and cli/test — it must be 1 to ${TEST_ROOTS_MAX} repo-relative directories, each at most ${TEST_ROOT_LEN_MAX} characters, with no .., empty or dot segment and no leading / or - (${file})`);
+      }
+    }
     const rosterState = readRoster(name, roles, lead);
-    const team = { name, root: path.resolve(root), sandboxed: m.sandboxed === true, lead, roles, kit, file, dir: path.dirname(file), watchdogMs, ...(watchMs != null ? { watchMs } : {}), trunk, done, sharedRoot, ...(worktrees ? { worktrees } : {}), ...(maxHands !== undefined ? { maxHands } : {}), ...(testRunner ? { testRunner } : {}), version, droppedFields, roster: rosterState.rows };
+    const team = { name, root: path.resolve(root), sandboxed: m.sandboxed === true, lead, roles, kit, file, dir: path.dirname(file), watchdogMs, ...(watchMs != null ? { watchMs } : {}), trunk, done, sharedRoot, ...(worktrees ? { worktrees } : {}), ...(maxHands !== undefined ? { maxHands } : {}), ...(testRunner ? { testRunner } : {}), ...(testRoots ? { testRoots } : {}), version, droppedFields, roster: rosterState.rows };
     return { team, rosterState };
   }
 
@@ -1791,10 +1823,23 @@ function createTeamManifest({ fs, clodexHome, log = null, now = () => Date.now()
     return loadManifest(teamName);
   }
 
+  function setTeamTestRoots(teamName, roots) {
+    const team = loadManifest(teamName);
+    const n = roots === null ? null : normalizeTestRoots(roots);
+    if (roots !== null && !n) {
+      throw new Error(`testRoots must be 1 to ${TEST_ROOTS_MAX} repo-relative directories, each at most ${TEST_ROOT_LEN_MAX} characters, with no .., empty or dot segment, no whitespace and no leading / or -, or null to clear (${team.file})`);
+    }
+    const raw = JSON.parse(fs.readFileSync(team.file, 'utf-8'));
+    if (n === null) delete raw.testRoots;
+    else raw.testRoots = n;
+    atomicWrite(team.file, JSON.stringify(migrateRoles(raw), null, 2));
+    return loadManifest(teamName);
+  }
+
   return {
     resolveTeam: teamOfCwd, teamOfCwd, teamsOfCwd, teamOfSeat, teamOf, findProjectRoot, loadManifest, listTeams, cwdInProject,
     bindSeat, unbindSeat, dropSeatRows, renameSeatRow, rosterOf, pruneStaleRows, synthesiseRosters, setSeatLookup,
-    createTeam, deleteTeam, addRole, setRole, removeRole, renameRole, setTeamWatchdog, setTeamTrunk, setTeamDone, setTeamWorktrees, setTeamMaxHands, setTeamTestRunner, setLead,
+    createTeam, deleteTeam, addRole, setRole, removeRole, renameRole, setTeamWatchdog, setTeamTrunk, setTeamDone, setTeamWorktrees, setTeamMaxHands, setTeamTestRunner, setTeamTestRoots, setLead,
     listKits, kitCatalog, resolveKit,
     teamsDir, TEAM_FILE, ROSTER_FILE,
   };
@@ -1969,6 +2014,6 @@ module.exports = {
   // Exported so the retired-field warn test iterates the REAL list — a copy in
   // the test would keep passing over a field added here and never warned about.
   ROLE_KEYS, CUT_ROLE_FIELDS, HONORED_CUT_FIELDS, EDITABLE_ROLE_FIELDS, UNREACHABLE_ROLE_FIELDS, MANIFEST_VERSION,
-  ROLE_DISPATCH_VALUES, DEFAULT_ROLE_DISPATCH, normalizeTrunk, TRUNK_HEAD, DONE_VALUES, DEFAULT_DONE, normalizeDone, WORKTREES_VALUES, normalizeWorktrees, normalizeMaxHands, effectiveHandCap, normalizeTestRunner, TEST_RUNNER_HANDS, TEST_RUNNER_GATE, TEST_RUNNER_FALLBACK, TEST_RUNNER_WIRE, TEST_RUNNER_WIRE_PUSH, TEST_RUNNER_POOL_MAX, TEST_RUNNER_ENV_RE, TEST_RUNNER_ENV_MAX, TEST_RUNNER_ENV_VALUE_MAX, TEST_RUNNER_RUN_STEP_MS, TEST_RUNNER_RUN_MIN_MS, TEST_RUNNER_RUN_MAX_MS, TEST_RUNNER_RUN_DEFAULT_MS,
+  ROLE_DISPATCH_VALUES, DEFAULT_ROLE_DISPATCH, normalizeTrunk, TRUNK_HEAD, normalizeTestRoots, TEST_ROOTS_MAX, TEST_ROOT_LEN_MAX, DONE_VALUES, DEFAULT_DONE, normalizeDone, WORKTREES_VALUES, normalizeWorktrees, normalizeMaxHands, effectiveHandCap, normalizeTestRunner, TEST_RUNNER_HANDS, TEST_RUNNER_GATE, TEST_RUNNER_FALLBACK, TEST_RUNNER_WIRE, TEST_RUNNER_WIRE_PUSH, TEST_RUNNER_POOL_MAX, TEST_RUNNER_ENV_RE, TEST_RUNNER_ENV_MAX, TEST_RUNNER_ENV_VALUE_MAX, TEST_RUNNER_RUN_STEP_MS, TEST_RUNNER_RUN_MIN_MS, TEST_RUNNER_RUN_MAX_MS, TEST_RUNNER_RUN_DEFAULT_MS,
   ROLE_RE, RESERVED_ROLE_KEYS, RESERVED_ROLE_PATCH_FIELDS, NAME_RE,
 };

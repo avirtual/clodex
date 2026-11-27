@@ -488,6 +488,26 @@ records the branch the root is on as `worktree.baseBranch` (refusing a detached
 root), and that ticket merges back into that branch, so the gate refuses when
 the root has since moved to another branch.
 
+**Test roots.** A hand's `clodex-run-tests` `own` run picks the tests for the
+code its branch changed ("by subject") from the test files under the team's
+test roots: `test` and `cli/test` unless `team.json` says otherwise with
+`"testRoots": ["test", "web/workshop/test"]` — 1 to 8 repo-relative
+directories, each at most 200 characters, with no `..`, empty or dot segment,
+no whitespace and no leading `/` or `-` (a trailing slash is dropped). An
+invalid value is dropped with a warning (`{ field: 'testRoots', status:
+'invalid' }` in `droppedFields`) and the default applies. Set it with
+`[agent:team test-roots <dir> [<dir> …]]` (lead only; each directory must exist
+in the root), clear it with `[agent:team test-roots off]`; bare
+`[agent:team test-roots]` shows the effective roots and whether they are set or
+the default. The host hands the roots to the wrapper (`CLODEX_SUITE_TEST_ROOTS`
+in the exec child's env), never the hand's payload, whose schema refuses a
+`testRoots` key. A root missing from the measured tree is skipped. A test
+reaches its subject through any quoted relative path (`require`, `import … from`,
+`import()`), so ES module tests (`*.test.mjs`) are found too. Your
+`scripts/run-tests.js` receives the selected files as positional arguments
+after `--reporter=dot`. The roots change only what `own` selects: a full run,
+a `files` run and the runner are unaffected.
+
 **One conflict the loop resolves itself: CHANGELOG.md.** Every ticket adds its
 bullet at the end of `## Unreleased`, so the second of two in-flight tickets
 always conflicts there even when nothing else overlaps. When the ONLY conflicted

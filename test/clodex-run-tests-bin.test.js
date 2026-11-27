@@ -1549,3 +1549,97 @@ test('isPoolPath takes .test.js, .test.mjs and .test.cjs, and this repo\'s pool 
   assert.deepStrictEqual(tracked, [], 'a tracked .test.mjs/.test.cjs here would grow every own run\'s by-subject pool');
   assert.deepStrictEqual(pool.filter((f) => !f.endsWith('.test.js')), []);
 });
+
+const NESTED_ROOTS = JSON.stringify(['test', 'app/web/workshop/test']);
+
+function nestedOwn(tests, { changed = 'app/web/world/thing.mjs', roots = NESTED_ROOTS } = {}) {
+  const root = mkRoot();
+  mkBranchRepo(root, {
+    extraOnMaster: {
+      'app/web/world/thing.mjs': 'export const v = 1;\n',
+      'app/web/world/thing.cjs': 'module.exports = 1;\n',
+      'thing.mjs': 'export const r = 1;\n',
+      'app/web/workshop/test/unrelated.test.mjs': 'export {};\n',
+      ...tests,
+    },
+    onBranch: ({ put: p, git: g }) => {
+      p(changed, '// edited on the branch\n');
+      g('commit', '-aqm', 'branch work');
+    },
+  });
+  const r = run(root, '{"scope":"own"}', { env: { CLODEX_SUITE_TEST_ROOTS: roots } });
+  const rec = stubRecord(root);
+  fs.rmSync(root, { recursive: true, force: true });
+  return { r, rec, leaf: path.basename(root) };
+}
+
+test('scope own: host roots reach a nested test root — the importing test is selected, its unrelated sibling is not', () => {
+  const { r, rec, leaf } = nestedOwn({
+    'app/web/workshop/test/thing.test.mjs': "import { v } from '../../world/thing.mjs';\nexport { v };\n",
+  });
+  assert.ok(rec, `ENTER: the runner never ran: ${r.digest}`);
+  assert.deepStrictEqual(rec.argv, ['--reporter=dot', 'app/web/workshop/test/thing.test.mjs', ...OWN_SCANNERS]);
+  assertDigest(r.digest,
+    `[${leaf}] own: 1/1 green (${WALL}) — ${OWN_SCANNERS.length + 1} files: `
+    + `0 changed, 1 by subject, ${OWN_SCANNERS.length} scanners`);
+});
+
+test('scope own: with no host roots the same nested test is out of the pool, as before', () => {
+  const { rec } = nestedOwn({
+    'app/web/workshop/test/thing.test.mjs': "import { v } from '../../world/thing.mjs';\nexport { v };\n",
+  }, { roots: '' });
+  assert.ok(rec, 'ENTER: the runner never ran');
+  assert.deepStrictEqual(rec.argv, ['--reporter=dot', ...OWN_SCANNERS]);
+});
+
+for (const [form, changed, body] of [
+  ['static import … from', 'app/web/world/thing.mjs', "import { v } from '../../world/thing.mjs';\n"],
+  ['static import with double quotes', 'app/web/world/thing.mjs', 'import * as t from "../../world/thing.mjs";\n'],
+  ['side-effect import', 'app/web/world/thing.mjs', "import '../../world/thing.mjs';\n"],
+  ['dynamic import()', 'app/web/world/thing.mjs', "const t = await import('../../world/thing.mjs');\n"],
+  ['require of a .cjs subject', 'app/web/world/thing.cjs', "const t = require('../../world/thing.cjs');\n"],
+  ['root-level .mjs subject named literally', 'thing.mjs', "const p = new URL('thing.mjs', import.meta.url);\n"],
+]) {
+  test(`scope own: a nested-root test reaching its subject through ${form} is selected`, () => {
+    const { r, rec } = nestedOwn({ 'app/web/workshop/test/reader.test.mjs': `${body}export {};\n` }, { changed });
+    assert.ok(rec, `ENTER: the runner never ran: ${r.digest}`);
+    assert.deepStrictEqual(rec.argv, ['--reporter=dot', 'app/web/workshop/test/reader.test.mjs', ...OWN_SCANNERS]);
+  });
+}
+
+test('scope own: a configured root missing from the measured tree is skipped silently', () => {
+  const { r, rec } = nestedOwn({
+    'app/web/workshop/test/thing.test.mjs': "import { v } from '../../world/thing.mjs';\nexport { v };\n",
+  }, { roots: JSON.stringify(['nowhere/test', 'app/web/workshop/test']) });
+  assert.ok(rec, `ENTER: the runner never ran: ${r.digest}`);
+  assert.deepStrictEqual(rec.argv, ['--reporter=dot', 'app/web/workshop/test/thing.test.mjs', ...OWN_SCANNERS]);
+});
+
+test('hostTestRoots: a host value is taken only when well formed, else the default roots', () => {
+  const { hostTestRoots, TEST_ROOTS } = require(SCRIPT);
+  assert.deepStrictEqual(TEST_ROOTS, ['test', 'cli/test']);
+  for (const [raw, want] of [
+    ['["app/web/test"]', ['app/web/test']],
+    ['["test","cli/test","web/test"]', ['test', 'cli/test', 'web/test']],
+    [undefined, ['test', 'cli/test']],
+    ['', ['test', 'cli/test']],
+    ['not json', ['test', 'cli/test']],
+    ['"test"', ['test', 'cli/test']],
+    ['[]', ['test', 'cli/test']],
+    ['["../up"]', ['test', 'cli/test']],
+    ['["/abs"]', ['test', 'cli/test']],
+    ['["-x"]', ['test', 'cli/test']],
+    ['[".git"]', ['test', 'cli/test']],
+    ['["a b"]', ['test', 'cli/test']],
+    ['[1]', ['test', 'cli/test']],
+    ['["a","b","c","d","e","f","g","h","i"]', ['test', 'cli/test']],
+  ]) assert.deepStrictEqual(hostTestRoots(raw), want, String(raw));
+});
+
+test('testPool: this repo\'s pool under explicit default roots equals its pool under no roots argument', () => {
+  const { testPool } = require(SCRIPT);
+  const repo = path.join(__dirname, '..');
+  const pool = testPool(repo);
+  assert.ok(pool.includes('test/clodex-run-tests-bin.test.js'), 'ENTER: the pool walked this repo');
+  assert.deepStrictEqual(testPool(repo, ['test', 'cli/test']), pool);
+});

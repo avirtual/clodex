@@ -437,6 +437,13 @@ no terminal tabs `no terminal on this host`. The `term_read` MCP tool
   runner comes from the deps' `pool` (`_handRunners`), called with the deps' `box` (`_handBox`), which the run also sends with the team's `shares`; a boxed reply adds `box: {isolation, imageId}`. The exec timeout kill and a channel disconnect each
   cancel the in-flight runner job once. A script with no channel (a shell, an
   older host) runs locally.
+  The `own` selection happens in the wrapper before the request is sent, over
+  the team's test roots (`testRoots` in team.json, default `test` and
+  `cli/test`; docs/teams.md "Test roots"): the host sets
+  `CLODEX_SUITE_TEST_ROOTS` (a JSON array, empty when unset) in that child's
+  env, and the def's schema refuses a `testRoots` payload key, so a hand cannot
+  move or widen them. The selected files reach the project's
+  `scripts/run-tests.js` as positional arguments.
 - **`[agent:exec status] {}` is a reserved name, not a registered command.** It
   answers from `session.execRuns` (last 3 runs, newest first, or one via
   `{"seq":N}`) without a grant and without spawning; a registry def named

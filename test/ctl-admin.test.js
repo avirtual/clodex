@@ -477,6 +477,7 @@ function hostEnv(REGISTRY_DIR, team, clientToken = '') {
     CLODEX_CTL: path.join(__dirname, '..', 'cli', 'bin', 'clodexctl.js'),
     CLODEX_TEAM: team ? team.name : '',
     CLODEX_TEAM_ROOT: team ? team.root : '',
+    CLODEX_SUITE_TEST_ROOTS: '',
     CLODEX_CLIENT_TOKEN: clientToken,
     CLODEX_AGENT_CRED: '',
   };

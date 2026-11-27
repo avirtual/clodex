@@ -23,7 +23,7 @@ const { localHalf, failingNames } = require('./suite-client');
 const { boxVerdict, fallbackOf, FALLBACK_CODES, pickRunner, runnerLoad, BUILD_BUDGET_MS, HUNG_RE } = require('./suite-client');
 const {
   matchSeatRole, nameRole, defaultLeadSeat, ROLE_RE, RESERVED_ROLE_KEYS, STOCK_ROLE_DEFS,
-  DEFAULT_ROLE_DISPATCH, TRUNK_HEAD, effectiveHandCap, DONE_VALUES, normalizeDone, NAME_RE: NODE_NAME_RE, TEST_RUNNER_HANDS, TEST_RUNNER_GATE, TEST_RUNNER_FALLBACK, TEST_RUNNER_WIRE_PUSH: WIRE_PUSH, TEST_RUNNER_POOL_MAX,
+  DEFAULT_ROLE_DISPATCH, TRUNK_HEAD, normalizeTestRoots, TEST_ROOTS_MAX, effectiveHandCap, DONE_VALUES, normalizeDone, NAME_RE: NODE_NAME_RE, TEST_RUNNER_HANDS, TEST_RUNNER_GATE, TEST_RUNNER_FALLBACK, TEST_RUNNER_WIRE_PUSH: WIRE_PUSH, TEST_RUNNER_POOL_MAX,
   TEST_RUNNER_ENV_RE, TEST_RUNNER_ENV_MAX, TEST_RUNNER_ENV_VALUE_MAX, TEST_RUNNER_RUN_STEP_MS, TEST_RUNNER_RUN_MIN_MS, TEST_RUNNER_RUN_MAX_MS, TEST_RUNNER_RUN_DEFAULT_MS,
 } = require('./team-manifest');
 const {
@@ -3010,6 +3010,10 @@ function createTicketMethods(deps, shared) {
             this._handleTeamTrunk(team, intent, reply).catch((err) => reply(`error: ${(err && err.message) || err}`));
             return;
           }
+          case 'test-roots': {
+            this._handleTeamTestRoots(team, intent, reply);
+            return;
+          }
           case 'done': {
             this._handleTeamDone(team, intent, reply);
             return;
@@ -3034,7 +3038,7 @@ function createTicketMethods(deps, shared) {
             return;
           }
           default:
-            reply(`error: unknown team verb "${intent.sub}" — use role-add | role-set | role-rm | role-rename | set-lead | watchdog | gather | template-save | template-rm | prompt-save | prompt-rm | sandbox | box | trunk | done | worktrees | hands | runner`);
+            reply(`error: unknown team verb "${intent.sub}" — use role-add | role-set | role-rm | role-rename | set-lead | watchdog | gather | template-save | template-rm | prompt-save | prompt-rm | sandbox | box | trunk | test-roots | done | worktrees | hands | runner`);
         }
       } catch (err) {
         reply(`error: ${err.message}`);
@@ -3067,6 +3071,43 @@ function createTicketMethods(deps, shared) {
       }
       const m = setTeamTrunk(team.name, intent.branch);
       reply(`trunk of ${team.name} set to "${m.trunk}" — accepted tickets now merge into it`);
+    },
+
+    _handleTeamTestRoots(team, intent, reply) {
+      const roots = Array.isArray(intent.roots) ? intent.roots : [];
+      const deflt = TEST_ROOTS.join(' ');
+      if (!roots.length) {
+        reply(team.testRoots
+          ? `test roots of ${team.name}: ${team.testRoots.join(' ')} (set in team.json; the default would be ${deflt})`
+          : `test roots of ${team.name}: ${deflt} (the default; not set — [agent:team test-roots <dir> …] sets it)`);
+        return;
+      }
+      if (roots.length === 1 && roots[0] === 'off') {
+        deps.setTeamTestRoots(team.name, null);
+        reply(`test roots of ${team.name} cleared — own test runs look under the default ${deflt}`);
+        return;
+      }
+      if (roots.length > TEST_ROOTS_MAX) {
+        reply(`error: test-roots takes 1 to ${TEST_ROOTS_MAX} directories — got ${roots.length}`);
+        return;
+      }
+      const picked = [];
+      for (const r of roots) {
+        const n = normalizeTestRoots([r]);
+        if (!n) {
+          reply(`error: test root "${r.slice(0, 80)}" is not a repo-relative directory — at most 200 characters, no .., empty or dot segment, no whitespace and no leading / or -`);
+          return;
+        }
+        let isDir = false;
+        try { isDir = fs.statSync(path.join(team.root, n[0])).isDirectory(); } catch { isDir = false; }
+        if (!isDir) {
+          reply(`error: test root "${n[0]}" is not a directory in ${team.root}`);
+          return;
+        }
+        picked.push(n[0]);
+      }
+      const m = deps.setTeamTestRoots(team.name, picked);
+      reply(`test roots of ${team.name} set to ${m.testRoots.join(' ')} — a hand's own test run now finds the tests for its changed code there`);
     },
 
     _handleTeamDone(team, intent, reply) {
