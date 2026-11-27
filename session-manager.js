@@ -180,6 +180,7 @@ function dupIdentity(intent) {
 const { createTicketsStore, ticketTerminalReason } = require('./tickets-store');
 const { findRepoRoot } = require('./project-root');
 const { atomicWriteFileSync } = require('./fs-util');
+const { withClaudeConfigLock } = require('./claude-config-lock');
 const { composeBrief, idleDecision, idleClearAfterMs, idleClearDecision, briefPathFor, clientTokenPathFor, pickMaxAwakeVictim, splitTurnText, BRIEF_TAIL, BRIEF_MAX_BYTES } = require('./assistant-sleep');
 const { idleCandidates } = require('./idle-pause');
 const { cachedMessages } = require('./transcript');
@@ -447,42 +448,45 @@ function preseedClaudeOnboarding({ fs, path, homeDir, configDir = null, cwd, add
   }
   const keys = [...new Set(trustKeys)];
   const seeded = new Set();
-  for (let attempt = 0; attempt <= PRESEED_RETRY_MS.length; attempt++) {
-    if (attempt > 0) sleepFn(PRESEED_RETRY_MS[attempt - 1]);
-    try {
-      const j = readConfig();
-      if (!j) { warn('not a JSON object, left untouched'); return false; }
-      const wantOnboarding = !j.hasCompletedOnboarding;
-      const untrusted = preseedMissing(j, false, keys);
-      if (!wantOnboarding && !untrusted.length) {
-        if (out) { out.keys = [...seeded]; out.attempts = attempt; }
-        return seeded.size > 0;
+  const attempts = () => {
+    for (let attempt = 0; attempt <= PRESEED_RETRY_MS.length; attempt++) {
+      if (attempt > 0) sleepFn(PRESEED_RETRY_MS[attempt - 1]);
+      try {
+        const j = readConfig();
+        if (!j) { warn('not a JSON object, left untouched'); return false; }
+        const wantOnboarding = !j.hasCompletedOnboarding;
+        const untrusted = preseedMissing(j, false, keys);
+        if (!wantOnboarding && !untrusted.length) {
+          if (out) { out.keys = [...seeded]; out.attempts = attempt; }
+          return seeded.size > 0;
+        }
+        if (wantOnboarding) {
+          j.hasCompletedOnboarding = true;
+          if (!j.theme) j.theme = 'dark';
+        }
+        if (untrusted.length) j.projects = j.projects || {};
+        for (const k of untrusted) {
+          j.projects[k] = { ...(j.projects[k] || {}), hasTrustDialogAccepted: true };
+        }
+        const tmp = `${p}.tmp-${process.pid}`;
+        fs.writeFileSync(tmp, JSON.stringify(j, null, 2) + '\n', { mode: 0o600 });
+        fs.renameSync(tmp, p);
+        for (const k of untrusted) seeded.add(k);
+        const lost = preseedMissing(readConfig() || {}, wantOnboarding, untrusted);
+        if (!lost.length) {
+          if (out) { out.keys = [...seeded]; out.attempts = attempt + 1; }
+          return true;
+        }
+        warn(`attempt ${attempt + 1}: ${lost.join(', ')} missing after the rename (another writer replaced the file)`);
+      } catch (e) {
+        warn(`attempt ${attempt + 1} failed: ${e.message}`);
+        return false;
       }
-      if (wantOnboarding) {
-        j.hasCompletedOnboarding = true;
-        if (!j.theme) j.theme = 'dark';
-      }
-      if (untrusted.length) j.projects = j.projects || {};
-      for (const k of untrusted) {
-        j.projects[k] = { ...(j.projects[k] || {}), hasTrustDialogAccepted: true };
-      }
-      const tmp = `${p}.tmp-${process.pid}`;
-      fs.writeFileSync(tmp, JSON.stringify(j, null, 2) + '\n', { mode: 0o600 });
-      fs.renameSync(tmp, p);
-      for (const k of untrusted) seeded.add(k);
-      const lost = preseedMissing(readConfig() || {}, wantOnboarding, untrusted);
-      if (!lost.length) {
-        if (out) { out.keys = [...seeded]; out.attempts = attempt + 1; }
-        return true;
-      }
-      warn(`attempt ${attempt + 1}: ${lost.join(', ')} missing after the rename (another writer replaced the file)`);
-    } catch (e) {
-      warn(`attempt ${attempt + 1} failed: ${e.message}`);
-      return false;
     }
-  }
-  warn(`gave up after ${PRESEED_RETRY_MS.length + 1} attempts`);
-  return false;
+    warn(`gave up after ${PRESEED_RETRY_MS.length + 1} attempts`);
+    return false;
+  };
+  return withClaudeConfigLock({ fs, file: p, fn: attempts, log, sleepFn });
 }
 function nearMissFormHint(text) {
   if (!/^\[agent:term[\s\]]/.test(String(text || ''))) return '';

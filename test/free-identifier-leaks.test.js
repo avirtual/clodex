@@ -291,6 +291,7 @@ const SCANNED_MODULES = [
   'suite-claimer.js',
   'box-offer.js',
   'offer-directory.js',
+  'claude-config-lock.js',
 ];
 
 // NOT scanned: anything under plugins/. This list answers "did an extraction
