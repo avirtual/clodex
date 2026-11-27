@@ -1365,3 +1365,30 @@ test('t2440: while a job waits on its cancel to move to runner-2, a fresh pick c
   assert.strictEqual(out.record.where, 'runner-2', 'ENTER: the job moved');
   assert.deepStrictEqual([before, seen], [0, [1]]);
 });
+
+test('t2440: a cancel that fails releases the move claim, so a fresh pick no longer counts the job on runner-2', async () => {
+  const seen = [];
+  let client = null;
+  const r = moveRig({
+    info: { p1: () => BUSY_WITH(['run-1']), p2: () => IDLE_ONE() },
+    poll: { p1: (id, t) => { if (t > 60000 && t < 120000) seen.push(client.sentTo('runner-2', IDLE_ONE())); return jobAt(id, 'queued'); } },
+    del: { p1: async () => ({ status: 0, body: null, error: 'socket closed' }) },
+  });
+  client = r.client;
+  const out = await r.client.run({ ...r.base, requeue: r.requeue() });
+  assert.ok(seen.length > 0, 'ENTER: a poll ran between the failed cancel and the next check');
+  assert.deepStrictEqual([out.record.where, [...new Set(seen)]], ['runner-1', [0]]);
+});
+
+test('t2440: a caller stop while the moved job is set up on runner-2 ends it with one move recorded and no fallback hop', async () => {
+  let armed = false;
+  let stop = false;
+  const r = moveRig({
+    info: { p1: () => BUSY_WITH(['run-1']), p2: () => { if (armed) stop = true; return IDLE_ONE(); } },
+    poll: { p1: QUEUED_ON_1, p2: RAN_ON_2 },
+    del: { p1: async () => { armed = true; return { status: 200, body: { ok: true } }; } },
+  });
+  const out = await r.client.run({ ...r.base, requeue: r.requeue(), shouldStop: () => stop });
+  assert.ok(stop, 'ENTER: the stop came during the setup on runner-2');
+  assert.deepStrictEqual([r.posts(), out.record.moved], [['0 p1 POST run-1'], [{ from: 'runner-1', to: 'runner-2', at: '1970-01-01T00:01:00.000Z' }]]);
+});
