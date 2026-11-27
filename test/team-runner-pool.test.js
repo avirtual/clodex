@@ -1350,3 +1350,18 @@ test('t2440: a verify shadow and a verify box decide are given a move hook on a 
   await b.m._boxDecide(team, { id: 't1' }, '/w', { merge: true });
   assert.deepStrictEqual(runSent.map((o) => [o.kind, typeof o.requeue, typeof o.onMove]), [['verify', 'function', 'function'], ['post-merge', 'undefined', 'undefined']]);
 });
+
+test('t2440: while a job waits on its cancel to move to runner-2, a fresh pick counts it as sent to runner-2', async () => {
+  const seen = [];
+  let client = null;
+  const r = moveRig({
+    info: { p1: () => BUSY_WITH(['run-1']), p2: () => IDLE_ONE() },
+    poll: { p1: QUEUED_ON_1, p2: RAN_ON_2 },
+    del: { p1: async () => { seen.push(client.sentTo('runner-2', IDLE_ONE())); return { status: 200, body: { ok: true } }; } },
+  });
+  client = r.client;
+  const before = r.client.sentTo('runner-2', IDLE_ONE());
+  const out = await r.client.run({ ...r.base, requeue: r.requeue() });
+  assert.strictEqual(out.record.where, 'runner-2', 'ENTER: the job moved');
+  assert.deepStrictEqual([before, seen], [0, [1]]);
+});

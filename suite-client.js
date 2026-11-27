@@ -545,15 +545,15 @@ function createSuiteClient({
     }
   }
 
-  function heading(ctx, peer) {
+  function heading(ctx, where) {
     for (const e of runs.values()) {
       const c = e.ctx;
       if (!c) {
-        if (e.where === peer && now() - e.at <= CLAIM_TTL_MS) return true;
+        if (e.where === where && now() - e.at <= CLAIM_TTL_MS) return true;
         continue;
       }
       if (c === ctx || c.ended) continue;
-      if (c.moving === peer || (c.peer === peer && !c.submitted)) return true;
+      if (c.moving === where || (c.where === where && !c.submitted)) return true;
     }
     return false;
   }
@@ -564,8 +564,8 @@ function createSuiteClient({
     const ask = ctx.requeue;
     const next = await Promise.resolve().then(() => ask(ctx.where, ctx.id)).catch(() => null);
     if (!next || !next.peer || (next.name || next.peer) === ctx.where || ctx.shouldStop()) return null;
-    if (heading(ctx, next.peer)) return null;
-    ctx.moving = next.peer;
+    if (heading(ctx, next.name || next.peer)) return null;
+    ctx.moving = next.name || next.peer;
     const stay = () => { ctx.moving = null; return null; };
     const r = await once(ctx.peer, (c) => c.suiteAsk('GET', `/api/suite/jobs?ids=${encodeURIComponent(jobId)}&wait=0`, null, POLL_SLACK_MS), ctx.wire).catch(() => null);
     const jobs = r && r.body && r.body.ok && Array.isArray(r.body.jobs) ? r.body.jobs : [];
