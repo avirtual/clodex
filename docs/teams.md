@@ -1294,8 +1294,28 @@ only once that cancel is confirmed, submitted to the new one under the next
 at most twice, never once it started or while it is in `build`, and keeps its
 original queue clock. If the new member refuses the submit, the job is resubmitted
 once to the member it left and then ends as before. Post-merge jobs never move.
-The run row carries `moved: [{from, to, at}]`, and a hand digest says
+The run row carries `moved: [{from, to, at, considered}]`, and a hand digest says
 `(runner <new>, moved <old> -> <new>)`.
+
+Every pool pick's record (`pick` on the start row and the end row of
+`~/.clodex/logs/suite-runs.jsonl`) keeps `chosen` and `skipped` as before and adds
+`considered`: one entry per configured member (at most 8), chosen first, then the
+answered members in rank order, then the rest in pool order. A move's own list is
+on its `moved` entry; the original pick is never overwritten.
+
+| field | value |
+|---|---|
+| `member` | the pool member's name |
+| `state` | `chosen`, `ranked-lower`, `probing` (answered, box state not known yet), `no-answer`, `not-live`, `excluded` |
+| `why` | `no-answer`: `timeout`, `refused` or `error`; `excluded`: `no-box` (no box and cannot build), `share-missing`, `failed` (left out of a re-pick after the job failed there) |
+| `load` | answered only: `runnerLoad`'s `{total, inUse, free, queue, pending}`, pending and sent jobs folded in |
+| `tier`, `rank` | answered only: box tier and exclusive rank as ranked |
+| `exclusive` | answered only: the runner's `honour` or `ignore`, `null` when it does not say |
+
+When a hand job waited more than 60 s for a slot, its digest adds
+`(waited <t> on <member>; <best other member> <state>)`. `clodexctl get testjobs
+-o json` on the source node carries `picks`: the latest ledger row of each of
+the last 20 jobs that has a pick.
 
 Reading it: bare `[agent:team runner]` also shows the gate mode and, for the
 runner's current environment key (`envKey`, from its info route), how many
