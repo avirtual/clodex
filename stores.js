@@ -36,7 +36,7 @@ const { sanitizeBoxOffer } = require('./box-offer');
 
 const SUITE_RUNNER_KEYS = ['enabled', 'isolation', 'work'];
 const BOX_IMAGE_RE = /^sha256:[0-9a-f]{64}$/;
-const SUITE_RUNNER_OPTIONAL = ['boxImage', 'slots', 'shares', 'buildBoxes'];
+const SUITE_RUNNER_OPTIONAL = ['boxImage', 'slots', 'shares', 'buildBoxes', 'exclusive'];
 const MAX_SUITE_SLOTS = 4;
 const MAX_SUITE_SHARES = 8;
 const SHARE_NAME_RE = /^(?!\.+$)[a-zA-Z0-9._-]{1,64}$/;
@@ -79,6 +79,7 @@ function sanitizeSuiteRunner(v) {
   return {
     enabled: v.enabled, isolation: v.isolation, work: v.work, ...(v.boxImage ? { boxImage: v.boxImage } : {}), ...(slots > 1 ? { slots } : {}), ...(shares ? { shares } : {}),
     ...(v.buildBoxes === true ? { buildBoxes: true } : {}),
+    ...(v.exclusive === 'ignore' ? { exclusive: 'ignore' } : {}),
   };
 }
 

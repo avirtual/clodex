@@ -199,3 +199,31 @@ test('t2417: no setTestjobSlots dep: the slots route answers 501', async (t) => 
   const r = await post(port, '/api/testjobs/slots', '{"slots":1}');
   assert.deepStrictEqual([r.status, r.json], [501, { ok: false, error: 'testjobs not available' }]);
 });
+
+test('t2428: POST /api/testjobs/exclusive hands the body exclusive to its own setter, never the slots one, and returns its answer', async (t) => {
+  const asked = [];
+  let slotCalls = 0;
+  const port = await startNode(t, {
+    listTestjobs: () => ({ enabled: true, snapshot: SNAPSHOT }),
+    setTestjobSlots: () => { slotCalls++; return { ok: true }; },
+    setTestjobExclusive: (v) => { asked.push(v); return v === 'ignore' ? { ok: true, exclusive: 'ignore', applied: 'now', running: 0 } : { ok: false, status: 400, error: 'exclusive must be honour or ignore' }; },
+  });
+  const rows = [
+    ['{"exclusive":"ignore"}', 200, { ok: true, exclusive: 'ignore', applied: 'now', running: 0 }],
+    ['{"exclusive":"maybe"}', 400, { ok: false, error: 'exclusive must be honour or ignore' }],
+    ['not json', 400, { ok: false, error: 'bad JSON' }],
+  ];
+  for (const [raw, status, body] of rows) {
+    const r = await post(port, '/api/testjobs/exclusive', raw);
+    assert.deepStrictEqual([r.status, r.json], [status, body], raw);
+  }
+  assert.deepStrictEqual([asked, slotCalls], [['ignore', 'maybe'], 0]);
+  const scoped = await post(port, '/api/testjobs/exclusive', '{"exclusive":"ignore"}', { token: SUITE_TOKEN });
+  assert.strictEqual(scoped.status, 403);
+});
+
+test('t2428: no setTestjobExclusive dep: the exclusive route answers 501', async (t) => {
+  const port = await startNode(t, { listTestjobs: () => ({ enabled: true, snapshot: SNAPSHOT }), setTestjobSlots: () => ({ ok: true }) });
+  const r = await post(port, '/api/testjobs/exclusive', '{"exclusive":"ignore"}');
+  assert.deepStrictEqual([r.status, r.json], [501, { ok: false, error: 'testjobs not available' }]);
+});

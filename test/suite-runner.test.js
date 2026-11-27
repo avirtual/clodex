@@ -1739,6 +1739,149 @@ test('ending a drain starts the queued job on the same runner', async (t) => {
   assert.strictEqual(drained, 0);
 });
 
+const ALONE = { exclusive: true };
+const exclusiveRows = async (runner) => {
+  const a = await runner.activity();
+  return [...a.running, ...a.waiting].map((j) => [j.id, j.exclusive || null]);
+};
+
+test('t2428: an exclusive job waits for an idle runner, holds the jobs behind it, then runs alone with the runner reported full', async (t) => {
+  const f = await holdingFixture(t, { runnerOver: { slots: 3 } });
+  await f.upload(f.body('x1'));
+  await f.spawned(['x1']);
+  assert.strictEqual((await f.upload(f.body('x-alone', 'hand', ALONE))).state, 'queued');
+  assert.strictEqual((await f.upload(f.body('x2'))).state, 'queued');
+  await drain();
+  assert.deepStrictEqual([await slotsOf(f.runner), f.calls.map((c) => c.job)], [{ slots: { total: 3, inUse: 1 }, running: ['x1'], waiting: ['x-alone', 'x2'] }, ['x1']]);
+  assert.deepStrictEqual((await f.runner.info()).slots, { total: 3, inUse: 1 });
+  f.held.get('x1').finish(0);
+  await f.spawned(['x-alone']);
+  await drain();
+  assert.deepStrictEqual(await slotsOf(f.runner), { slots: { total: 3, inUse: 1 }, running: ['x-alone'], waiting: ['x2'] });
+  const info = await f.runner.info();
+  assert.deepStrictEqual([info.slots, info.exclusive], [{ total: 3, inUse: 3 }, 'honour']);
+  assert.deepStrictEqual(await exclusiveRows(f.runner), [['x-alone', 'honoured'], ['x2', null]]);
+  const polled = (await f.runner.poll(['x-alone', 'x2'])).jobs.map((j) => [j.id, j.exclusive]);
+  assert.deepStrictEqual(polled, [['x-alone', 'honoured'], ['x2', undefined]]);
+  assert.strictEqual((await f.upload(f.body('x3'))).state, 'queued');
+  await drain();
+  assert.deepStrictEqual(f.calls.map((c) => c.job), ['x1', 'x-alone']);
+  f.held.get('x-alone').finish(0);
+  await f.spawned(['x2', 'x3']);
+  assert.deepStrictEqual(f.calls.map((c) => c.job).slice(0, 2), ['x1', 'x-alone']);
+  assert.deepStrictEqual(f.calls.map((c) => c.job).sort(), ['x-alone', 'x1', 'x2', 'x3']);
+  for (const id of ['x2', 'x3']) f.held.get(id).finish(0);
+  await waitState(f.runner, 'x3', 'done');
+});
+
+test('t2428: a later post-merge still sorts ahead of a queued exclusive hand job and starts beside the running job; the hold then resumes', async (t) => {
+  const f = await holdingFixture(t, { runnerOver: { slots: 3 } });
+  await f.upload(f.body('p1'));
+  await f.spawned(['p1']);
+  await f.upload(f.body('p-alone', 'hand', ALONE));
+  await f.upload(f.body('p-hand'));
+  await f.upload(f.body('p-post', 'post-merge'));
+  await f.spawned(['p-post']);
+  await drain();
+  assert.deepStrictEqual(await slotsOf(f.runner), { slots: { total: 3, inUse: 2 }, running: ['p1', 'p-post'], waiting: ['p-alone', 'p-hand'] });
+  f.held.get('p1').finish(0);
+  f.held.get('p-post').finish(0);
+  await f.spawned(['p-alone']);
+  await drain();
+  assert.deepStrictEqual(f.calls.map((c) => c.job), ['p1', 'p-post', 'p-alone']);
+  f.held.get('p-alone').finish(0);
+  await f.spawned(['p-hand']);
+  f.held.get('p-hand').finish(0);
+  await waitState(f.runner, 'p-hand', 'done');
+});
+
+test('t2428: a queue head blocked by the serial-native rule lets a later job start, but never an exclusive one beside a running job', async (t) => {
+  const fb = fakeBox();
+  const f = await holdingFixture(t, {
+    runnerOver: { box: fb.box, slots: 3 },
+    wrap: (base) => { const { parallel, ...serial } = base; return serial; },
+  });
+  await f.upload(f.body('sn1'));
+  await f.spawned(['sn1']);
+  await f.runner.submit(f.body('sn2'));
+  await f.runner.submit(f.body('sx', 'hand', { isolation: 'container', ...ALONE }));
+  await drain();
+  assert.deepStrictEqual([await slotsOf(f.runner), f.calls.map((c) => c.job)], [{ slots: { total: 3, inUse: 1 }, running: ['sn1'], waiting: ['sn2', 'sx'] }, ['sn1']]);
+  f.held.get('sn1').finish(0);
+  await f.spawned(['sn2']);
+  await drain();
+  assert.deepStrictEqual(f.calls.map((c) => c.job), ['sn1', 'sn2']);
+  f.held.get('sn2').finish(0);
+  await f.spawned(['sx']);
+  assert.deepStrictEqual(f.calls.map((c) => c.job), ['sn1', 'sn2', 'sx']);
+  f.held.get('sx').finish(0);
+  await waitState(f.runner, 'sx', 'done');
+});
+test('t2428: an exclusive box job held by the box hold does not hold the native jobs behind it; it runs alone once the hold clears and its recent row keeps the marker', async (t) => {
+  const fb = fakeBox({ reap: (job) => { if (job.id === 'b1') throw new Error('box cleanup not confirmed: c0ffee'); } });
+  const f = await holdingFixture(t, { runnerOver: { box: fb.box, slots: 2 } });
+  await f.upload(f.body('b1', 'hand', { isolation: 'container' }));
+  assert.strictEqual((await f.runner.submit(f.body('n0'))).state, 'queued');
+  await f.spawned(['b1', 'n0']);
+  assert.strictEqual((await f.runner.submit(f.body('bx', 'hand', { isolation: 'container', ...ALONE }))).state, 'queued');
+  f.held.get('b1').finish(0);
+  await waitState(f.runner, 'b1', 'done');
+  await drain();
+  assert.strictEqual(fs.existsSync(path.join(f.root, 'suite-runner', 'box-hold.json')), true, 'ENTER: the failed reap holds the box');
+  assert.strictEqual((await f.runner.submit(f.body('n1'))).state, 'queued');
+  await drain();
+  assert.deepStrictEqual(await slotsOf(f.runner), { slots: { total: 2, inUse: 2 }, running: ['n0', 'n1'], waiting: ['bx'] });
+  await f.spawned(['n1']);
+  assert.deepStrictEqual(f.calls.map((c) => c.job), ['b1', 'n0', 'n1']);
+  for (const id of ['n0', 'n1']) f.held.get(id).finish(0);
+  await waitState(f.runner, 'n1', 'done');
+  await f.runner.tick();
+  await f.spawned(['bx']);
+  f.held.get('bx').finish(0);
+  await waitState(f.runner, 'bx', 'done');
+  const recent = (await f.runner.activity()).recent.find((j) => j.id === 'bx');
+  assert.strictEqual(recent.exclusive, 'honoured');
+});
+
+test('t2428: a drain completes with an exclusive job queued, and the job starts alone when the drain ends', async (t) => {
+  const f = await holdingFixture(t, { runnerOver: { slots: 2 } });
+  await f.upload(f.body('d1'));
+  await f.spawned(['d1']);
+  await f.upload(f.body('d-alone', 'hand', ALONE));
+  let drained = 0;
+  assert.strictEqual(f.runner.drain(() => { drained += 1; }), 1);
+  f.held.get('d1').finish(0);
+  await waitState(f.runner, 'd1', 'done');
+  await f.spawned(['d-alone']);
+  assert.deepStrictEqual([drained, f.calls.map((c) => c.job)], [1, ['d1', 'd-alone']]);
+  f.held.get('d-alone').finish(0);
+  await waitState(f.runner, 'd-alone', 'done');
+});
+
+test('t2428: a runner set to ignore admits an exclusive job as an ordinary one and says so', async (t) => {
+  const f = await holdingFixture(t, { runnerOver: { slots: 2, exclusive: 'ignore' } });
+  await f.upload(f.body('i1'));
+  await f.spawned(['i1']);
+  await f.upload(f.body('i-alone', 'hand', ALONE));
+  await f.spawned(['i-alone']);
+  await drain();
+  const info = await f.runner.info();
+  assert.deepStrictEqual([info.slots, info.exclusive], [{ total: 2, inUse: 2 }, 'ignore']);
+  assert.deepStrictEqual(await exclusiveRows(f.runner), [['i1', null], ['i-alone', 'ignored']]);
+  assert.strictEqual((await f.runner.poll(['i-alone'])).jobs[0].exclusive, 'ignored');
+  for (const id of ['i1', 'i-alone']) f.held.get(id).finish(0);
+  await waitState(f.runner, 'i-alone', 'done');
+});
+
+test('t2428: submit refuses an exclusive that is not a boolean, and an exclusive false is stored as no request', async (t) => {
+  const f = await fixture(t);
+  for (const [i, v] of ['yes', 1, null, {}].entries()) {
+    assert.deepStrictEqual(await f.runner.submit(f.body(`bad-${i}`, 'hand', { exclusive: v })), { ok: false, status: 400, error: 'bad exclusive' }, String(v));
+  }
+  assert.strictEqual((await f.runner.submit(f.body('plain-false', 'hand', { exclusive: false }))).ok, true);
+  assert.strictEqual((await f.runner.poll(['plain-false'])).jobs[0].exclusive, undefined);
+});
+
 test('a drained runner reloaded with slots lowered from 3 to 2 keeps its queue and runs at most 2 at once', async (t) => {
   const f = await holdingFixture(t, { runnerOver: { slots: 3 } });
   for (const id of ['r1', 'r2', 'r3']) await f.upload(f.body(id));

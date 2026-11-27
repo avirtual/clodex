@@ -280,6 +280,30 @@ for (const [name, members, boxOpt, want] of IDLE_ROWS) {
   });
 }
 
+
+const HONOUR = { exclusive: 'honour' };
+const EXCLUSIVE_PICK_ROWS = [
+  ['an idle honouring runner beats a larger busier one', [member('a', load(4, 1, 0, HONOUR)), member('b', load(1, 0, 0, HONOUR))], false, 1],
+  ['nothing queued beats more free slots with a queue', [member('a', load(2, 0, 1, HONOUR)), member('b', load(1, 0, 0, HONOUR))], false, 1],
+  ['an idle runner that ignores loses to a busy one that honours', [member('a', load(4, 0, 0, { exclusive: 'ignore' })), member('b', load(2, 2, 3, HONOUR))], false, 1],
+  ['an older runner with no exclusive field loses to a busy one that honours', [member('a', load(4, 0, 0)), member('b', load(1, 1, 0, HONOUR))], false, 1],
+  ['two idle honouring runners keep the usual order', [member('a', load(1, 0, 0, HONOUR)), member('b', load(2, 0, 0, HONOUR))], false, 1],
+  ['two busy honouring runners keep the usual order', [member('a', load(2, 2, 0, HONOUR)), member('b', load(2, 1, 0, HONOUR))], false, 1],
+  ['a box job still skips a member without the definition',
+    [member('a', load(4, 0, 0, { ...HONOUR, box: box('f'.repeat(64)) })), member('b', load(1, 1, 0, { ...HONOUR, box: box('d'.repeat(64)) }))], DEF, 1],
+];
+
+for (const [name, members, boxOpt, want] of EXCLUSIVE_PICK_ROWS) {
+  test(`t2428: pickRunner for an exclusive job — ${name}`, () => {
+    const got = pickRunner(members, { box: boxOpt, exclusive: true });
+    assert.deepStrictEqual([got.index, got.chosen], [want, true]);
+  });
+}
+
+test('t2428: without exclusive the same members pick by the usual order', () => {
+  const members = [member('a', load(4, 0, 0, { exclusive: 'ignore' })), member('b', load(2, 2, 3, HONOUR))];
+  assert.deepStrictEqual(pickRunner(members, { box: false }).index, 0);
+});
 test('t2362: two shadow jobs while the first member fills — the second goes to the member with a free slot', async () => {
   const state = { p1: { total: 1, inUse: 0 }, p2: { total: 1, inUse: 0 } };
   const sent = [];

@@ -1072,6 +1072,30 @@ run limit. The runner keeps a queued job for as long as the source polls it
 (each poll renews its 2-minute lease); on the pull wire each poll is its own
 desk call with its own deadline, so no call ttl caps the wait.
 
+`[agent:team runner exclusive:on|off]` (lead only, a runner must be set)
+stores `testRunner.exclusive: true`, or removes it; any other value and a
+repeated `exclusive:` are refused, and a hand-written value other than `true`
+is dropped. With the key, every job the team sends to a runner (hand runs,
+shadow and deciding gate runs, and their repicks and reroutes) carries
+`exclusive: true`, and bare `[agent:team runner]` shows `exclusive on`. The
+runner starts an exclusive job only when nothing is running there, and starts
+nothing beside it until it ends; its build, if it has one, holds the runner the
+same way. When the first job in queue order is exclusive and cannot start yet,
+no job behind it starts, so the runner drains toward it; a later post-merge or
+verify still sorts ahead of a queued exclusive hand job. This is a scheduling
+request, not a resource limit: a box container has no CPU or memory limit.
+While an exclusive job runs, the runner's info reports every slot in use; the
+activity snapshot still counts the jobs actually running. With more than one
+member, `pickRunner` sends an exclusive job first to a member that honours
+the request, then to one with nothing running and nothing queued, then by the
+usual order. A runner's owner can turn the request off with
+`clodexctl patch testjobs --exclusive ignore` (`honour` turns it back on; the
+same local-only rule as `--slots`): such a runner admits the job as an ordinary
+one. The job's poll body and activity row say `exclusive: honoured|ignored`,
+the source's suite-runs end row records `honoured`, `ignored` or
+`unsupported` (an older runner that drops the key), and the hand digest or
+the gate's `(box)` note says the job did not run alone for the last two.
+
 A suite the runner killed at its limit reads `the suite did not finish within
 <n>ms (killed)` followed by `; last output: ` and its last three non-empty
 stdout lines (control characters flattened, each cut to 200 characters,

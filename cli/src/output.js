@@ -160,6 +160,13 @@ function testjobQuietMs(job, at) {
   return gap > TESTJOB_QUIET_MS ? gap : null;
 }
 
+function testjobState(job) {
+  const phase = job.phase || '-';
+  if (job.exclusive === 'ignored') return `${phase} (exclusive ignored)`;
+  if (job.exclusive !== 'honoured') return phase;
+  return phase === 'queued' ? 'waiting for an idle runner (exclusive)' : `${phase} exclusive`;
+}
+
 function renderTestjobs(body) {
   const b = body || {};
   if (!b.enabled) return 'test runner: off on this node';
@@ -170,7 +177,7 @@ function renderTestjobs(body) {
   const live = (job) => {
     const since = job.startedAt != null ? job.startedAt : job.queuedAt;
     const quiet = testjobQuietMs(job, at);
-    return testjobCells(job, job.phase || '-', fmtSpan(at - since), quiet == null ? '-' : fmtSpan(quiet), '');
+    return testjobCells(job, testjobState(job), fmtSpan(at - since), quiet == null ? '-' : fmtSpan(quiet), '');
   };
   const rows = [
     ...(snap.running || []).map(live),

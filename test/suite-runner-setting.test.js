@@ -722,3 +722,33 @@ test('t2417: with a job running the change waits for it and says so', (t) => {
   assert.strictEqual(f.runners[0].closed, true);
   assert.strictEqual(f.wiring.getSuiteEngine().opts.slots, undefined);
 });
+
+test('t2428: setSuiteRunnerExclusive stores ignore, removes the key on honour, refuses anything else, and the runner gets the mode', (t) => {
+  const f = slotsFixture(t, { ...FULL });
+  assert.strictEqual(f.wiring.getSuiteEngine(), f.runners[0], 'ENTER: a live runner');
+  for (const bad of ['yes', true, null, 'Ignore']) {
+    assert.deepStrictEqual(f.wiring.setSuiteRunnerExclusive(bad), { ok: false, status: 400, error: 'exclusive must be honour or ignore' }, String(bad));
+  }
+  assert.deepStrictEqual(f.settings.suiteRunner, FULL);
+  assert.deepStrictEqual(f.wiring.setSuiteRunnerExclusive('ignore'), { ok: true, exclusive: 'ignore', applied: 'now', running: 0 });
+  assert.deepStrictEqual(f.settings.suiteRunner, { ...FULL, exclusive: 'ignore' });
+  assert.strictEqual(f.wiring.getSuiteEngine().opts.exclusive, 'ignore');
+  assert.deepStrictEqual(f.wiring.setSuiteRunnerSlots(3).ok, true);
+  assert.strictEqual(f.settings.suiteRunner.exclusive, 'ignore', 'a slot change keeps the exclusive setting');
+  assert.deepStrictEqual(f.wiring.setSuiteRunnerExclusive('honour'), { ok: true, exclusive: 'honour', applied: 'now', running: 0 });
+  assert.strictEqual('exclusive' in f.settings.suiteRunner, false);
+  assert.strictEqual(f.wiring.getSuiteEngine().opts.exclusive, undefined);
+});
+
+test('t2428: setSuiteRunnerExclusive refuses a node with no record and a disabled runner', (t) => {
+  const none = slotsFixture(t, null);
+  assert.deepStrictEqual(none.wiring.setSuiteRunnerExclusive('ignore'), { ok: false, status: 409, error: 'this node has no test runner setting' });
+  const f = slotsFixture(t, { ...FULL, enabled: false, shares: FULL.shares.map((s) => ({ ...s })) });
+  assert.deepStrictEqual(f.wiring.setSuiteRunnerExclusive('ignore'), { ok: false, status: 409, error: 'the test runner is off on this node' });
+});
+
+test('t2428: a Preferences apply that does not name exclusive keeps the stored ignore', () => {
+  const { set, store } = ipcFixture({ initial: { ...VALID, exclusive: 'ignore' } });
+  assert.strictEqual(set({}, { ...VALID, slots: 3 }).ok, true);
+  assert.deepStrictEqual(store.suiteRunner, { ...VALID, slots: 3, exclusive: 'ignore' });
+});

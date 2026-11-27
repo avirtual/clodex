@@ -903,16 +903,34 @@ async function patch(bundle) {
 }
 
 async function patchTestjobs({ client, ctx, printer, flags }) {
-  if (flags.slots == null || flags.slots === true) throw new CliError(EXIT.USAGE, 'patch testjobs needs --slots N');
+  const hasSlots = flags.slots != null;
+  const hasExclusive = flags.exclusive != null;
+  if (!hasSlots && !hasExclusive) throw new CliError(EXIT.USAGE, 'patch testjobs needs --slots N or --exclusive honour|ignore');
+  if (hasSlots && hasExclusive) throw new CliError(EXIT.USAGE, 'patch testjobs takes --slots or --exclusive, one per call');
+  if (hasExclusive) return patchTestjobsExclusive({ client, ctx, printer, flags });
+  if (flags.slots === true) throw new CliError(EXIT.USAGE, 'patch testjobs needs --slots N');
   const raw = String(flags.slots);
   if (!/^\d+$/.test(raw)) throw new CliError(EXIT.USAGE, `--slots must be a whole number, not "${raw}"`);
   await R.requireResource(client, 'testjobs/slots', 'post', R.ctxLabel(ctx, flags));
   const res = await client.post('/api/testjobs/slots', 'patch testjobs', { slots: Number(raw) });
   if (flags.json) return printer.json(res);
+  printer.line(`test runner slots set to ${res.slots} — ${appliedText(res)}`);
+}
+
+function appliedText(res) {
   const running = res.running || 0;
-  printer.line(res.applied === 'after-drain'
-    ? `test runner slots set to ${res.slots} — applies when ${running} running job${running === 1 ? '' : 's'} finish${running === 1 ? 'es' : ''}`
-    : `test runner slots set to ${res.slots} — applied now`);
+  return res.applied === 'after-drain'
+    ? `applies when ${running} running job${running === 1 ? '' : 's'} finish${running === 1 ? 'es' : ''}`
+    : 'applied now';
+}
+
+async function patchTestjobsExclusive({ client, ctx, printer, flags }) {
+  const want = flags.exclusive;
+  if (want !== 'honour' && want !== 'ignore') throw new CliError(EXIT.USAGE, `--exclusive must be honour or ignore, not "${want === true ? '' : want}"`);
+  await R.requireResource(client, 'testjobs/exclusive', 'post', R.ctxLabel(ctx, flags));
+  const res = await client.post('/api/testjobs/exclusive', 'patch testjobs', { exclusive: want });
+  if (flags.json) return printer.json(res);
+  printer.line(`test runner exclusive requests set to ${res.exclusive} — ${appliedText(res)}`);
 }
 
 async function patchProfile({ client, ctx, printer, flags, args, name }) {

@@ -397,6 +397,7 @@ function validateSubmit(b, limits) {
   }
   if (b.timeoutMs != null && !(b.timeoutMs > 0 && b.timeoutMs <= limits.maxTimeoutMs)) return 'bad timeoutMs';
   if (b.isolation != null && b.isolation !== 'container') return 'bad isolation';
+  if (b.exclusive !== undefined && typeof b.exclusive !== 'boolean') return 'bad exclusive';
   if (b.box != null) {
     const x = b.box;
     if (typeof x !== 'object' || Array.isArray(x) || b.isolation !== 'container') return 'bad box';
@@ -470,10 +471,12 @@ function slotCount(v) {
 function createSuiteRunner({
   root, oldRoot = null, work, isolation = userIsolation(), limits = {}, spawn = childProcess.spawn,
   now = Date.now, log = () => {}, timers = DEFAULT_TIMERS, platform = process.platform, arch = process.arch,
-  box = null, boxSweep = null, onActivity = null, activityMs = ACTIVITY_MS, slots = 1, shares = [], buildBoxes = false,
+  box = null, boxSweep = null, onActivity = null, activityMs = ACTIVITY_MS, slots = 1, shares = [], buildBoxes = false, exclusive = 'honour',
 }) {
   const held = Array.isArray(shares) ? shares.map(({ name, path: at, version }) => ({ name, path: at, version })) : [];
   const slotTotal = slotCount(slots);
+  const exclusiveMode = exclusive === 'ignore' ? 'ignore' : 'honour';
+  const alone = (job) => exclusiveMode === 'honour' && job.exclusive === true;
   const repo = enclosingRepo(work);
   if (repo) throw new Error(`the work root is inside the git repository ${repo}; choose a work folder outside any repository`);
   const lim = { ...DEFAULT_LIMITS, ...limits };
@@ -560,8 +563,9 @@ function createSuiteRunner({
     const ats = [streams.stdout.lastOutputAt, streams.stderr.lastOutputAt].filter((at) => at != null);
     return ats.length ? Math.max(...ats) : null;
   };
-  const activityRow = (j) => { const streams = streamsOf(j.id); return activityJob(j, latestOf(streams), streams); };
-  const finishedRow = (j) => { const streams = streamsOf(j.id); return finishedJob(j, outFile(j.id, 'stdout'), latestOf(streams), streams); };
+  const exclusiveOf = (j) => (j.exclusive === true ? { exclusive: exclusiveMode === 'honour' ? 'honoured' : 'ignored' } : {});
+  const activityRow = (j) => { const streams = streamsOf(j.id); return { ...activityJob(j, latestOf(streams), streams), ...exclusiveOf(j) }; };
+  const finishedRow = (j) => { const streams = streamsOf(j.id); return { ...finishedJob(j, outFile(j.id, 'stdout'), latestOf(streams), streams), ...exclusiveOf(j) }; };
   const packFile = (id) => path.join(jobStore(id), 'pack');
   const save = (job) => writeJson(path.join(jobStore(job.id), 'job.json'), job);
   const anyLive = () => [...jobs.values()].some((j) => LIVE.has(j.state));
@@ -600,7 +604,7 @@ function createSuiteRunner({
     return {
       id: job.id, attempt: job.attempt, state: job.state, position: positionOf(job), reason: job.reason,
       exit: job.exit, treeHash: job.treeHash, queueMs, setupMs: job.setupMs, runMs: job.runMs,
-      env: job.identity || null, out: job.out, record: job.record || null,
+      env: job.identity || null, out: job.out, record: job.record || null, ...exclusiveOf(job),
     };
   }
 
@@ -960,15 +964,22 @@ function createSuiteRunner({
   }
 
   function startable(job) {
+    if (alone(job) && active.size) return false;
     if (isBox(job)) return !boxHold && !(job.build && building);
     return Boolean(isolation.parallel) || ![...active.values()].some((j) => !isBox(j));
   }
+
+  const aloneActive = () => [...active.values()].some(alone);
 
   function pump() {
     if (recovering) { pumpAfterRecovery = true; return; }
     if (closed || maintenance || onDrained) return;
     while (active.size < slotTotal) {
-      const next = queue().find(startable);
+      if (aloneActive()) return;
+      const order = queue();
+      const head = order[0];
+      if (head && alone(head) && active.size && !(isBox(head) && boxHold)) return;
+      const next = order.find(startable);
       if (!next) return;
       launch(next);
     }
@@ -1324,7 +1335,8 @@ function createSuiteRunner({
       shares: held.map(({ name, version }) => ({ name, version })),
       limits: { packMaxBytes: lim.packMaxBytes, chunkMax: lim.chunkMax, queueMax: lim.queueMax },
       queue: { running: active.size ? active.keys().next().value : null, queued: queue().map((j) => j.id) },
-      slots: { total: slotTotal, inUse: onDrained || fenced ? slotTotal : active.size },
+      slots: { total: slotTotal, inUse: onDrained || fenced || aloneActive() ? slotTotal : active.size },
+      exclusive: exclusiveMode,
     };
   }
 
@@ -1436,6 +1448,7 @@ function createSuiteRunner({
       ...(boxed && Array.isArray(body.shares) && body.shares.length ? { shares: body.shares.map(({ share, version }) => ({ share, version })) } : {}),
       ...(typeof origin === 'string' && origin ? { origin: origin.slice(0, 64) } : {}),
       ...(build ? { build } : {}),
+      ...(body.exclusive === true ? { exclusive: true } : {}),
     };
   }
 

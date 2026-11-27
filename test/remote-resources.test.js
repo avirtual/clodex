@@ -278,6 +278,7 @@ function subresourceFixture() {
       },
       readTestjobOutput: (id) => ({ ok: true, id, text: '' }),
       setTestjobSlots: (slots) => ({ ok: true, slots, applied: 'now', running: 0 }),
+      setTestjobExclusive: (exclusive) => (exclusive === 'honour' || exclusive === 'ignore' ? { ok: true, exclusive, applied: 'now', running: 0 } : { ok: false, status: 400, error: 'exclusive must be honour or ignore' }),
       getAttachInfo: (name) => {
         calls.push({ route: 'attach', name });
         return name === 'ghost' ? { ok: false } : { ok: true, scrollback: Buffer.from('hi'), cols: 100, rows: 30 };
@@ -385,7 +386,7 @@ const SUB_WALK = {
 };
 
 const VERB_WALK = { list: 'GET', get: 'GET', delete: 'DELETE', post: 'POST' };
-const VERB_BODY = { post: JSON.stringify({ slots: 1 }) };
+const VERB_BODY = { post: JSON.stringify({ slots: 1, exclusive: 'honour' }) };
 
 test('RESOURCES: every (resource, verb) answers on a fully-injected node, and every name is a literal path in remote.js', async () => {
   const seen = [];
@@ -440,10 +441,10 @@ test('RESOURCES: every (resource, verb) answers on a fully-injected node, and ev
     'peers.list', 'peers.get', 'teams.list', 'teams.get', 'tickets.list', 'tickets.get',
     'sandboxes.list', 'sandboxes.get', 'agents.list', 'agents.get',
     'docs.list', 'docs.get', 'worktrees.list', 'catalogs.get',
-    'node/logs.get', 'offers.list', 'testjobs.list', 'testjobs/output.get', 'testjobs/slots.post',
+    'node/logs.get', 'offers.list', 'testjobs.list', 'testjobs/output.get', 'testjobs/slots.post', 'testjobs/exclusive.post',
   ], 'the walk must visit every shipped row — an empty or shortened walk passes vacuously');
-  assert.strictEqual(seen.length, 44, 'the walk entered 21 resource verbs, the sessions delete, the 21 session subresource verbs and testjobs output');
-  assert.strictEqual(RESOURCES.length, 14, 'the walk covered fewer than the 14 shipped resources');
+  assert.strictEqual(seen.length, 45, 'the walk entered 22 resource verbs, the sessions delete, the 21 session subresource verbs and testjobs output');
+  assert.strictEqual(RESOURCES.length, 15, 'the walk covered fewer than the 15 shipped resources');
 });
 
 test('GET /api/sessions/:name/transcript: the status and body the deleted /api/transcript/ served, limit and since threaded', async () => {
@@ -937,7 +938,7 @@ test('GET /api/resources: the document a fully-injected node serves', async () =
     const r = await req(port, '/api/resources');
     assert.strictEqual(r.status, 200);
     const doc = JSON.parse(r.body);
-    assert.deepStrictEqual(doc, { ok: true, version: 7, resources: RESOURCES });
+    assert.deepStrictEqual(doc, { ok: true, version: 8, resources: RESOURCES });
     assert.deepStrictEqual(doc.resources.find((x) => x.name === 'sessions').subresources['client-token'], ['put']);
   });
 });
@@ -967,14 +968,14 @@ test('workspaces: 501 and absent from /api/resources when listWorkspaces is not 
   await withNode({ listWorkspaces: null }, async (port) => {
     assert.strictEqual((await req(port, '/api/workspaces')).status, 501);
     const names = JSON.parse((await req(port, '/api/resources')).body).resources.map(r => r.name);
-    assert.deepStrictEqual(names, ['sessions', 'peers', 'teams', 'tickets', 'sandboxes', 'agents', 'docs', 'worktrees', 'catalogs', 'node/logs', 'offers', 'testjobs', 'testjobs/slots']);
+    assert.deepStrictEqual(names, ['sessions', 'peers', 'teams', 'tickets', 'sandboxes', 'agents', 'docs', 'worktrees', 'catalogs', 'node/logs', 'offers', 'testjobs', 'testjobs/slots', 'testjobs/exclusive']);
   });
 });
 
 test('catalogs: absent from /api/resources when getCatalogs is not injected', async () => {
   await withNode({ getCatalogs: null }, async (port) => {
     const names = JSON.parse((await req(port, '/api/resources')).body).resources.map(r => r.name);
-    assert.deepStrictEqual(names, ['sessions', 'workspaces', 'peers', 'teams', 'tickets', 'sandboxes', 'agents', 'docs', 'worktrees', 'node/logs', 'offers', 'testjobs', 'testjobs/slots']);
+    assert.deepStrictEqual(names, ['sessions', 'workspaces', 'peers', 'teams', 'tickets', 'sandboxes', 'agents', 'docs', 'worktrees', 'node/logs', 'offers', 'testjobs', 'testjobs/slots', 'testjobs/exclusive']);
   });
 });
 

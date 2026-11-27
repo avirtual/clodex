@@ -23,7 +23,7 @@ function node(answer, { rows = [SLOTS_ROW] } = {}) {
       };
       if (req.url === '/api/resources') return send(200, { ok: true, version: 7, resources: rows });
       if (req.url === '/api/peer/hello') return send(200, { ok: true, host: 'runner', version: '1.0.0' });
-      if (req.method === 'POST' && req.url === '/api/testjobs/slots') return send(answer.status, answer.body);
+      if (req.method === 'POST' && (req.url === '/api/testjobs/slots' || req.url === '/api/testjobs/exclusive')) return send(answer.status, answer.body);
       return send(404, { ok: false, error: 'not found' });
     });
   });
@@ -81,7 +81,7 @@ test('patch testjobs exits non-zero with the node refusal', async () => {
 test('patch testjobs refuses a missing or non-numeric --slots before the wire', async () => {
   await withNode({ status: 200, body: { ok: true } }, async (port, seen) => {
     const missing = await cli(['patch', 'testjobs'], port);
-    assert.deepStrictEqual([missing.code, missing.stderr], [2, 'clodexctl: patch testjobs needs --slots N\n']);
+    assert.deepStrictEqual([missing.code, missing.stderr], [2, 'clodexctl: patch testjobs needs --slots N or --exclusive honour|ignore\n']);
     const word = await cli(['patch', 'testjobs', '--slots', 'two'], port);
     assert.deepStrictEqual([word.code, word.stderr], [2, 'clodexctl: --slots must be a whole number, not "two"\n']);
     const extra = await cli(['patch', 'testjobs', 'x', '--slots', '1'], port);
@@ -98,4 +98,38 @@ test('a node that does not serve testjobs/slots is told to upgrade, and nothing 
     assert.match(stderr, /does not serve testjobs\/slots post/);
     assert.deepStrictEqual(seen.filter(([m]) => m === 'POST'), []);
   }, { rows });
+});
+
+const EXCLUSIVE_ROW = { name: 'testjobs/exclusive', singular: 'testjobs/exclusive', scope: 'node', verbs: ['post'] };
+
+test('t2428: patch testjobs --exclusive posts the mode to its own route and prints the applied line', async () => {
+  for (const [body, line] of [
+    [{ ok: true, exclusive: 'ignore', applied: 'now', running: 0 }, 'test runner exclusive requests set to ignore — applied now\n'],
+    [{ ok: true, exclusive: 'honour', applied: 'after-drain', running: 2 }, 'test runner exclusive requests set to honour — applies when 2 running jobs finish\n'],
+  ]) {
+    await withNode({ status: 200, body }, async (port, seen) => {
+      const { code, stdout, stderr } = await cli(['patch', 'testjobs', '--exclusive', body.exclusive], port);
+      assert.deepStrictEqual([code, stderr, stdout], [0, '', line]);
+      assert.deepStrictEqual(seen.filter(([m]) => m === 'POST'), [['POST', '/api/testjobs/exclusive', `{"exclusive":"${body.exclusive}"}`]]);
+    }, { rows: [SLOTS_ROW, EXCLUSIVE_ROW] });
+  }
+});
+
+test('t2428: patch testjobs refuses a bad --exclusive and --slots with --exclusive before the wire', async () => {
+  await withNode({ status: 200, body: { ok: true } }, async (port, seen) => {
+    const bad = await cli(['patch', 'testjobs', '--exclusive', 'maybe'], port);
+    assert.deepStrictEqual([bad.code, bad.stderr], [2, 'clodexctl: --exclusive must be honour or ignore, not "maybe"\n']);
+    const both = await cli(['patch', 'testjobs', '--slots', '1', '--exclusive', 'ignore'], port);
+    assert.deepStrictEqual([both.code, both.stderr], [2, 'clodexctl: patch testjobs takes --slots or --exclusive, one per call\n']);
+    assert.deepStrictEqual(seen, []);
+  }, { rows: [SLOTS_ROW, EXCLUSIVE_ROW] });
+});
+
+test('t2428: a node that does not serve testjobs/exclusive is told to upgrade, and nothing is posted', async () => {
+  await withNode({ status: 200, body: { ok: true } }, async (port, seen) => {
+    const { code, stderr } = await cli(['patch', 'testjobs', '--exclusive', 'ignore'], port);
+    assert.notStrictEqual(code, 0);
+    assert.match(stderr, /does not serve testjobs\/exclusive post/);
+    assert.deepStrictEqual(seen.filter(([m]) => m === 'POST'), []);
+  });
 });

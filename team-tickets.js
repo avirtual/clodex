@@ -20,7 +20,7 @@ const { trackedSessionIds: entrySessionIds } = require('./session-info');
 const { hostNotice } = require('./host-stamp');
 const { idleClearAfterMs, IDLE_CLEAR_MIN_MS } = require('./assistant-sleep');
 const { localHalf, failingNames } = require('./suite-client');
-const { boxVerdict, fallbackOf, FALLBACK_CODES, pickRunner, runnerLoad, BUILD_BUDGET_MS, HUNG_RE, HAND_QUEUE_MS } = require('./suite-client');
+const { boxVerdict, fallbackOf, FALLBACK_CODES, pickRunner, runnerLoad, aloneNote, BUILD_BUDGET_MS, HUNG_RE, HAND_QUEUE_MS } = require('./suite-client');
 const {
   matchSeatRole, nameRole, defaultLeadSeat, ROLE_RE, RESERVED_ROLE_KEYS, STOCK_ROLE_DEFS,
   DEFAULT_ROLE_DISPATCH, TRUNK_HEAD, normalizeTestRoots, TEST_ROOTS_MAX, effectiveHandCap, DONE_VALUES, normalizeDone, NAME_RE: NODE_NAME_RE, TEST_RUNNER_HANDS, TEST_RUNNER_GATE, TEST_RUNNER_FALLBACK, TEST_RUNNER_WIRE_PUSH: WIRE_PUSH, TEST_RUNNER_POOL_MAX,
@@ -3272,7 +3272,7 @@ function createTicketMethods(deps, shared) {
         const r = await Promise.resolve().then(() => client.reachable(via.peer, via.wire, want)).catch(() => null);
         return { ...m, live: true, info: r && r.ok ? r.info : null };
       }));
-      const pick = pickRunner(rows, { box, shares: tr.shares || [] });
+      const pick = pickRunner(rows, { box, shares: tr.shares || [], ...(tr.exclusive === true ? { exclusive: true } : {}) });
       return pick.chosen ? { peer: pick.member.peer, wire: pick.member.wire } : null;
     },
 
@@ -3495,12 +3495,12 @@ function createTicketMethods(deps, shared) {
       const keys = Object.entries(cur.handEnv || {});
       const queue = Number.isInteger(cur.queueMs) ? `queue ${cur.queueMs / TEST_RUNNER_RUN_STEP_MS} min`
         : `queue ${HAND_QUEUE_MS / TEST_RUNNER_RUN_STEP_MS} min hands, ${TICKET_SUITE_LOCK_WAIT_MS / TEST_RUNNER_RUN_STEP_MS} min gate (default)`;
-      return `, ${run}, ${queue}${keys.length ? `, hand-env ${keys.map(([k, v]) => `${flat(k)}=${flat(v)}`).join(' ')}` : ''}`;
+      return `, ${run}, ${queue}${cur.exclusive === true ? ', exclusive on' : ''}${keys.length ? `, hand-env ${keys.map(([k, v]) => `${flat(k)}=${flat(v)}`).join(' ')}` : ''}`;
     },
 
     _handleRunnerLimits(team, cur, intent, reply) {
       if (intent.value || intent.hands != null || intent.gate != null || intent.fallback != null) {
-        reply('error: set run:, queue: and hand-env: in their own [agent:team runner] intent, apart from the peer, hands, gate and fallback');
+        reply('error: set run:, queue:, exclusive: and hand-env: in their own [agent:team runner] intent, apart from the peer, hands, gate and fallback');
         return;
       }
       if (!cur) {
@@ -3515,7 +3515,19 @@ function createTicketMethods(deps, shared) {
         reply('error: name queue: once per [agent:team runner] intent');
         return;
       }
+      if (intent.exclusiveRepeated) {
+        reply('error: name exclusive: once per [agent:team runner] intent');
+        return;
+      }
       const patch = {};
+      if (intent.exclusive != null) {
+        if (intent.exclusive === 'on') patch.exclusive = true;
+        else if (intent.exclusive === 'off') patch.exclusive = null;
+        else {
+          reply(`error: exclusive must be on or off — not "${intent.exclusive}"`);
+          return;
+        }
+      }
       if (intent.queue != null) {
         const min = TEST_RUNNER_QUEUE_MIN_MS / TEST_RUNNER_RUN_STEP_MS;
         const max = TEST_RUNNER_QUEUE_MAX_MS / TEST_RUNNER_RUN_STEP_MS;
@@ -3567,7 +3579,7 @@ function createTicketMethods(deps, shared) {
 
     async _handleTeamRunner(team, intent, reply) {
       const cur = team.testRunner || null;
-      if (intent.run != null || intent.queue != null || intent.handEnv) {
+      if (intent.run != null || intent.queue != null || intent.exclusive != null || intent.handEnv) {
         this._handleRunnerLimits(team, cur, intent, reply);
         return;
       }
@@ -6880,7 +6892,7 @@ function createTicketMethods(deps, shared) {
         }
         return await client.shadow({
           ...via, name: member.peer, tree: cwd, kind, team: team.name, ticket: String(ticket.id),
-          setup: tr.setup || null, env: tr.env || {}, route: 'gate:shadow', box, ...(tr.shares ? { shares: tr.shares } : {}),
+          setup: tr.setup || null, env: tr.env || {}, route: 'gate:shadow', box, ...(tr.shares ? { shares: tr.shares } : {}), ...(tr.exclusive === true ? { exclusive: true } : {}),
           queueBudgetMs: TICKET_SUITE_LOCK_WAIT_MS + this._runnerQueueExtra(tr), budgetMs: TICKET_SUITE_TIMEOUT + this._runnerRunExtra(tr) + this._runnerQueueExtra(tr), ...this._runnerTimeout(tr),
           ...(pooled ? { pool: true } : {}),
           ...(chosen ? { repick: this._runnerRepick(tr, box) } : {}),
@@ -6954,7 +6966,7 @@ function createTicketMethods(deps, shared) {
       const job = Promise.resolve()
         .then(() => client.run({
           ...via, name: member.peer, tree: cwd, kind, team: team.name, ticket: String(ticket.id), scope: 'full',
-          setup: tr.setup || null, env: tr.env || {}, route: 'gate:on', box: def, ...(tr.shares ? { shares: tr.shares } : {}),
+          setup: tr.setup || null, env: tr.env || {}, route: 'gate:on', box: def, ...(tr.shares ? { shares: tr.shares } : {}), ...(tr.exclusive === true ? { exclusive: true } : {}),
           queueBudgetMs: BOX_DECIDE_QUEUE_MS, budgetMs: TICKET_SUITE_TIMEOUT + this._runnerRunExtra(tr), ...this._runnerTimeout(tr),
           onJob: (j) => { if (j && j.jobId) jobId = j.jobId; },
           onSubmitted: (j) => { if (j && j.jobId) submittedId = j.jobId; if (stopCause) sendCancel(); },
@@ -7038,7 +7050,8 @@ function createTicketMethods(deps, shared) {
         const flat = (v) => defuseSenderLines(String(v == null ? '' : v).replace(/\s+/g, ' ').trim());
         return ` (home, by ${flat(suite.bypass.by)}: ${flat(suite.bypass.reason)})`;
       }
-      if (suite.decidedBy === 'box') return suite.rerouted ? ` (box, rerouted from ${suite.rerouted.from} to ${suite.rerouted.to})` : ' (box)';
+      const alone = suite.decidedBy === 'box' ? aloneNote(suite) : null;
+      if (suite.decidedBy === 'box') return `${suite.rerouted ? ` (box, rerouted from ${suite.rerouted.from} to ${suite.rerouted.to})` : ' (box)'}${alone ? ` ${alone}` : ''}`;
       return ` (home, box unavailable: ${suite.fallback})`;
     },
 
@@ -7282,6 +7295,7 @@ function createTicketMethods(deps, shared) {
           fallbackCode: box.decided ? null : box.fallbackCode ?? null, fallbackClass: box.decided ? null : box.fallbackClass ?? null,
         };
         if (box.out && box.out.rerouted) Object.assign(out, { rerouted: box.out.rerouted, attempts: box.out.attempts });
+        if (box.decided && rec && rec.exclusive) out.exclusive = rec.exclusive;
         this._boxRow(team, ticket, box, boxed ? null : localHalf({ ...res, durationMs: out.durationMs }));
       } else if (home) {
         const after = await gitWorktree.revParse(team.root, wt.branch).catch(() => null);

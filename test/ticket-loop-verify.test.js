@@ -7122,6 +7122,30 @@ test('t2338: under gate:on a box pass and a box fail decide the result without a
   }
 });
 
+test('t2428: an exclusive team whose box runner answers no exclusive field decides as unsupported, and the verify notice says the job did not run alone', async () => {
+  const b = boxLoop(SHADOW_LOCAL.red);
+  const r = boxRemote('green', b.events);
+  const out = await b.run({ ...GATE_ON, exclusive: true }, r.client);
+  assert.deepStrictEqual([out.decidedBy, out.green, out.exclusive], ['box', true, 'unsupported']);
+  assert.strictEqual(b.f.m._suiteWhere(out), ' (box) (did not run alone: the runner is too old to know exclusive jobs, so other jobs could run beside it)');
+});
+
+const IGNORED_NOTE = ' (did not run alone: the runner\'s owner set it to ignore exclusive requests, so other jobs could run beside it)';
+const UNSUPPORTED_NOTE = ' (did not run alone: the runner is too old to know exclusive jobs, so other jobs could run beside it)';
+test('t2428: _suiteWhere names a box-decided run that did not run alone, with and without a reroute', () => {
+  const b = boxLoop(null);
+  for (const [exclusive, rerouted, want] of [
+    ['honoured', null, ' (box)'],
+    ['ignored', null, ` (box)${IGNORED_NOTE}`],
+    ['unsupported', null, ` (box)${UNSUPPORTED_NOTE}`],
+    ['honoured', { from: 'r1', to: 'r2' }, ' (box, rerouted from r1 to r2)'],
+    ['ignored', { from: 'r1', to: 'r2' }, ` (box, rerouted from r1 to r2)${IGNORED_NOTE}`],
+    ['unsupported', { from: 'r1', to: 'r2' }, ` (box, rerouted from r1 to r2)${UNSUPPORTED_NOTE}`],
+  ]) {
+    assert.strictEqual(b.f.m._suiteWhere({ decidedBy: 'box', exclusive, ...(rerouted ? { rerouted } : {}) }), want, `${exclusive} ${rerouted ? 'rerouted' : 'direct'}`);
+  }
+});
+
 const BOX_FALLBACKS = [
   ['unreachable', 'runner unreachable', 'runner-unreachable', 'transient', 'unknown', 'runner unreachable: status 0'],
   ['queue budget', 'queue budget', 'queue-budget', 'budget', 'timeout', 'the job did not start within the 300000ms queue budget (cancelled)'],

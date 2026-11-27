@@ -122,7 +122,7 @@ function createSuiteClient({
       tree: typeof tree === 'string' && tree ? path.resolve(tree) : null, kind, scope, named: Number.isInteger(opts.named) && opts.named > 0 ? opts.named : null, team, ticket, seat,
       jobId: null, attempt: 0, treeHash: null, sha: null, dirty: null, queuedAt: null, startedAt: null, env: null, started: false,
       t0: now(), budgetMs, queueBudgetMs, runBudgetMs, buildBudgetMs, buildSince: null, timeoutMs, onSubmitted, onDetach, onState, shouldStop,
-      failFast: typeof opts.repick === 'function', submitted: false,
+      failFast: typeof opts.repick === 'function', submitted: false, exclusive: opts.exclusive === true,
       shares: box && Array.isArray(shares) ? shares.map(({ share, version }) => ({ share, version })) : [],
       lostAfterMs: typeof opts.reroute === 'function' ? LOST_AFTER_MS : Infinity, cap: null, attempts: [], abandoned: null, ended: false,
     };
@@ -281,6 +281,7 @@ function createSuiteClient({
       ...(ctx.box ? { isolation: 'container' } : {}),
       ...(ctx.boxDef ? { box: ctx.boxDef } : {}),
       ...(ctx.shares.length ? { shares: ctx.shares } : {}),
+      ...(ctx.exclusive ? { exclusive: true } : {}),
     };
     ctx.queuedAt = now();
     if (ctx.shouldStop()) return { unknown: 'cancelled by the caller before submit' };
@@ -492,6 +493,7 @@ function createSuiteClient({
       endedAt: iso(endedAt), durationMs: ctx.startedAt != null ? endedAt - ctx.startedAt : null,
       queueMs: job ? job.queueMs : null, setupMs: job ? job.setupMs : null, runMs: job ? job.runMs : null,
       env: ctx.env,
+      ...(ctx.exclusive && job ? { exclusive: EXCLUSIVE_ANSWERS.includes(job.exclusive) ? job.exclusive : 'unsupported' } : {}),
     };
     ctx.ended = true;
     const attempts = ctx.attempts.length
@@ -862,7 +864,20 @@ function loadBeats(load, best) {
   return load.queue < best.queue;
 }
 
-function pickRunner(members, { box = false, shares = [] } = {}) {
+function exclusiveRank(info, load) {
+  return (info.exclusive === 'honour' ? 0 : 2) + (load.inUse === 0 && load.queue === 0 ? 0 : 1);
+}
+
+const EXCLUSIVE_ANSWERS = ['honoured', 'ignored'];
+
+function aloneNote(record) {
+  const said = record && record.exclusive;
+  if (said === 'ignored') return '(did not run alone: the runner\'s owner set it to ignore exclusive requests, so other jobs could run beside it)';
+  if (said === 'unsupported') return '(did not run alone: the runner is too old to know exclusive jobs, so other jobs could run beside it)';
+  return null;
+}
+
+function pickRunner(members, { box = false, shares = [], exclusive = false } = {}) {
   let best = null;
   const boxed = box === true || boxDefOf(box) != null;
   members.forEach((m, i) => {
@@ -870,9 +885,10 @@ function pickRunner(members, { box = false, shares = [] } = {}) {
     const tier = boxed ? boxTier(m.info, box) : 0;
     if (tier == null || (boxed && missingShare(m.info, shares))) return;
     const load = runnerLoad(m.info);
-    const better = !best || tier < best.tier
-      || (tier === best.tier && loadBeats(load, best.load));
-    if (better) best = { m, i, load, tier };
+    const rank = exclusive === true ? exclusiveRank(m.info, load) : 0;
+    const better = !best || rank < best.rank
+      || (rank === best.rank && (tier < best.tier || (tier === best.tier && loadBeats(load, best.load))));
+    if (better) best = { m, i, load, tier, rank };
   });
   return best ? { member: best.m, index: best.i, load: best.load, chosen: true } : { member: members[0] || null, index: 0, load: null, chosen: false };
 }
@@ -1019,6 +1035,7 @@ function createChannelHost({
       files: msg.files || [], flags: msg.flags || {}, setup: tr.setup || null, env: { ...(tr.env || {}), ...(tr.handEnv || {}) },
       queueBudgetMs, runBudgetMs: runMs + handSlackMs(tr), timeoutMs: runMs, budgetMs: queueBudgetMs + runMs + handSlackMs(tr), route: d.why,
       ...(box ? { box, ...(tr.shares ? { shares: tr.shares } : {}) } : {}),
+      ...(tr.exclusive === true ? { exclusive: true } : {}),
       shouldStop: () => wantCancel,
       onSubmitted: ({ jobId }) => { inflight.jobId = jobId; fireCancel(); },
       onProgress: (line) => say({ progress: line }),
@@ -1033,7 +1050,7 @@ function createChannelHost({
     return say({
       ...(box ? { box: { isolation: ran.isolation || null, imageId: (ran.box && ran.box.imageId) || null } } : {}),
       run: 'remote', runner: inflight.name, status: r.status, signal: r.signal, stdout: r.stdout, stderr: r.stderr,
-      error: null, unknown: null, treeHash: r.treeHash, note, ...(out.rerouted ? { rerouted: out.rerouted } : {}),
+      error: null, unknown: null, treeHash: r.treeHash, note: [note, aloneNote(out.record)].filter(Boolean).join(' ') || note, ...(out.rerouted ? { rerouted: out.rerouted } : {}),
     });
   }
 
@@ -1054,4 +1071,4 @@ function createChannelHost({
   };
 }
 
-module.exports = { createSuiteClient, createChannelHost, route, lastTotals, localHalf, failingNames, agreement, boxVerdict, fallbackOf, FALLBACK_CODES, pickRunner, runnerLoad, HAND_QUEUE_MS, HAND_RUN_MS, handSlackMs, handExecSlackMs, HUNG_RE, BUILD_BUDGET_MS, LOST_AFTER_MS };
+module.exports = { createSuiteClient, createChannelHost, route, lastTotals, localHalf, failingNames, agreement, boxVerdict, fallbackOf, FALLBACK_CODES, pickRunner, runnerLoad, aloneNote, HAND_QUEUE_MS, HAND_RUN_MS, handSlackMs, handExecSlackMs, HUNG_RE, BUILD_BUDGET_MS, LOST_AFTER_MS };
