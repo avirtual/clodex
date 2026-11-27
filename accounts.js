@@ -6,6 +6,7 @@ const DEFAULT_LABEL = 'default';
 const { RESERVED_LABELS } = require('./renderer/lib/account-select');
 const API_KEY_MAX = 512;
 const SHARED_LINKS = ['projects', 'plugins', 'skills', 'agents', 'commands'];
+const { withClaudeConfigLock } = require('./claude-config-lock');
 
 function modelOfArgs(argv) {
   const a = Array.isArray(argv) ? argv : [];
@@ -95,6 +96,7 @@ function createAccounts(deps = {}) {
   const clodexHome = deps.clodexHome || path.join(os.homedir(), '.clodex');
   const claudeHome = deps.claudeHome || path.join(os.homedir(), '.claude');
   const claudeConfigFile = deps.claudeConfigFile || path.join(path.dirname(claudeHome), '.claude.json');
+  const log = deps.log || null;
 
   const norm = (p) => normDir(path, p);
   const registryFile = path.join(clodexHome, 'accounts.json');
@@ -209,16 +211,18 @@ function createAccounts(deps = {}) {
     const cwds = Object.keys(trusted);
     if (!cwds.length) return 0;
     const file = path.join(dir, '.claude.json');
-    let body;
-    try { body = JSON.parse(fs.readFileSync(file, 'utf-8')); } catch { return 0; }
-    if (!body || typeof body !== 'object') return 0;
-    const projects = (body.projects && typeof body.projects === 'object') ? body.projects : {};
-    for (const cwd of cwds) {
-      const existing = (projects[cwd] && typeof projects[cwd] === 'object') ? projects[cwd] : {};
-      projects[cwd] = { ...existing, ...trusted[cwd] };
-    }
-    writeJsonAtomic(file, { ...body, projects });
-    return cwds.length;
+    return withClaudeConfigLock({ fs, file, log, sleepFn: deps.sleepFn, fn: () => {
+      let body;
+      try { body = JSON.parse(fs.readFileSync(file, 'utf-8')); } catch { return 0; }
+      if (!body || typeof body !== 'object') return 0;
+      const projects = (body.projects && typeof body.projects === 'object') ? body.projects : {};
+      for (const cwd of cwds) {
+        const existing = (projects[cwd] && typeof projects[cwd] === 'object') ? projects[cwd] : {};
+        projects[cwd] = { ...existing, ...trusted[cwd] };
+      }
+      writeJsonAtomic(file, { ...body, projects });
+      return cwds.length;
+    } });
   }
 
   function exists(p) {
@@ -243,10 +247,11 @@ function createAccounts(deps = {}) {
     try { fs.chmodSync(dir, 0o700); } catch {}
 
     const configFile = path.join(dir, '.claude.json');
-    if (!exists(configFile)) {
+    withClaudeConfigLock({ fs, file: configFile, log, sleepFn: deps.sleepFn, fn: () => {
+      if (exists(configFile)) return;
       const body = { hasCompletedOnboarding: true, theme: readTheme(), projects: trustProjects(readDefaultConfig()) };
       fs.writeFileSync(configFile, `${JSON.stringify(body, null, 2)}\n`, { mode: 0o600 });
-    }
+    } });
     for (const name of SHARED_LINKS) {
       const target = path.join(claudeHome, name);
       const link = path.join(dir, name);
