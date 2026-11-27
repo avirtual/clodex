@@ -69,7 +69,8 @@ async function fixture(t, { images = [{ id: IMG1, labels: [`clodex.box=${H1}`] }
   t.after(() => { runner.close(); spawnSync('chmod', ['-R', 'u+w', root]); });
   await runner.info();
   const timed = (p) => p.then((r) => ({ r, at: clock.now() }));
-  return { runner, clock, images, calls: () => [...started], timed };
+  const got = (p) => Promise.race([p, clock.flush().then(() => assert.fail('info did not answer'))]);
+  return { runner, clock, images, calls: () => [...started], timed, got };
 }
 
 const want = (definitionHash, rev = 1) => ({ definitionHash, rev });
@@ -79,14 +80,14 @@ test('t2449: with docker calls of 6 s a first named info answers probing at 2.5 
   const f = await fixture(t);
   const first = f.timed(f.runner.info(want(H1)));
   await f.clock.advance(2500);
-  const { r, at } = await first;
+  const { r, at } = await f.got(first);
   assert.deepStrictEqual([r.box, at], [PROBING_H1, 2500]);
   assert.deepStrictEqual([r.slots, r.pending], [{ total: 1, inUse: 0 }, 0]);
   await f.clock.advance(3 * DOCKER_CALL_MS);
   assert.deepStrictEqual(f.calls(), ['info --format', 'image ls', 'image inspect']);
   const again = f.timed(f.runner.info(want(H1)));
   await f.clock.flush();
-  const second = await again;
+  const second = await f.got(again);
   assert.deepStrictEqual([second.r.box.state, second.r.box.env.box.imageId, second.at], ['ready', IMG1, 20500]);
   assert.strictEqual(f.calls().length, 3, 'the cached answer made no docker call');
 });
@@ -96,7 +97,7 @@ test('t2449: two concurrent named info calls share one probe', async (t) => {
   const a = f.runner.info(want(H1));
   const b = f.runner.info(want(H1));
   await f.clock.advance(2500);
-  assert.deepStrictEqual([(await a).box, (await b).box], [PROBING_H1, PROBING_H1]);
+  assert.deepStrictEqual([(await f.got(a)).box, (await f.got(b)).box], [PROBING_H1, PROBING_H1]);
   await f.clock.advance(3 * DOCKER_CALL_MS);
   assert.deepStrictEqual(f.calls(), ['info --format', 'image ls', 'image inspect']);
 });
@@ -105,17 +106,17 @@ test('t2449: a cached named box state expires after 30 s and the next call probe
   const f = await fixture(t);
   const first = f.runner.info(want(H1));
   await f.clock.advance(20000);
-  assert.deepStrictEqual((await first).box, PROBING_H1);
+  assert.deepStrictEqual((await f.got(first)).box, PROBING_H1);
   assert.strictEqual(f.calls().length, 3, 'ENTER: the first probe finished');
   await f.clock.advance(27999);
   const fresh = f.runner.info(want(H1));
   await f.clock.flush();
-  assert.strictEqual((await fresh).box.state, 'ready');
+  assert.strictEqual((await f.got(fresh)).box.state, 'ready');
   assert.strictEqual(f.calls().length, 3, 'at 29.999 s the entry is still fresh');
   await f.clock.advance(1);
   const stale = f.runner.info(want(H1));
   await f.clock.advance(2500);
-  assert.deepStrictEqual((await stale).box, PROBING_H1);
+  assert.deepStrictEqual((await f.got(stale)).box, PROBING_H1);
   assert.strictEqual(f.calls().length, 4, 'past 30 s the call probes again');
 });
 
@@ -127,7 +128,7 @@ test('t2449: the cache keeps at most 32 names and evicts the oldest', async (t) 
   assert.strictEqual(f.calls().length, 64, 'ENTER: 32 named probes ran');
   const kept = f.runner.info(want(hashes[1]));
   await f.clock.flush();
-  assert.strictEqual((await kept).box.state, 'no-image');
+  assert.strictEqual((await f.got(kept)).box.state, 'no-image');
   assert.strictEqual(f.calls().length, 64, 'the 32nd name still answers from the cache');
   f.runner.info(want(hashes[32]));
   await f.clock.flush();
@@ -135,7 +136,7 @@ test('t2449: the cache keeps at most 32 names and evicts the oldest', async (t) 
   await f.clock.flush();
   assert.strictEqual(f.calls().length, 66, 'the 33rd name evicted the oldest, which probes again');
   await f.clock.advance(3 * DOCKER_CALL_MS);
-  await evicted;
+  await f.got(evicted);
 });
 
 test('t2449: slots and pending are read live even when the box state comes from the cache', async (t) => {
@@ -144,12 +145,12 @@ test('t2449: slots and pending are read live even when the box state comes from 
   await f.clock.advance(3 * DOCKER_CALL_MS);
   const open = f.runner.info(want(H1));
   await f.clock.flush();
-  const before = await open;
+  const before = await f.got(open);
   assert.deepStrictEqual([before.box.state, before.slots], ['ready', { total: 1, inUse: 0 }]);
   f.runner.fence(true);
   const fenced = f.runner.info(want(H1));
   await f.clock.flush();
-  const r = await fenced;
+  const r = await f.got(fenced);
   assert.deepStrictEqual([r.box.state, r.slots], ['ready', { total: 1, inUse: 1 }]);
   assert.strictEqual(f.calls().length, 3);
 });
