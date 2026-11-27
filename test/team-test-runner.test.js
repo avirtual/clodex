@@ -136,7 +136,7 @@ test('setTeamTestRunner patches one key and leaves a hand-written setup and env 
     },
   });
   assert.throws(() => tm.setTeamTestRunner('team', { hands: 'bogus' }), /testRunner would be invalid after this patch/);
-  assert.throws(() => tm.setTeamTestRunner('team', { env: {} }), /testRunner patch must name peer, hands, gate, wire, pool, fallback, runMs, handEnv, queueMs or exclusive, or be null for off \(/);
+  assert.throws(() => tm.setTeamTestRunner('team', { env: {} }), /testRunner patch must name peer, hands, gate, wire, pool, fallback, runMs, handEnv, verifyEnv, mergeEnv, queueMs or exclusive, or be null for off \(/);
   assert.strictEqual(disk(file).testRunner.hands, 'full', 'a refused patch writes nothing');
   assert.strictEqual(tm.setTeamTestRunner('team', null).testRunner, undefined);
   assert.deepStrictEqual(disk(file), { root, lead: 'lead', roles, version: 3 });
@@ -1098,7 +1098,7 @@ test('t2418: run:<minutes> stores runMs, the bare line shows it, run:off removes
       [`[agent:team] error: run must be a whole number of minutes from 1 to 36, or off — not "${bad}"`], bad);
   }
   assert.deepStrictEqual(await f.verb('lead', '[agent:team runner run:30 hands:all]'),
-    ['[agent:team] error: set run:, queue:, exclusive: and hand-env: in their own [agent:team runner] intent, apart from the peer, hands, gate and fallback']);
+    ['[agent:team] error: set run:, queue:, exclusive:, hand-env:, verify-env: and merge-env: in their own [agent:team runner] intent, apart from the peer, hands, gate and fallback']);
   assert.deepStrictEqual(await f.verb('lead', '[agent:team runner run:30 run:20]'), ['[agent:team] error: name run: once per [agent:team runner] intent']);
   assert.strictEqual(fs.readFileSync(f.file, 'utf8'), before, 'refusals write nothing');
   assert.deepStrictEqual(await f.verb('lead', '[agent:team runner run:off]'), ['[agent:team] test runner of team: run 21 min (default), queue 15 min hands, 5 min gate (default)']);
@@ -1184,7 +1184,7 @@ test('t2425: queue:<minutes> stores queueMs, the bare line shows it, queue:off r
   }
   assert.deepStrictEqual(await f.verb('lead', '[agent:team runner queue:30 queue:20]'), ['[agent:team] error: name queue: once per [agent:team runner] intent']);
   assert.deepStrictEqual(await f.verb('lead', '[agent:team runner queue:30 gate:shadow]'),
-    ['[agent:team] error: set run:, queue:, exclusive: and hand-env: in their own [agent:team runner] intent, apart from the peer, hands, gate and fallback']);
+    ['[agent:team] error: set run:, queue:, exclusive:, hand-env:, verify-env: and merge-env: in their own [agent:team runner] intent, apart from the peer, hands, gate and fallback']);
   assert.strictEqual(fs.readFileSync(f.file, 'utf8'), before, 'refusals write nothing');
   assert.deepStrictEqual(await f.verb('lead', '[agent:team runner queue:off run:30]'), ['[agent:team] test runner of team: run 30 min, queue 15 min hands, 5 min gate (default)']);
   assert.deepStrictEqual(disk(f.file).testRunner, { peer: 'runner-1', hands: 'full', runMs: 1800000 });
@@ -1258,7 +1258,7 @@ test('t2428: exclusive:on stores the key, the bare line shows it, exclusive:off 
   }
   assert.deepStrictEqual(await f.verb('lead', '[agent:team runner exclusive:on exclusive:off]'), ['[agent:team] error: name exclusive: once per [agent:team runner] intent']);
   assert.deepStrictEqual(await f.verb('lead', '[agent:team runner exclusive:on gate:shadow]'),
-    ['[agent:team] error: set run:, queue:, exclusive: and hand-env: in their own [agent:team runner] intent, apart from the peer, hands, gate and fallback']);
+    ['[agent:team] error: set run:, queue:, exclusive:, hand-env:, verify-env: and merge-env: in their own [agent:team runner] intent, apart from the peer, hands, gate and fallback']);
   assert.strictEqual(fs.readFileSync(f.file, 'utf8'), before, 'refusals write nothing');
   assert.deepStrictEqual(await f.verb('lead', '[agent:team runner exclusive:off]'), ['[agent:team] test runner of team: run 21 min (default), queue 15 min hands, 5 min gate (default)']);
   assert.deepStrictEqual(disk(f.file).testRunner, { peer: 'runner-1', hands: 'full' });
