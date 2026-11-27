@@ -23,6 +23,9 @@ const SHARE_NAME_RE = /^(?!\.+$)[a-zA-Z0-9._-]{1,64}$/;
 const SHARE_VERSION_RE = /^[A-Za-z0-9._-]{1,64}$/;
 const SHARES_MAX = 8;
 const BOX_REFUSALS = { 'no-image': 'no-image', ambiguous: 'ambiguous-image' };
+const NAMED_BOX_TTL_MS = 30000;
+const NAMED_BOX_WAIT_MS = 2500;
+const NAMED_BOX_MAX = 32;
 const REF_RE = /^(?![-/.])(?!.*\.\.)(?!.*\/\/)[A-Za-z0-9._/-]{1,200}$/;
 const ENV_NAME_RE = /^[A-Z_][A-Z0-9_]*$/;
 const FLAG_KEYS = ['CLODEX_TEST_LOCK', 'CLODEX_TEST_SLOW_ADVISORY'];
@@ -534,6 +537,7 @@ function createSuiteRunner({
   let boxPrunedAt = null;
   const coolOff = new Map();
   const builtIds = new Set();
+  const namedBoxes = new Map();
 
   const isBox = (job) => job.isolation === 'container';
   const namedBox = (job) => Boolean((job.identity && job.identity.box && job.identity.box.definitionHash) || job.build);
@@ -766,6 +770,7 @@ function createSuiteRunner({
   }
 
   async function failBuild(hash, { why, tail = '', cool = true }, trigger) {
+    forgetBox(hash);
     if (cool) coolOff.set(hash, { until: now() + BUILD_COOL_OFF_MS, why, tail });
     for (const w of waitersOf(hash)) {
       if (w === trigger) continue;
@@ -778,6 +783,7 @@ function createSuiteRunner({
 
   function recordBuilt(imageId, definitionHash) {
     builtIds.add(imageId);
+    forgetBox(definitionHash);
     touchCache(boxKey(definitionHash));
     const rows = readJson(builtFile, []);
     writeJson(builtFile, [...(Array.isArray(rows) ? rows : []), { imageId, definitionHash, at: now() }], 0o600);
@@ -1274,6 +1280,7 @@ function createSuiteRunner({
       const r = await box.removeImage(im.id);
       if (!r.ok) { log(`suite-runner: box image ${name} not removed: ${r.why}`); continue; }
       log(`suite-runner: removed box image ${name} (${(im.bytes / 1024 ** 3).toFixed(2)} GiB)`);
+      forgetBox(im.hash);
       gone.push(im);
     }
     const cache = readJson(cacheFile, {});
@@ -1313,23 +1320,65 @@ function createSuiteRunner({
     try { return await maintenance; } finally { maintenance = null; pump(); }
   }
 
-  async function boxState(want = null) {
-    if (!box || (!want && box.labelsOnly)) return null;
-    if (boxHold) return { state: 'unavailable', why: `cleanup not confirmed: ${boxHold.why}` };
-    let found;
-    try { found = await (want ? box.probe(want) : box.probe()); } catch (e) { return { state: 'unavailable', why: e.message }; }
+  async function probeBox(want) {
+    try { return await (want ? box.probe(want) : box.probe()); } catch (e) { return { state: 'unavailable', why: e.message }; }
+  }
+
+  function boxAnswerOf(want, found) {
     if (want && found && BOX_REFUSALS[found.state]) return { state: found.state, why: found.why };
     if (!found || found.state !== 'ready') return { state: 'unavailable', why: (found && found.why) || 'no answer' };
     const e = found.env;
     return { state: 'ready', env: e && e.box && builtIds.has(e.box.imageId) ? withBuilt(e) : e };
   }
 
+  async function boxState(want = null) {
+    if (!box || (!want && box.labelsOnly)) return null;
+    if (boxHold) return { state: 'unavailable', why: `cleanup not confirmed: ${boxHold.why}` };
+    return boxAnswerOf(want, await probeBox(want));
+  }
+
+  function forgetBox(hash) {
+    for (const key of [...namedBoxes.keys()]) if (key.startsWith(`${hash}@`)) namedBoxes.delete(key);
+  }
+
+  function namedProbe(want) {
+    const key = `${want.definitionHash}@${want.rev}`;
+    const hit = namedBoxes.get(key);
+    if (hit && (hit.at == null || now() - hit.at < NAMED_BOX_TTL_MS)) return hit;
+    const entry = { at: null, done: null };
+    entry.done = probeBox(want).then((found) => {
+      if (namedBoxes.get(key) === entry) entry.at = now();
+      return found;
+    });
+    namedBoxes.delete(key);
+    namedBoxes.set(key, entry);
+    while (namedBoxes.size > NAMED_BOX_MAX) namedBoxes.delete(namedBoxes.keys().next().value);
+    return entry;
+  }
+
+  async function namedBoxState(want, origin) {
+    if (!box) return null;
+    if (boxHold) return { state: 'unavailable', why: `cleanup not confirmed: ${boxHold.why}` };
+    const entry = namedProbe(want);
+    const known = entry.done.then(async (found) => {
+      const b = boxAnswerOf(want, found);
+      return b.state === 'no-image' ? buildAnswer(want, origin, b) : b;
+    });
+    let timer = null;
+    const late = new Promise((resolve) => {
+      timer = timers.setTimeout(() => resolve({
+        state: 'probing', definitionHash: want.definitionHash,
+        why: `box ${want.definitionHash.slice(0, 12)} not known yet: its docker probe is still running`,
+      }), NAMED_BOX_WAIT_MS);
+    });
+    try { return await Promise.race([known, late]); } finally { timers.clearTimeout(timer); }
+  }
+
   async function info(want = null, { origin = null } = {}) {
     const env = await ensureIdentity();
     const named = want && BOX_HASH_RE.test(String(want.definitionHash)) && Number.isInteger(want.rev) && want.rev >= 1
       ? { definitionHash: want.definitionHash, rev: want.rev } : null;
-    let boxAnswer = await boxState(named);
-    if (named && boxAnswer && boxAnswer.state === 'no-image') boxAnswer = await buildAnswer(named, origin, boxAnswer);
+    const boxAnswer = named ? await namedBoxState(named, origin) : await boxState(null);
     return {
       ok: true, bootId, env, isolation: isoState, box: boxAnswer,
       shares: held.map(({ name, version }) => ({ name, version })),
@@ -1626,6 +1675,7 @@ function createSuiteRunner({
 
   function close() {
     closed = true;
+    namedBoxes.clear();
     if (interval) timers.clearInterval(interval);
     interval = null;
     if (activityTimer) timers.clearTimeout(activityTimer);

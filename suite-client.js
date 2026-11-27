@@ -23,6 +23,7 @@ const MAX_MOVES = 2;
 const COMPARE_MAX_BYTES = 5 * 1024 ** 2;
 const UNREACHABLE = new Set([0, 429, 502, 503, 504]);
 const REFUSED = new Set([401, 403]);
+const TIMED_OUT = /^timeout$|did not answer in time/;
 const RETRY_TEXT = {
   'runner-restart': 'runner restarted',
   upload: 'upload failed',
@@ -105,7 +106,8 @@ function createSuiteClient({
     const r = await once(peer, (c) => c.suiteAsk('GET', `/api/suite/info${q}`), wire);
     if (r.body && r.body.ok) return { ok: true, info: r.body };
     if (REFUSED.has(r.status)) return { ok: false, why: `runner refused the token (status ${r.status})` };
-    return { ok: false, why: r.error || (r.body && r.body.error) || `status ${r.status}` };
+    const why = r.error || (r.body && r.body.error) || `status ${r.status}`;
+    return { ok: false, why, ...(r.status === 0 && TIMED_OUT.test(why) ? { timedOut: true } : {}) };
   }
 
   async function cancel(peer, jobId, wire = 'push') {
@@ -977,7 +979,8 @@ function boxReadyFor(info, box) {
   return !!stamped && stamped.definitionHash === want.definitionHash;
 }
 
-const BOX_TIER = { building: 1, 'can-build': 2 };
+const BOX_TIER = { building: 1, 'can-build': 2, probing: 2 };
+const SKIP_WHY = { refused: 'refused', timeout: 'timeout' };
 
 function boxTier(info, box) {
   if (boxReadyFor(info, box)) return 0;
@@ -1016,12 +1019,13 @@ function pickRunner(members, { box = false, shares = [], exclusive = false } = {
     if (!m) return;
     const skip = (reason) => { ranks.push({ member: m.peer, skipped: reason }); };
     if (!m.live) return skip('not connected');
-    if (!m.info) return skip(m.why === 'refused' ? 'refused' : 'no answer');
+    if (!m.info) return skip(SKIP_WHY[m.why] || 'no answer');
     const tier = boxed ? boxTier(m.info, box) : 0;
     if (tier == null || (boxed && missingShare(m.info, shares))) return skip('no box for this job');
     const load = runnerLoad(m.info, m.sent);
     const rank = exclusive === true ? exclusiveRank(m.info, load) : 0;
-    ranks.push({ member: m.peer, load, tier, rank });
+    const unknown = boxed && m.info.box && m.info.box.state === 'probing';
+    ranks.push({ member: m.peer, load, tier, rank, ...(unknown ? { boxUnknown: true } : {}) });
     const better = !best || rank < best.rank
       || (rank === best.rank && (tier < best.tier || (tier === best.tier && loadBeats(load, best.load))));
     if (better) best = { m, i, load, tier, rank };
@@ -1031,12 +1035,13 @@ function pickRunner(members, { box = false, shares = [], exclusive = false } = {
 
 function pickRecord(pick) {
   const skipped = pick.ranks.filter((r) => r.skipped).map((r) => ({ member: r.member, reason: r.skipped }));
-  return { chosen: pick.chosen ? pick.member.peer : null, ...(skipped.length ? { skipped } : {}) };
+  const boxUnknown = pick.ranks.filter((r) => r.boxUnknown).map((r) => r.member);
+  return { chosen: pick.chosen ? pick.member.peer : null, ...(skipped.length ? { skipped } : {}), ...(boxUnknown.length ? { boxUnknown } : {}) };
 }
 
 function pickLine(id, pick) {
   const rows = pick.ranks.map((r) => (r.skipped ? `${r.member} skipped: ${r.skipped}`
-    : `${r.member} slots ${r.load.inUse}/${r.load.total}, pending ${r.load.pending}, queue ${r.load.queue}, box tier ${r.tier}, exclusive rank ${r.rank}`));
+    : `${r.member} slots ${r.load.inUse}/${r.load.total}, pending ${r.load.pending}, queue ${r.load.queue}, box tier ${r.tier}${r.boxUnknown ? ' (box state not known yet)' : ''}, exclusive rank ${r.rank}`));
   return `pool pick for job ${String(id || 'none').slice(0, 8)}: chosen ${pick.chosen ? pick.member.peer : 'none'}; ${rows.join('; ')}`;
 }
 

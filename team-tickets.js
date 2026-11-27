@@ -3274,7 +3274,8 @@ function createTicketMethods(deps, shared) {
         const { live, via } = this._runnerVia(m);
         if (!live || !via) return { ...m, live: false, info: null };
         const r = await Promise.resolve().then(() => client.reachable(via.peer, via.wire, want)).catch(() => null);
-        return { ...m, live: true, info: r && r.ok ? r.info : null, ...(r && !r.ok && /refused/.test(r.why || '') ? { why: 'refused' } : {}) };
+        const why = r && !r.ok ? (/refused/.test(r.why || '') ? 'refused' : r.timedOut ? 'timeout' : null) : null;
+        return { ...m, live: true, info: r && r.ok ? r.info : null, ...(why ? { why } : {}) };
       }));
       const counted = typeof client.sentTo === 'function' ? rows.map((m) => (m.info ? { ...m, sent: client.sentTo(m.peer, m.info) } : m)) : rows;
       const pick = pickRunner(counted, { box, shares: tr.shares || [], ...(tr.exclusive === true ? { exclusive: true } : {}) });
