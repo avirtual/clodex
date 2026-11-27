@@ -11,7 +11,7 @@ const { makeWatchdog, STALE_MS } = require('./cli/src/sse-guard');
 const { makeSseDecoder, MAX_BUFFER_BYTES } = require('./cli/src/sse-frame');
 const { peerHasShellCap, peerShellRefusal, vetWireResize } = require('./peer-shell');
 const { IMPORT_CHUNK_MAX } = require('./seat-import');
-const { sanitizeWireOffers, OFFERS_WIRE_VERSION } = require('./box-offer');
+const { sanitizeWireOffers, wireOffers, OFFERS_WIRE_VERSION } = require('./box-offer');
 const { SUITE_DESK_V, DESK_LIMITS } = require('./suite-desk');
 
 const HELLO_INTERVAL_MS = 15000;      // offline poll cadence
@@ -1127,7 +1127,7 @@ class PeerConnection {
 
   pushOffers(own, cb) {
     this._request('POST', '/api/peer/offers',
-      { v: OFFERS_WIRE_VERSION, from: this._selfLabel, own: own || null },
+      { v: OFFERS_WIRE_VERSION, from: this._selfLabel, ...wireOffers(own) },
       (err, resp) => { if (cb) cb(err ? { ok: false, error: err.message } : resp || { ok: false }); });
   }
 

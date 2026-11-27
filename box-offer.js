@@ -15,7 +15,6 @@ const MAX_PLATFORMS = 8;
 const RECORD_KEYS = ['scope', 'enabled', 'boxes', 'availability', 'schedule', 'peers'];
 const WINDOW_KEYS = ['days', 'from', 'to'];
 const PEER_KEYS = ['name'];
-const WIRE_KEYS = ['scope', 'boxes', 'open', 'kinds', 'facts'];
 const FACT_KEYS = ['os', 'arch', 'cpus', 'memMb', 'runtime'];
 const KINDS = ['container', 'native'];
 const PRODUCED_KINDS = ['container'];
@@ -188,11 +187,11 @@ function sanitizeWireRuntime(raw) {
   const platforms = Array.from(raw.platforms);
   if (platforms.length === 0 || platforms.length > MAX_PLATFORMS) return undefined;
   if (!platforms.every((p) => typeof p === 'string' && PLATFORM_RE.test(p))) return undefined;
-  return { platforms: [...new Set(platforms)], ...runtimeCapacity(raw) };
+  return { platforms: [...new Set(platforms)] };
 }
 
 function sanitizeWireFacts(raw) {
-  if (!isPlainObject(raw) || !onlyKeys(raw, FACT_KEYS) || !FACT_KEYS.every((k) => k in raw)) return null;
+  if (!isPlainObject(raw) || !FACT_KEYS.every((k) => k in raw)) return null;
   if (!validToken(raw.os) || !validToken(raw.arch)) return null;
   if (!validInt(raw.cpus, MAX_CPUS) || !validInt(raw.memMb, MAX_MEM_MB)) return null;
   const runtime = sanitizeWireRuntime(raw.runtime);
@@ -208,7 +207,7 @@ function sanitizeWireKinds(raw) {
 }
 
 function sanitizeWireEntry(raw) {
-  if (!isPlainObject(raw) || !onlyKeys(raw, WIRE_KEYS)) return null;
+  if (!isPlainObject(raw)) return null;
   if (!SCOPES.includes(raw.scope) || !isBoxCount(raw.boxes) || typeof raw.open !== 'boolean') return null;
   const kinds = sanitizeWireKinds(raw.kinds);
   const facts = sanitizeWireFacts(raw.facts);
@@ -220,7 +219,18 @@ function sanitizeWireOffers(raw) {
   if (!isPlainObject(raw)) return null;
   if (raw.own == null) return { own: null };
   const own = sanitizeWireEntry(raw.own);
-  return own ? { own } : null;
+  if (!own) return null;
+  if (own.facts.runtime && isPlainObject(raw.capacity)) own.facts.runtime = { ...own.facts.runtime, ...runtimeCapacity(raw.capacity) };
+  return { own };
+}
+
+function wireOffers(own) {
+  if (!isPlainObject(own) || !isPlainObject(own.facts) || !isPlainObject(own.facts.runtime)) return { own: own || null };
+  const { platforms, ...rest } = own.facts.runtime;
+  const capacity = runtimeCapacity(rest);
+  const out = { own: { ...own, facts: { ...own.facts, runtime: { platforms } } } };
+  if (Object.keys(capacity).length) out.capacity = capacity;
+  return out;
 }
 
 function warnStoredOffer(readRaw, warn) {
@@ -255,6 +265,7 @@ module.exports = {
   offerEntry,
   wireEntry,
   sanitizeWireOffers,
+  wireOffers,
   OFFERS_WIRE_VERSION,
   warnStoredOffer,
   bootOffer,

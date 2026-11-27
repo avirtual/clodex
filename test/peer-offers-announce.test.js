@@ -10,6 +10,7 @@ const { PeerConnection } = require('../peer-client');
 const { offerCallbacks } = require('../remote-wiring');
 const { offerPeerCallbacks } = require('../peer-wiring');
 const { createOfferDirectory } = require('../offer-directory');
+const { baseSanitizeWireOffers } = require('./lib/base-wire-offers');
 
 const TOKEN = 'operator-token-announce-1';
 
@@ -33,12 +34,12 @@ function waitFor(pred, what, timeoutMs = 2000) {
   });
 }
 
-async function startDialed(t, { offer }) {
+async function startDialed(t, { offer, facts = DIALED_FACTS }) {
   const state = { offer, factsCalls: 0, received: 0 };
   const offerDirectory = createOfferDirectory();
   const cb = offerCallbacks({
     getBoxOffer: () => state.offer,
-    getOfferFacts: () => { state.factsCalls++; return DIALED_FACTS; },
+    getOfferFacts: () => { state.factsCalls++; return facts; },
     offerDirectory,
   });
   const server = new RemoteServer({
@@ -53,12 +54,12 @@ async function startDialed(t, { offer }) {
   return { port: server.port, state, offerDirectory };
 }
 
-function dial(t, port, { offer = null, fakeCallbacks = null, engine = true } = {}) {
+function dial(t, port, { offer = null, fakeCallbacks = null, engine = true, facts = DIALER_FACTS } = {}) {
   const state = { offer, factsCalls: 0, seen: 0, computed: 0 };
   const offerDirectory = createOfferDirectory();
   const cb = fakeCallbacks || offerPeerCallbacks({
     getBoxOffer: () => state.offer,
-    getOfferFacts: () => { state.factsCalls++; return DIALER_FACTS; },
+    getOfferFacts: () => { state.factsCalls++; return facts; },
     offerDirectory,
     getSuiteEngine: () => (engine ? {} : null),
   });
@@ -90,6 +91,32 @@ test('two nodes over the loopback wire see each other\'s offers whichever one di
   assert.deepStrictEqual(withoutHandle(dialer.offerDirectory.list()), [
     { provenance: 'hello', name: 'murmur', offer: entry(3, DIALED_FACTS) },
   ]);
+});
+
+test('runtime capacity crosses the loopback wire in both directions and joins the stored offer', async (t) => {
+  const dialedFacts = { ...DIALED_FACTS, runtime: { platforms: ['linux/amd64'], cpus: 6, memMb: 12000 } };
+  const dialerFacts = { ...DIALER_FACTS, runtime: { platforms: ['linux/arm64'], cpus: 8, memMb: 21094 } };
+  const dialed = await startDialed(t, { offer: offerFor(['laptop'], 3), facts: dialedFacts });
+  const dialer = dial(t, dialed.port, { offer: offerFor(['murmur'], 2), facts: dialerFacts });
+  dialer.tick();
+  await waitFor(() => dialed.offerDirectory.list().length === 1 && dialer.offerDirectory.list().length === 1, 'both rows');
+  assert.deepStrictEqual(withoutHandle(dialed.offerDirectory.list()), [
+    { provenance: 'announce', name: 'laptop', offer: entry(2, dialerFacts) },
+  ]);
+  assert.deepStrictEqual(withoutHandle(dialer.offerDirectory.list()), [
+    { provenance: 'hello', name: 'murmur', offer: entry(3, dialedFacts) },
+  ]);
+});
+
+test('the announce body carries capacity beside own, which a base node accepts as the offer it knew', async (t) => {
+  const fake = await startCapFake(t, ['offers']);
+  const facts = { ...DIALER_FACTS, runtime: { platforms: ['linux/arm64'], cpus: 8, memMb: 21094 } };
+  const dialer = dial(t, fake.port, { offer: offerFor(['murmur'], 2), facts });
+  dialer.tick();
+  await waitFor(() => fake.posted.length === 1, 'the announce');
+  const base = entry(2, { ...facts, runtime: { platforms: ['linux/arm64'] } });
+  assert.deepStrictEqual(fake.posted[0], { v: 1, from: 'laptop', own: base, capacity: { cpus: 8, memMb: 21094 } });
+  assert.deepStrictEqual(baseSanitizeWireOffers(fake.posted[0]), { own: base });
 });
 
 test('an offer that does not name the peer makes no row on either side and probes no facts', async (t) => {
