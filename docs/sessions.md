@@ -72,6 +72,12 @@ per-session peer routes; `.claims` stays refused everywhere.
   because the cwd was chosen either by the operator in the dialog or by a seat
   holding the gateable spawn intent, and the added dirs by the same actor that
   built the argv — the same trust the prompt asks for.
+  The read-edit-rename runs inside the Claude CLI's own config lock
+  (`withClaudeConfigLock`: a `<file>.lock` directory, waited for up to about
+  2 s, stale after 10 s), so a running CLI cannot save over the seeded entry;
+  a lock not taken in time logs once and seeds without it, followed by the
+  re-read and retry. Account mint and Re-sync write an account's
+  `.claude.json` under the same lock.
 - **codex** — `mergeCodexInstructions` merges system + the per-seat IPC prompt
   (`buildIpcPrompt(intents)`) + appends
   into `run/<name>/instructions.md` (`model_instructions_file`); shared

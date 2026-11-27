@@ -15,6 +15,7 @@ blocks a release.
 
 - Security: a seat can no longer be named `.claude`, `CLAUDE.md` or `.mcp.json`, names the Claude CLI reads as configuration inside a trusted messages folder.
 - Team tickets: a ticket branch cut before a release no longer files its CHANGELOG line under the released version or stops the merge; the line moves to Unreleased.
+- Seats: seeding a folder's trust entry now takes the Claude CLI's own config lock, so a running CLI no longer overwrites it and a new seat does not stop at a trust dialog.
 
 ## 5.208.0 — 2026-11-27
 
