@@ -231,3 +231,208 @@ test('driver armIdle: reset() forgets the finished requests a poll was detected 
   assert.strictEqual(r.ok, false);
   assert.ok(!('polls' in r));
 });
+
+function timeline(start = 1000) {
+  const clk = { t: start, ev: [] };
+  clk.now = () => clk.t;
+  clk.at = (at, fn) => clk.ev.push({ at, fn });
+  clk.advance = (ms) => {
+    const end = clk.t + ms;
+    for (;;) {
+      clk.ev.sort((a, b) => a.at - b.at);
+      if (!clk.ev.length || clk.ev[0].at > end) break;
+      const e = clk.ev.shift();
+      clk.t = e.at;
+      e.fn();
+    }
+    clk.t = end;
+  };
+  clk.sleepFn = async (ms) => clk.advance(ms);
+  return clk;
+}
+
+function channels(clk, { sent, finished }, { url, n, holdMs, gapMs, staggerMs }) {
+  let id = 0;
+  const open = (at) => clk.at(at, () => {
+    const rid = `c${id++}`;
+    sent(rid, `${url}&AID=${id}`);
+    clk.at(at + holdMs, () => { finished(rid); open(at + holdMs + gapMs); });
+  });
+  for (let i = 0; i < n; i++) open(clk.t + i * staggerMs);
+}
+
+const SIGNALER = 'https://signaler-pa.example.com/punctual/multi-watch/channel?VER=8';
+
+test('driver armIdle: five long-poll channels held 4000 ms and reopened 20 ms later are learned as background, the act goes idle naming the host, and the next act starts knowing them', async () => {
+  const clk = timeline();
+  const f = fakeWc();
+  const watch = await driver.armIdle(f.wc, { now: clk.now });
+  channels(clk, f, { url: SIGNALER, n: 5, holdMs: 4000, gapMs: 20, staggerMs: 800 });
+  const { idle } = await driver.act(f.wc, async () => {}, { now: clk.now, sleepFn: clk.sleepFn, timeoutMs: 15000 });
+  assert.strictEqual(idle.ok, true);
+  assert.ok(idle.ms >= 4820 && idle.ms < 15000, String(idle.ms));
+  assert.deepStrictEqual(idle.ignored, { requests: 5, hosts: ['signaler-pa.example.com'], ticking: 0 });
+  assert.strictEqual(watch.size(), 0);
+  assert.strictEqual(watch.background(), 5);
+  const next = await driver.act(f.wc, async () => {}, { now: clk.now, sleepFn: clk.sleepFn, timeoutMs: 15000 });
+  assert.strictEqual(next.idle.ok, true);
+  assert.ok(next.idle.ms <= 600, String(next.idle.ms));
+  watch.detach();
+});
+
+test('driver armIdle: a chain reopened 400 ms after each end is not learned and stays busy', async () => {
+  const clk = timeline();
+  const f = fakeWc();
+  const watch = await driver.armIdle(f.wc, { now: clk.now });
+  channels(clk, f, { url: SIGNALER, n: 5, holdMs: 4000, gapMs: 400, staggerMs: 800 });
+  const { idle } = await driver.act(f.wc, async () => {}, { now: clk.now, sleepFn: clk.sleepFn, timeoutMs: 15000 });
+  assert.strictEqual(idle.ok, false);
+  assert.strictEqual(idle.reason, 'timeout');
+  assert.ok(!('ignored' in idle));
+  assert.strictEqual(watch.background(), 0);
+  watch.detach();
+});
+
+test('driver armIdle: one request held 1200 ms followed by two sends 5 ms and 10 ms after its end is one link, not learned, and the act stays busy', async () => {
+  const clk = timeline();
+  const f = fakeWc();
+  const watch = await driver.armIdle(f.wc, { now: clk.now });
+  const { idle } = await driver.act(f.wc, async () => {
+    const t0 = clk.t;
+    f.sent('g0', 'https://x.example/api/graphql', 'Fetch', 'POST');
+    clk.at(t0 + 1200, () => f.finished('g0'));
+    clk.at(t0 + 1205, () => f.sent('g1', 'https://x.example/api/graphql', 'Fetch', 'POST'));
+    clk.at(t0 + 1210, () => f.sent('g2', 'https://x.example/api/graphql', 'Fetch', 'POST'));
+  }, { now: clk.now, sleepFn: clk.sleepFn, timeoutMs: 3000 });
+  assert.strictEqual(idle.ok, false);
+  assert.strictEqual(idle.reason, 'timeout');
+  assert.strictEqual(watch.background(), 0);
+  assert.strictEqual(watch.size(), 2);
+  watch.detach();
+});
+
+test('driver armIdle: a single 60000 ms stream still ages out at STREAM_MS and is not reported as repeating', async () => {
+  const clk = timeline();
+  const f = fakeWc();
+  const { idle } = await driver.act(f.wc, async () => { f.sent('stream', 'https://x.example/stream', 'Fetch', 'POST'); clk.at(clk.t + 60000, () => f.finished('stream')); }, { now: clk.now, sleepFn: clk.sleepFn, timeoutMs: 15000 });
+  assert.strictEqual(idle.ok, true);
+  assert.ok(idle.ms >= 8000 && idle.ms < 9000, String(idle.ms));
+  assert.ok(!('ignored' in idle));
+});
+
+test('driver armIdle: learned background keys reset on a new document', async () => {
+  const clk = timeline();
+  const f = fakeWc();
+  const watch = await driver.armIdle(f.wc, { now: clk.now });
+  channels(clk, f, { url: SIGNALER, n: 5, holdMs: 4000, gapMs: 20, staggerMs: 800 });
+  clk.advance(9000);
+  assert.strictEqual(watch.size(), 0);
+  assert.strictEqual(watch.background(), 5);
+  f.wc.emit('did-navigate');
+  watch.reset();
+  clk.advance(1000);
+  assert.strictEqual(watch.background(), 0);
+  assert.strictEqual(watch.size(), 1);
+  watch.detach();
+});
+
+test('driver waitIdle: a request opened before the wait starts is waited for (3000 ms), as a read would count it', async () => {
+  const clk = timeline();
+  const f = fakeWc();
+  const watch = await driver.armIdle(f.wc, { now: clk.now });
+  f.sent('early', 'https://x.example/api/report');
+  clk.advance(300);
+  clk.at(clk.t + 3000, () => f.finished('early'));
+  assert.strictEqual(watch.size(200), 1);
+  const r = await driver.waitIdle(f.wc, { now: clk.now, sleepFn: clk.sleepFn, timeoutMs: 15000 });
+  assert.strictEqual(r.ok, true);
+  assert.ok(r.ms >= 3000, String(r.ms));
+  watch.detach();
+});
+
+function fakePage(clk, mutate) {
+  const g = {};
+  const el = (tag, parent, cls) => ({ nodeType: 1, tagName: tag.toUpperCase(), id: '', classList: cls ? [cls] : [], parentElement: parent });
+  const html = el('html', null);
+  const page = { el, html, body: el('body', html), probes: 0 };
+  page.run = (code) => {
+    page.probes++;
+    let ms = 0;
+    let obs = null;
+    const timers = [];
+    class MO { constructor(cb) { obs = cb; } observe() {} disconnect() { obs = null; } }
+    const p = new Function('globalThis', 'document', 'MutationObserver', 'performance', 'setTimeout', `return ${code}`)(g, { readyState: 'complete', body: page.body, documentElement: html }, MO, { now: () => ms }, (fn, d) => timers.push({ at: ms + d, fn }));
+    while (timers.length && ms < 20000) {
+      ms += 50;
+      if (obs) { const recs = mutate(ms, page); if (recs.length) obs(recs); }
+      const due = timers.filter((x) => x.at <= ms);
+      for (const x of due) timers.splice(timers.indexOf(x), 1);
+      for (const x of due) x.fn();
+    }
+    clk.advance(ms);
+    return p;
+  };
+  return page;
+}
+
+test('driver armIdle: twelve ticking elements churn the first probe and are quiet on the second; a node added elsewhere during the probe is still busy', async () => {
+  const clk = timeline();
+  const f = fakeWc();
+  let foreign = false;
+  const tickers = [];
+  const page = fakePage(clk, (ms, pg) => [
+    ...(ms % 100 === 50 ? tickers.map((e) => ({ type: 'characterData', target: { nodeType: 3, parentElement: e } })) : []),
+    ...(foreign && ms === 250 ? [{ type: 'childList', target: pg.body }] : []),
+  ]);
+  for (let i = 0; i < 12; i++) tickers.push(page.el('div', page.body, 'g-Td-Jb'));
+  f.wc.executeJavaScript = async (code) => page.run(code);
+  const w = await driver.armIdle(f.wc, { now: clk.now, sleepFn: clk.sleepFn });
+  const r = await w.wait({ quietMs: 500, timeoutMs: 15000 });
+  assert.strictEqual(r.ok, true);
+  assert.strictEqual(page.probes, 2);
+  assert.deepStrictEqual(r.ignored, { requests: 0, hosts: [], ticking: 12 });
+  foreign = true;
+  const w2 = await driver.armIdle(f.wc, { now: clk.now, sleepFn: clk.sleepFn });
+  const r2 = await w2.wait({ quietMs: 500, timeoutMs: 5000 });
+  assert.strictEqual(r2.ok, false);
+  assert.deepStrictEqual(r2.churn, ['div.g-Td-Jb', 'div.g-Td-Jb', 'div.g-Td-Jb']);
+});
+
+test('driver armIdle: body and a container of churning elements mutated 3 times in the first probe are never learned, so a node added under them later is still busy', async () => {
+  const clk = timeline();
+  const f = fakeWc();
+  const tickers = [];
+  let app = null;
+  const page = fakePage(clk, (ms, pg) => [
+    ...(ms % 100 === 50 ? tickers.map((e) => ({ type: 'characterData', target: { nodeType: 3, parentElement: e } })) : []),
+    ...(pg.probes === 1 && [300, 600, 900].includes(ms) ? [{ type: 'attributes', target: pg.body }, { type: 'attributes', target: app }] : []),
+    ...(pg.probes > 1 && ms === 250 ? [{ type: 'childList', target: app }] : []),
+  ]);
+  app = page.el('div', page.body, 'app');
+  for (let i = 0; i < 12; i++) tickers.push(page.el('div', app, 'g-Td-Jb'));
+  f.wc.executeJavaScript = async (code) => page.run(code);
+  const w = await driver.armIdle(f.wc, { now: clk.now, sleepFn: clk.sleepFn });
+  const r = await w.wait({ quietMs: 500, timeoutMs: 9000 });
+  assert.strictEqual(r.ok, false);
+  assert.ok(page.probes >= 2, String(page.probes));
+  assert.deepStrictEqual(r.churn, ['div.g-Td-Jb', 'div.g-Td-Jb', 'div.g-Td-Jb']);
+});
+
+test('driver armIdle: a body that is itself the only ticker (attribute every 100 ms) is never learned: the next probe, which also adds a node under it, applies the ticker rule instead of ignoring it', async () => {
+  const clk = timeline();
+  const f = fakeWc();
+  const page = fakePage(clk, (ms, pg) => [
+    ...(ms % 100 === 50 ? [{ type: 'attributes', target: pg.body }] : []),
+    ...(pg.probes > 1 && ms === 250 ? [{ type: 'childList', target: pg.body }] : []),
+  ]);
+  f.wc.executeJavaScript = async (code) => page.run(code);
+  const first = await driver.armIdle(f.wc, { now: clk.now, sleepFn: clk.sleepFn });
+  const r1 = await first.wait({ quietMs: 500, timeoutMs: 15000 });
+  assert.strictEqual(r1.ok, true);
+  assert.strictEqual(r1.ticker, 'body');
+  const w = await driver.armIdle(f.wc, { now: clk.now, sleepFn: clk.sleepFn });
+  const r = await w.wait({ quietMs: 500, timeoutMs: 3000 });
+  assert.strictEqual(r.ok, true);
+  assert.strictEqual(r.ticker, 'body');
+  assert.ok(!('ignored' in r));
+});

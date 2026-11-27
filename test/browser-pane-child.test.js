@@ -1243,7 +1243,7 @@ test('child: a --text target matched by label carries byName onto the click and 
 
 test('child: idleOf carries the ticker the idle wait ignored', () => {
   const child = fs.readFileSync(path.join(__dirname, '..', 'plugins', 'browser-pane', 'child.js'), 'utf8');
-  assert.ok(child.includes('...(idle.ticker ? { ticker: idle.ticker } : {}), ...(Array.isArray(idle.churn) && idle.churn.length ? { churn: idle.churn } : {}), ...(idle.polls ? { polls: idle.polls } : {}), ...(idle.held ? { held: idle.held } : {}) });'));
+  assert.ok(child.includes('...(idle.ticker ? { ticker: idle.ticker } : {}), ...(Array.isArray(idle.churn) && idle.churn.length ? { churn: idle.churn } : {}), ...(idle.polls ? { polls: idle.polls } : {}), ...(idle.held ? { held: idle.held } : {}), ...(idle.ignored ? { ignored: idle.ignored } : {}) });'));
   assert.strictEqual((child.match(/driver\.armIdle\(svc\.wc, \{ worldId: scripts\.ISOLATED_WORLD \}\)/g) || []).length, 2);
   assert.strictEqual(child.split('driver.act(').length, 2);
   assert.strictEqual(child.split('driver.waitIdle(').length, 2);

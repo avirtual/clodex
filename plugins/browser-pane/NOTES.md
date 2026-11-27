@@ -374,6 +374,23 @@ open and idle never settled. A request still open after `STREAM_MS` (8 s) is a
 stream or long poll: it leaves `size()`, the idle wait and the `loading:` count,
 and is counted by `background()` (shown in `read --all` only).
 
+## driver.js — armIdle (learned background)
+
+`learnOf` keeps, per webContents and until the next `did-navigate`, the
+method+origin+path keys whose request was held at least `CHAIN_HELD_MS` and
+reopened within `CHAIN_GAP_MS` of its end, `CHAIN_RUN` times in a row (each end
+credits at most one send, so a burst after one slow request is one link); those
+requests count in `background()`, not in the idle wait. The probe keeps the
+elements it saw churning in a `WeakSet` on the probe world's global, and later
+probes on that document ignore their mutations unless a node is added or
+removed outside them. `body`, `html` and any element containing another hit
+are never learned: `inKnown` walks ancestors, so learning one would exempt the
+whole subtree. Known false idle: a sequential same-path chain of slow
+requests (paginated or GraphQL calls of 1 s or more, back to back) is learned
+after two links, and an act whose only effect is inside an already-ticking
+element reads as quiet. Mitigation: `wait --for="<text>"`. `waitIdle` seeds its
+map from the requests the learner saw open, so it agrees with `loading:`.
+
 ## driver.js — armIdle (watch reset)
 
 `reset()` clears the in-flight map; `child.js` calls it on every main-frame
