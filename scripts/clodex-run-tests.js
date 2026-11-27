@@ -571,7 +571,9 @@ function askHost() {
       if (typeof m.note === 'string' && m.note) headSuffix += ` ${m.note}`;
       emit(`[${LEAF}] ${TAG}result unknown — the suite did not complete on runner ${m.runner || '?'}: ${m.unknown || `unexpected reply ${JSON.stringify(m.run)}`}`, 1, UNKNOWN_DIGEST_MAX);
     }
-    const via = m.rerouted && m.rerouted.from ? `(rerouted from ${m.rerouted.from} to ${m.rerouted.to})` : m.runner ? `(runner ${m.runner})` : null;
+    const hops = Array.isArray(m.moved) && m.moved.length ? [m.moved[0].from, ...m.moved.map((x) => x.to)].join(' -> ') : null;
+    const via = m.rerouted && m.rerouted.from ? `(rerouted from ${m.rerouted.from} to ${m.rerouted.to})`
+      : hops && m.runner ? `(runner ${m.runner}, moved ${hops})` : m.runner ? `(runner ${m.runner})` : null;
     const box = m.box && typeof m.box === 'object'
       ? `(box ${m.box.isolation || 'unstamped'}${m.box.imageId ? `, image ${String(m.box.imageId).replace(/^sha256:/, '').slice(0, 12)}` : ''})` : null;
     digest({

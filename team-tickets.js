@@ -3276,7 +3276,11 @@ function createTicketMethods(deps, shared) {
       const pick = pickRunner(counted, { box, shares: tr.shares || [], ...(tr.exclusive === true ? { exclusive: true } : {}) });
       const runId = pick.chosen && claim && typeof client.claim === 'function' ? client.claim(pick.member.peer) : null;
       if (record) log.info('suite-client', pickLine(id || runId, pick));
-      return { chosen: pick.chosen ? { peer: pick.member.peer, wire: pick.member.wire } : null, runId, pick: pickRecord(pick) };
+      const ranked = pick.chosen ? pick.ranks.find((r) => !r.skipped && r.member === pick.member.peer) : null;
+      return {
+        chosen: pick.chosen ? { peer: pick.member.peer, wire: pick.member.wire } : null, runId, pick: pickRecord(pick),
+        fit: ranked ? { load: ranked.load, tier: ranked.tier, exclusive: pick.member.info.exclusive || null } : null,
+      };
     },
 
     async _pickGateRunner(tr, box, exclude = [], opts = {}) {
@@ -3312,6 +3316,21 @@ function createTicketMethods(deps, shared) {
       };
     },
 
+    _runnerMove(tr, box) {
+      return async (current, id = null) => {
+        const p = await this._pickPool(tr, box, [], { claim: false, id, record: false });
+        const fit = p && p.chosen && p.chosen.peer !== current ? p.fit : null;
+        if (!fit) return null;
+        const { load } = fit;
+        const idle = load.free > 0 && load.pending === 0 && load.queue === 0 && fit.tier === 0
+          && (tr.exclusive !== true || (fit.exclusive === 'honour' && load.inUse === 0));
+        if (!idle) return null;
+        const { via } = this._runnerVia(p.chosen);
+        if (via) log.info('suite-client', `pool move for job ${String(id || 'none').slice(0, 8)}: ${current} -> ${p.chosen.peer} (slots ${load.inUse}/${load.total}, box tier ${fit.tier})`);
+        return via || null;
+      };
+    },
+
     _handBox(team) {
       const tr = team && team.testRunner;
       return tr && tr.box === true ? this._shadowBox(team) : false;
@@ -3322,6 +3341,7 @@ function createTicketMethods(deps, shared) {
       const chosen = p && p.chosen;
       return {
         chosen: chosen ? chosen.peer : null, repick: chosen ? this._runnerRepick(tr, box) : null, reroute: this._runnerReroute(tr, box),
+        ...(p ? { requeue: this._runnerMove(tr, box) } : {}),
         ...(p && p.runId ? { runId: p.runId } : {}), ...(p ? { pick: p.pick } : {}),
       };
     },
@@ -6920,6 +6940,7 @@ function createTicketMethods(deps, shared) {
           ...(picked && picked.runId ? { runId: picked.runId } : {}), ...(picked ? { pick: picked.pick } : {}),
           ...(chosen ? { repick: this._runnerRepick(tr, box) } : {}),
           reroute: this._runnerReroute(tr, box),
+          ...(pooled && kind === 'verify' ? { requeue: this._runnerMove(tr, box) } : {}),
         });
       } catch (e) {
         log.warn('ticket', `ticket ${ticket.id}: ${kind} shadow run not submitted — ${e && e.message ? e.message : e}`);
@@ -7014,6 +7035,17 @@ function createTicketMethods(deps, shared) {
             submittedId = null;
             cancelSent = false;
           },
+          ...(pooled && kind === 'verify' ? {
+            requeue: this._runnerMove(tr, def),
+            onMove: (next) => {
+              via = { peer: next.peer, ...(next.wire === 'pull' ? { wire: 'pull' } : {}) };
+              ret.wire = next.wire === 'pull' ? 'pull' : WIRE_PUSH;
+              ret.runner = next.name;
+              jobId = null;
+              submittedId = null;
+              cancelSent = false;
+            },
+          } : {}),
         }))
         .catch((e) => ({ unknown: `client error: ${e && e.message ? e.message : e}`, res: null, record: null }));
       const buildable = def && typeof def.definition === 'string';

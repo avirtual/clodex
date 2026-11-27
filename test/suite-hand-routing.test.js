@@ -671,6 +671,10 @@ function poolRig(script) {
       }
       if (script[peer].lost) return DOWN;
       const id = decodeURIComponent(/ids=([^&]+)/.exec(p)[1]);
+      if (script[peer].queued) {
+        clock.t += Number(/wait=(\d+)/.exec(p)[1]);
+        return { status: 200, body: { ok: true, jobs: [{ id, state: 'queued', treeHash: TREE }] } };
+      }
       return { status: 200, body: { ok: true, jobs: [{ id, state: 'done', treeHash: TREE, exit: { code: 0, signal: null }, reason: null, queueMs: 0, setupMs: 1, runMs: 2, out: {} }] } };
     },
   });
@@ -739,6 +743,20 @@ test('t2414: a second loss after the reroute ends the hand run unknown naming th
   f.host.onMessage(ask(f.dir));
   assert.deepStrictEqual(await f.done, { run: 'remote', runner: 'runner-b', unknown: 'runner unreachable' });
   assert.deepStrictEqual(posts(r.calls), ['pA POST /api/suite/jobs', 'pB POST /api/suite/jobs']);
+});
+
+test('t2440: a hand job still queued on runner-a at 60 s moves to an idle runner-b; the reply, the digest and the ledger row say where it ran', async () => {
+  const r = poolRig({ pA: { queued: true }, pB: {} });
+  const f = hostFor({ client: r.client, team: POOL_TEAM(), peers: POOL_PEERS, pool: async () => ({ chosen: 'runner-a', repick: null, reroute: null, requeue: async (cur) => (cur === 'runner-a' ? VIA_B : null) }) });
+  f.host.onMessage(ask(f.dir));
+  const m = await f.done;
+  const hop = [{ from: 'runner-a', to: 'runner-b', at: '1970-01-01T00:01:00.000Z' }];
+  assert.deepStrictEqual([m.run, m.runner, m.unknown, m.moved], ['remote', 'runner-b', null, hop]);
+  assert.deepStrictEqual(r.calls.filter((c) => / (POST|DELETE) \/api\/suite\/jobs/.test(c)), ['pA POST /api/suite/jobs', 'pA DELETE /api/suite/jobs/run-1', 'pB POST /api/suite/jobs']);
+  assert.deepStrictEqual(r.ends().map((x) => [x.kind, x.where, x.runner, x.moved]), [['hand', 'runner-b', 'pB', hop]]);
+  const root = mkRoot({ status: m.status, stdout: m.stdout, stderr: m.stderr });
+  const d = await runWithHost(root, '{}', path.join(root, 'h'), () => [m]);
+  assert.match(d.digest, /^\[[^\]]+\] 4\/4 green \(\d+m \d{2}s\) \(runner runner-b, moved runner-a -> runner-b\)$/);
 });
 
 test('t2414: local:true runs here and never asks the pool', async () => {
