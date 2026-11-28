@@ -657,6 +657,25 @@ function proxyReceivedAt(p, now = Date.now()) {
   return p && typeof p.ageMs === 'number' ? now - p.ageMs : now;
 }
 
+function fmtWaitAge(ms) {
+  const m = Math.floor(ms / 60_000);
+  if (m < 1) return 'under 1m';
+  if (m < 60) return `${m}m`;
+  const h = Math.floor(m / 60);
+  return h < 48 ? `${h}h` : `${Math.floor(h / 24)}d`;
+}
+
+function parkedWaitingClause(waiting, seat) {
+  const w = waiting && typeof waiting === 'object' ? waiting : null;
+  if (!w || !Number.isInteger(w.count) || w.count < 1) return `it'll be delivered with ${seat}'s next turn`;
+  const age = Number.isFinite(w.oldestMs) && w.oldestMs >= 0 ? `, oldest ${fmtWaitAge(w.oldestMs)}` : '';
+  const head = `${w.count} waiting${age}`;
+  const wake = w.wake && typeof w.wake === 'object' && Number.isInteger(w.wake.hours) && w.wake.hours >= 1 && w.wake.hours <= 48 ? w.wake : null;
+  if (!wake) return `${head}; it'll be delivered with ${seat}'s next turn`;
+  if (wake.spent === true) return `${head}; automatic delivery already used; waits for the seat's next turn`;
+  return `${head}; it'll be delivered with ${seat}'s next turn, or will be delivered after ${wake.hours}h idle`;
+}
+
 module.exports = {
   PROXY_AGENT_PREFIX, mintProxyAgent, resolveProxyAgentId, pickProxyRecord, shapeProxyRecord, shapeSubagent,
   stampServedAge, proxyReceivedAt,
@@ -666,5 +685,5 @@ module.exports = {
   AUTO_COMPACT, headroomBand, shouldAutoCompact, autoCompactDecision, isHumanPtyInput,
   draftChunkSignal, isDraftOpen, pasteModeSignal, PASTE_START, PASTE_END,
   versionSeverity, updateApplies, releaseAgeInfo,
-  DM_HOLD_IDLE_MS, peerStatusLabel, shouldHoldDm,
+  DM_HOLD_IDLE_MS, peerStatusLabel, shouldHoldDm, fmtWaitAge, parkedWaitingClause,
 };

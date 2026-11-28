@@ -1178,7 +1178,7 @@ function createRemoteWiring(deps) {
           // the one place the two vocabularies meet. Do not "tidy" them into one.
           let resp;
           if (r.queued) resp = { ok: true, delivered: true };
-          else if (r.parked) resp = { ok: true, parked: r.parked };
+          else if (r.parked) resp = { ok: true, parked: r.parked, ...(r.waiting ? { waiting: r.waiting } : {}) };
           else {
             const why = r.held || r.error || 'not delivered';
             log.info('peer', `dm from ${senderTag} to ${to} not delivered: ${why}`);

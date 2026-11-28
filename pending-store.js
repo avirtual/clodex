@@ -75,7 +75,7 @@ function parkFileHasId(f, id) {
 // name inherits its predecessor's parked mail (see drainPending). It lives in the
 // PAYLOAD rather than the path so the `<seq>[.<id>].json` grammar and
 // parkFileHasId's segment split stay exactly as they are.
-function parkDelivery(root, name, text, seq, id = null, passive = false, born = null, key = null, ride = null) {
+function parkDelivery(root, name, text, seq, id = null, passive = false, born = null, key = null, ride = null, held = null) {
   const dir = agentDir(root, name);
       // `.passive.` occupies the id segment slot (4 dot-segments) — safe from
       // parkFileHasId collisions because minted resend ids are 5 or 10 base36
@@ -85,6 +85,7 @@ function parkDelivery(root, name, text, seq, id = null, passive = false, born = 
   const payload = JSON.stringify(Object.assign({ text }, id ? { id } : null,
     typeof born === 'number' ? { born } : null,
     (typeof key === 'string' && key) ? { key } : null,
+    (!passive && Number.isFinite(held)) ? { held } : null,
     (passive && ride && typeof ride.due === 'number')
       ? { due: ride.due, ride: { ticket: ride.ticket || null, kind: ride.kind || null } }
       : null));
@@ -278,6 +279,32 @@ function oldestActiveParkTs(root, name, now = Date.now()) {
   return oldest;
 }
 
+function parkBacklog(root, name) {
+  let files;
+  try {
+    rehomeOrphans(root, name);
+    files = fs.readdirSync(agentDir(root, name));
+  } catch { return { count: 0, oldestAt: null, heldAt: null }; }
+  let count = 0;
+  let oldestAt = null;
+  let heldAt = null;
+  for (const f of files) {
+    if (!f.endsWith('.json') || f.startsWith('.')) continue;
+    count++;
+    if (f.endsWith('.passive.json')) continue;
+    let held = null;
+    try {
+      const obj = JSON.parse(fs.readFileSync(path.join(agentDir(root, name), f), 'utf8'));
+      if (obj && Number.isFinite(obj.held)) held = obj.held;
+    } catch {}
+    const ts = Number(f.split('.')[0]);
+    const at = held !== null ? held : (Number.isFinite(ts) ? ts : null);
+    if (at !== null && (oldestAt === null || at < oldestAt)) oldestAt = at;
+    if (held !== null && (heldAt === null || held < heldAt)) heldAt = held;
+  }
+  return { count, oldestAt, heldAt };
+}
+
 function readDue(file) {
   try {
     const obj = JSON.parse(fs.readFileSync(file, 'utf8'));
@@ -380,7 +407,8 @@ function claimParkedById(root, id) {
       const obj = JSON.parse(fs.readFileSync(claim, 'utf8'));
       const text = (obj && typeof obj.text === 'string') ? obj.text : null;
       return text != null
-        ? Object.assign({ name, text }, (obj.key && typeof obj.key === 'string') ? { key: obj.key } : null)
+        ? Object.assign({ name, text }, (obj.key && typeof obj.key === 'string') ? { key: obj.key } : null,
+          Number.isFinite(obj.held) ? { held: obj.held } : null)
         : null;
     } catch {
       return null; // corrupt entry — treat as gone rather than throw
@@ -426,4 +454,4 @@ function claimParkedByKey(root, name, key) {
   return { ids, claimed };
 }
 
-module.exports = { isClaimEntry, parkDelivery, drainPending, rehomeOrphans, hasPending, hasActivePending, countPending, peekPending, oldestActiveParkTs, oldestDueRide, parkedTexts, allParkedTexts, parkIdInUse, claimParkedById, claimParkedByKey, agentDir, claimsDir, CLAIM_STALE_MS, RESERVED_SEAT_NAMES, LEGACY_CLAIM_RE, CLAIM_TAG_RE, claimTag, isReservedSeatName, isCliConfigSeatName, reservedSeatError };
+module.exports = { isClaimEntry, parkDelivery, drainPending, rehomeOrphans, hasPending, hasActivePending, countPending, peekPending, oldestActiveParkTs, parkBacklog, oldestDueRide, parkedTexts, allParkedTexts, parkIdInUse, claimParkedById, claimParkedByKey, agentDir, claimsDir, CLAIM_STALE_MS, RESERVED_SEAT_NAMES, LEGACY_CLAIM_RE, CLAIM_TAG_RE, claimTag, isReservedSeatName, isCliConfigSeatName, reservedSeatError };

@@ -138,12 +138,12 @@ const voiceEngineSpec = require('./voice-engine');
 const { effectiveWindowSize, ctxWindowSource } = require('./argv-merge');
 const { contextStatusOf } = require('./ctx-reminder');
 const { CTRLU_SETTLE_MS } = require('./inject-queue');
-const { agentDir: pendingAgentDir, claimsDir: pendingClaimsDir, isReservedSeatName, isCliConfigSeatName, reservedSeatError, claimTag, rehomeOrphans, CLAIM_TAG_RE, LEGACY_CLAIM_RE } = require('./pending-store');
+const { agentDir: pendingAgentDir, claimsDir: pendingClaimsDir, isReservedSeatName, isCliConfigSeatName, reservedSeatError, claimTag, rehomeOrphans, parkBacklog, CLAIM_TAG_RE, LEGACY_CLAIM_RE } = require('./pending-store');
 const { VOICE_MODES, voiceModeOf } = require('./voice-settings');
 const { fmtAge, parseProfileValue, PROFILE_KEY_RE } = require('./memory-store');
 const { mcpArgvPlan, claudeMcpServers, codexMcpArgs, museExpressible, secretRefs, discoverMcpSources } = require('./mcp-plan');
 const MCP_AMBIENT_ENV = new Set(['HOME', 'PATH', 'USER', 'SHELL', 'TMPDIR', 'LOGNAME', 'PWD']);
-const { pasteModeSignal, PROXY_AGENT_PREFIX, PASTE_START, PASTE_END, stampServedAge, fmtQuotaReset } = require('./proxy-util');
+const { pasteModeSignal, PROXY_AGENT_PREFIX, PASTE_START, PASTE_END, stampServedAge, fmtQuotaReset, fmtWaitAge, parkedWaitingClause } = require('./proxy-util');
 const QUOTA_WINDOW_LONG = { '5h': '5-hour window', '7d': 'weekly window (all models)', '7d_oi': 'weekly window (Fable)', overage: 'overage window' };
 const {
   RELAY_ROSTER_TTL_MS, RELAY_MAX_HOPS,
@@ -2815,7 +2815,7 @@ function createSessionManager(deps) {
             }
           } catch {}
         };
-        const tailJsonl = (filePath, onEntry) => {
+        const tailJsonl = (filePath, onEntry, onBatch = null) => {
           let offset = 0;
           return () => {
             try {
@@ -2826,12 +2826,15 @@ function createSessionManager(deps) {
               fs.readSync(fd, buf, 0, buf.length, offset);
               fs.closeSync(fd);
               offset = st.size;
+              const batch = [];
               for (const line of buf.toString('utf-8').split('\n')) {
                 if (!line.trim()) continue;
                 let entry = null;
                 try { entry = JSON.parse(line); } catch {}
+                batch.push(entry);
                 onEntry(entry);
               }
+              if (onBatch && batch.length) onBatch(batch);
             } catch { /* observer-grade */ }
           };
         };
@@ -2847,6 +2850,12 @@ function createSessionManager(deps) {
           if (count > 0) this._lastPendingCounts.set(name, count);
           else this._lastPendingCounts.delete(name);
           this._broadcast('pending-count', { name, count });
+        }, (batch) => {
+          const entries = batch.filter((e) => e && typeof e === 'object');
+          if (!entries.length) return;
+          const stamps = entries.map((e) => Number(String(e.file || '').split('.')[0])).filter(Number.isFinite);
+          const ev = typeof entries[0].ev === 'string' && /^[A-Za-z]{1,40}$/.test(entries[0].ev) ? `, ${entries[0].ev}` : '';
+          this._logParkDrain(name, `seat turn${ev}`, entries.length, stamps.length ? Math.min(...stamps) : null);
         });
         try {
           session.ctxWatcher = fs.watch(runDirFor(REGISTRY_DIR, name), (_event, fname) => {
@@ -3856,6 +3865,7 @@ function createSessionManager(deps) {
       if (isHumanPtyInput(data)) {
         s.lastUserInputTs = Date.now();
         this._lastOperatorInputAt = s.lastUserInputTs;
+        this._rearmParkWake(name, 'typed input');
         if (!s.firstInputAt) s.firstInputAt = s.lastUserInputTs;
         const wasInPaste = s._inPaste;
         const sig = draftChunkSignal(data, s._inPaste);
@@ -6603,7 +6613,7 @@ function createSessionManager(deps) {
           if (session._dead) return null;
           if (this._anyDraftOpen(session) || this._turnStartPending(session)) return null;
           let texts = [];
-          try { texts = drainPending(PENDING_DIR, session.name, claimTag('idle'), this._bornFor(session.name)); } catch { return null; }
+          try { texts = this._drainParkedBatch(session, claimTag('idle'), 'idle'); } catch { return null; }
           if (!texts.length) {
             log.debug('inject', `idle drain for ${session.name} claimed nothing — hook already drained it`);
             return null;
@@ -6619,7 +6629,7 @@ function createSessionManager(deps) {
       const produce = () => {
         if (s._dead) return null;
         let texts = [];
-        try { texts = drainPending(PENDING_DIR, s.name, claimTag('stream'), this._bornFor(s.name)); } catch { return null; }
+        try { texts = this._drainParkedBatch(s, claimTag('stream'), 'boot'); } catch { return null; }
         return texts.length ? texts.join('\n\n') : null;
       };
       this._streamEnqueueSystem(s, '', produce, 'parked drain at stream init', null, PENDING_DRAIN_KEY);
@@ -6633,7 +6643,7 @@ function createSessionManager(deps) {
         if (session._dead) return null;
         if (this._anyDraftOpen(session) || this._turnStartPending(session)) return null;
         let texts = [];
-        try { texts = drainPending(PENDING_DIR, session.name, claimTag('boot'), this._bornFor(session.name)); } catch { return null; }
+        try { texts = this._drainParkedBatch(session, claimTag('boot'), 'boot'); } catch { return null; }
         if (!texts.length) {
           log.debug('inject', `boot-ready drain for ${session.name} claimed nothing — another drainer won or every entry failed the born check`);
           return null;
@@ -7213,7 +7223,7 @@ function createSessionManager(deps) {
           if (!target || target._dead) {
             let kept = false;
             if (getPersistence().get(claimed.name)) {
-              try { parkDelivery(PENDING_DIR, claimed.name, claimed.text, this._nextParkSeq(), intent.id, false, this._bornFor(claimed.name), claimed.key); kept = true; } catch {}
+              try { parkDelivery(PENDING_DIR, claimed.name, claimed.text, this._nextParkSeq(), intent.id, false, this._bornFor(claimed.name), claimed.key, null, claimed.held ?? null); kept = true; } catch {}
             }
             reply(kept
               ? `${claimed.name} is not running; kept parked as ${intent.id} — it delivers when the seat resumes.`
@@ -7229,7 +7239,7 @@ function createSessionManager(deps) {
           });
           if (verdict.hold) {
             let reparked = false;
-            try { parkDelivery(PENDING_DIR, target.name, claimed.text, this._nextParkSeq(), intent.id, false, this._bornFor(target.name), claimed.key); reparked = true; } catch {}
+            try { parkDelivery(PENDING_DIR, target.name, claimed.text, this._nextParkSeq(), intent.id, false, this._bornFor(target.name), claimed.key, null, claimed.held ?? null); reparked = true; } catch {}
             reply(reparked
               ? `${target.name} is ${verdict.reason}; re-parked as ${intent.id} — it'll deliver after the dialog is answered.`
               : `${target.name} is ${verdict.reason} and re-parking failed, so nothing holds ${intent.id} any more. The message was:\n${claimed.text}`);
@@ -7254,7 +7264,7 @@ function createSessionManager(deps) {
               payload: this._proxyPoller ? this._proxyPoller.snapshot(s.name) : null,
               attention: s.needsAttention ? s.needsAttention.kind : null,
               agentType: s.agentType,
-            }), nudged: this._submitNudgesRecent(s) }));
+            }), nudged: this._submitNudgesRecent(s), waiting: countPending(PENDING_DIR, s.name) }));
           const externalNames = (await registry.listPeers())
             .map(p => p.name)
             .filter(n => !this.sessions.has(n))
@@ -7280,7 +7290,7 @@ function createSessionManager(deps) {
           }
           const others = [...localAgents, ...externalNames, ...remoteNames, ...relayNames].filter(p => p.name !== senderName);
           const list = others.length
-            ? others.map(p => `${p.label ? `${p.name} (${p.label})` : p.name}${p.nudged ? ` (nudged ${p.nudged})` : ''}`).join(', ')
+            ? others.map(p => `${p.label ? `${p.name} (${p.label})` : p.name}${p.waiting ? ` (${p.waiting} waiting)` : ''}${p.nudged ? ` (nudged ${p.nudged})` : ''}`).join(', ')
             : '(none)';
           if (session) this._injectText(session, `[agent:peers] ${list}`, { parkable: true });
           break;
@@ -9201,7 +9211,7 @@ function createSessionManager(deps) {
         // an argument-less call reads as 'injected' to a caller confirming a write.
         if (parkId && typeof onWrite === 'function') { try { onWrite('parked'); } catch {} }
         return parkId
-          ? { parked: parkId, reason: verdict.reason, noUrgent: verdict.noUrgent }
+          ? { parked: parkId, reason: verdict.reason, noUrgent: verdict.noUrgent, waiting: this._parkWaiting(target.name) }
           : { held: verdict.reason, noUrgent: verdict.noUrgent };
       }
       const superseded = urgent === true ? claimParkedByKey(PENDING_DIR, targetName, key) : null;
@@ -9523,7 +9533,7 @@ function createSessionManager(deps) {
           notify(`[agent:dm] ${origin} already had ref ${item.ref} from you — not redelivered (its first result stands).`);
         } else if (resp && resp.ok && resp.delivered) {
         } else if (resp && resp.ok && resp.parked) {
-          notify(`[agent:dm] parked on ${origin} for ${item.to} — it'll be delivered with ${item.to}'s next turn. If it can't wait, resend as \`[agent:dm ${item.target} urgent] <message>\`.${tag}`);
+          notify(`[agent:dm] parked on ${origin} for ${item.to} — ${parkedWaitingClause(resp.waiting, item.to)}. If it can't wait, resend as \`[agent:dm ${item.target} urgent] <message>\`.${tag}`);
         } else {
           const why = (resp && resp.error) || 'delivery failed';
           notify(`[agent:dm] NOT delivered to ${item.target}: ${why}${tag}`);
@@ -9781,6 +9791,7 @@ function createSessionManager(deps) {
       const target = this.sessions.get(targetName);
       if (!target || target.clone) return;
       if (this._refuseStreamInject(target, body, `${mtype || 'message'} from ${senderName}`)) return;
+      if (senderName === 'user' && this._isSystemSender(senderName)) this._rearmParkWake(target.name, 'operator message');
       const pics = Array.isArray(images) ? images : [];
       const fire = typeof onWrite === 'function' ? onWrite : null;
       const imagePaths = target.io !== 'stream' && pics.length ? this._writeImageFiles(target.name, pics) : [];
@@ -9929,12 +9940,103 @@ function createSessionManager(deps) {
     _parkHeldDelivery(target, finalText, key = null) {
       const id = this._mintParkId();
       try {
-        parkDelivery(PENDING_DIR, target.name, finalText, this._nextParkSeq(), id, false, this._bornFor(target.name), key);
+        parkDelivery(PENDING_DIR, target.name, finalText, this._nextParkSeq(), id, false, this._bornFor(target.name), key, null, Date.now());
       } catch (e) {
         log.error('inject', `park-on-hold failed for ${target.name}: ${e.message}`);
         return null;
       }
+      log.info('inject', `park-on-hold for ${target.name} as ${id}: ${countPending(PENDING_DIR, target.name)} waiting`);
       return id;
+    }
+
+    _parkWaiting(name, now = Date.now()) {
+      const b = parkBacklog(PENDING_DIR, name);
+      const hours = this._parkWakeHours();
+      return {
+        count: b.count,
+        oldestMs: b.oldestAt === null ? null : Math.max(0, now - b.oldestAt),
+        wake: hours ? { hours, spent: this._parkWakeSpent(name) } : null,
+      };
+    }
+
+    _drainParkedBatch(session, tag, cause) {
+      const before = parkBacklog(PENDING_DIR, session.name);
+      const texts = drainPending(PENDING_DIR, session.name, tag, this._bornFor(session.name));
+      this._logParkDrain(session.name, cause, texts.length, before.oldestAt);
+      return texts;
+    }
+
+    _logParkDrain(name, cause, count, oldestAt, now = Date.now()) {
+      const age = Number.isFinite(oldestAt) ? fmtWaitAge(Math.max(0, now - oldestAt)) : '-';
+      log.info('inject', `park-drain for ${name} (${cause}): ${count ? `claimed ${count} for delivery` : 'claimed nothing'}, oldest ${age}`);
+    }
+
+    _parkWakeHours() {
+      let v;
+      try { v = getUiSettings().get().parkWakeHours; } catch { return 0; }
+      return Number.isInteger(v) && v >= 1 && v <= 48 ? v : 0;
+    }
+
+    _parkWakeFile() {
+      return typeof REGISTRY_DIR === 'string' && REGISTRY_DIR ? nodePath.join(REGISTRY_DIR, 'park-wake.json') : null;
+    }
+
+    _parkWakeState() {
+      if (this._parkWakeSpentMap) return this._parkWakeSpentMap;
+      const map = new Map();
+      const file = this._parkWakeFile();
+      if (file) {
+        try {
+          const raw = JSON.parse(fs.readFileSync(file, 'utf8'));
+          for (const [name, v] of Object.entries(raw && typeof raw === 'object' ? raw : {})) {
+            if (AGENT_NAME_RE.test(name) && v && Number.isFinite(v.spentAt)) map.set(name, { spentAt: v.spentAt, born: Number.isFinite(v.born) ? v.born : null });
+          }
+        } catch {}
+      }
+      this._parkWakeSpentMap = map;
+      return map;
+    }
+
+    _saveParkWakeState() {
+      const file = this._parkWakeFile();
+      if (!file) return;
+      try { atomicWriteFileSync(file, JSON.stringify(Object.fromEntries(this._parkWakeState()))); }
+      catch (e) { log.error('inject', `park-wake state save failed: ${e.message}`); }
+    }
+
+    _parkWakeSpent(name) {
+      const e = this._parkWakeState().get(name);
+      if (!e) return false;
+      const born = this._bornFor(name);
+      return e.born === null || born === null || e.born === born;
+    }
+
+    _spendParkWake(name, now = Date.now()) {
+      this._parkWakeState().set(name, { spentAt: now, born: this._bornFor(name) });
+      this._saveParkWakeState();
+    }
+
+    _rearmParkWake(name, why) {
+      const map = this._parkWakeState();
+      if (!map.has(name)) return;
+      map.delete(name);
+      this._saveParkWakeState();
+      log.info('inject', `park-wake for ${name} re-armed (${why})`);
+    }
+
+    _sweepParkWake(now = Date.now()) {
+      const hours = this._parkWakeHours();
+      if (!hours) return [];
+      const woke = [];
+      for (const s of this.sessions.values()) {
+        if (!s.agentType || s.clone || s._dead || !drainsParkedMail(s.agentType)) continue;
+        const b = parkBacklog(PENDING_DIR, s.name);
+        if (b.heldAt === null || now - b.heldAt < hours * 3_600_000) continue;
+        if (this._parkWakeSpent(s.name) || this._injectHoldReason(s) || this._anyDraftOpen(s)) continue;
+        const r = this._flushParkedNow(s, claimTag('age'), 'park-age', { hours, onClaim: () => this._spendParkWake(s.name, now) });
+        if (r && r.count) woke.push(s.name);
+      }
+      return woke;
     }
 
     _parkBehindQueue(target, senderTag, body, tag, key = null) {
@@ -9981,7 +10083,7 @@ function createSessionManager(deps) {
       }, delay);
     }
 
-    _flushParkedNow(target, tag, kind = 'park-flush') {
+    _flushParkedNow(target, tag, kind = 'park-flush', { hours = null, onClaim = null } = {}) {
       // Clear the notice's flush timer ahead of the count check: an empty mailbox means another drainer
       // took the notice, and a timer left armed would force a later unrelated park out early.
       if (target._rebootNoticeFlushTimer) { clearTimeout(target._rebootNoticeFlushTimer); target._rebootNoticeFlushTimer = null; }
@@ -9998,14 +10100,19 @@ function createSessionManager(deps) {
         ? `park cap fired (${INJECT_QUIET_MAXWAIT / 1000}s, no submit) — injecting ${count} parked deliver${plural}`
         : kind === 'ride-cap'
           ? `ride cap fired (${RIDE_MAX_MS / 1000}s, no turn) — injecting ${count} parked deliver${plural}`
-          : `flushed ${count} parked deliver${plural} (operator)`;
+          : kind === 'park-age'
+            ? `age limit reached (${hours}h waiting) — injecting ${count} parked deliver${plural}`
+            : `flushed ${count} parked deliver${plural} (operator)`;
+      const cause = { 'park-cap': 'park cap', 'ride-cap': 'ride cap', 'park-age': 'age limit' }[kind]
+        || (String(tag).startsWith('reboot.') ? 'reboot notice' : 'operator click');
       log.warn('inject', `${kind} for ${target.name} — draining ${count} parked deliver${plural} via queue`);
       this._broadcast('ipc-message', { ts: Date.now(), from: 'clodex', to: target.name, kind, body });
       this._injectText(target, '', {
         produce: () => {
           if (target._dead) return null;
           let texts = [];
-          try { texts = drainPending(PENDING_DIR, target.name, tag, this._bornFor(target.name)); } catch { return null; }
+          try { texts = this._drainParkedBatch(target, tag, cause); } catch { return null; }
+          if (texts.length && typeof onClaim === 'function') { try { onClaim(); } catch {} }
           return texts.length ? texts.join('\n\n') : null;
         },
       });
@@ -10017,6 +10124,7 @@ function createSessionManager(deps) {
       if (!target || !drainsParkedMail(target.agentType) || target._dead) {
         return { ok: false, reason: 'no-such-agent' };
       }
+      this._rearmParkWake(name, 'operator click');
       const hold = this._injectHoldReason(target);
       if (hold) {
         const count = countPending(PENDING_DIR, target.name);

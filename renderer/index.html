@@ -1517,6 +1517,13 @@
           <label class="prefs-check" style="margin: 0 0 0 12px;"><input type="checkbox" id="prefs-idle-pause-auto"><span>Pause them automatically</span></label>
         </div>
         <p class="hint-text">Clodex asks once five or more sessions have been idle that long. With automatic pausing on, it pauses them without asking, however many there are. 0 turns both off.</p>
+        <h5 style="margin-top: 14px;">Waiting messages</h5>
+        <div class="prefs-row" style="margin-top: 4px;">
+          <label class="prefs-check" style="margin: 0;"><input type="checkbox" id="prefs-park-wake"><span>Deliver waiting messages after</span></label>
+          <input type="number" id="prefs-park-wake-hours" min="1" max="48" step="1" value="12" style="flex: none; width: 5em;">
+          <span>hours</span>
+        </div>
+        <p class="hint-text">Messages to an agent that has been idle a long time wait for its next turn, to avoid paying for a cold start. Turn this on to deliver them anyway once the oldest has waited this long. Each idle agent is woken this way at most once until you interact with it.</p>
       </details>
       <!-- No Plugins section here (T5/t109): neither the on/off choice nor a
            plugin's own settings belong in this dialog. Both live on the
