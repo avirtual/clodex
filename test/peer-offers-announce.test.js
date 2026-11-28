@@ -250,3 +250,11 @@ for (const [label, caps, engine, scope] of RUN_ANNOUNCES) {
     assert.deepStrictEqual(fake.posted[0], { v: 1, from: 'laptop', own: { ...entry(2, DIALER_FACTS), scope } });
   });
 }
+
+test('computeOffers carries the suite runner slot total apart from boxes, and none without a runner', () => {
+  const build = (getSuiteEngine) => offerPeerCallbacks({
+    getBoxOffer: () => offerFor(['murmur'], 2), getOfferFacts: () => DIALER_FACTS, offerDirectory: createOfferDirectory(), getSuiteEngine,
+  }).computeOffers('p1', 'murmur', []);
+  assert.deepStrictEqual(build(() => ({ slotTotal: () => 1 })), { ...entry(2, DIALER_FACTS), slots: 1 });
+  assert.deepStrictEqual(build(() => null), entry(2, DIALER_FACTS));
+});

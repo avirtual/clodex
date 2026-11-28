@@ -112,7 +112,7 @@ function offerCells(source, peer, offer) {
   let memory = '';
   if (Number.isInteger(memMb)) memory = memMb >= 1024 ? `${Math.round(memMb / 1024)}G` : `${memMb}M`;
   return [
-    source, peer, o.boxes == null ? '' : String(o.boxes), o.open ? 'yes' : 'no',
+    source, peer, o.boxes == null ? '' : String(o.boxes), o.slots == null ? '' : String(o.slots), o.open ? 'yes' : 'no',
     `${f.os || '?'}/${f.arch || '?'}`, cpus == null ? '' : String(cpus), memory,
     platforms.length ? platforms.join(',') : 'none',
   ];
@@ -123,7 +123,7 @@ function renderOffers(body) {
   const rows = [];
   if (b.own) rows.push(offerCells('self', '-', b.own));
   for (const r of b.offers || []) rows.push(offerCells(r.provenance || '', r.name || '', r.offer));
-  return table(['SOURCE', 'PEER', 'BOXES', 'OPEN', 'OS/ARCH', 'CPUS', 'MEMORY', 'RUNTIME'], rows);
+  return table(['SOURCE', 'PEER', 'BOXES', 'SLOTS', 'OPEN', 'OS/ARCH', 'CPUS', 'MEMORY', 'RUNTIME'], rows);
 }
 
 function fmtSpan(ms) {

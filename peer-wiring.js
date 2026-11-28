@@ -14,7 +14,7 @@
 // destructure) are all defined at the call site and value-inject byte-identical.
 
 const { directWebUrl } = require('./peer-web-url');
-const { wireEntry, runGrant, sanitizeBoxOffer } = require('./box-offer');
+const { wireEntry, runGrant, sanitizeBoxOffer, engineSlots } = require('./box-offer');
 const { setNotifying } = require('./offer-directory');
 const { createSuiteClaimer } = require('./suite-claimer');
 const { suiteDispatch } = require('./suite-dispatch');
@@ -29,7 +29,7 @@ function engineUp(getSuiteEngine) {
 function offerPeerCallbacks({ getBoxOffer, getOfferFacts, offerDirectory, getSuiteEngine, onChange } = {}) {
   if (!offerDirectory || typeof getBoxOffer !== 'function' || typeof getOfferFacts !== 'function') return {};
   return {
-    computeOffers: (_targetId, label, caps) => wireEntry(getBoxOffer(), getOfferFacts, label, undefined, { run: Array.isArray(caps) && caps.includes('suite-pull') && engineUp(getSuiteEngine) }),
+    computeOffers: (_targetId, label, caps) => wireEntry(getBoxOffer(), getOfferFacts, label, undefined, { run: Array.isArray(caps) && caps.includes('suite-pull') && engineUp(getSuiteEngine), slots: engineSlots(getSuiteEngine) }),
     onOffers: (peerId, label, own) => setNotifying(offerDirectory, { provenance: 'hello', source: String(peerId), name: label, offer: own }, onChange),
   };
 }

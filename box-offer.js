@@ -9,6 +9,7 @@ const SCOPES = [DISCOVERY, RUN];
 const OFFERS_WIRE_VERSION = 1;
 const AVAILABILITY = ['always', 'schedule'];
 const MAX_BOXES = 16;
+const MAX_SLOTS = 4;
 const MAX_PEERS = 32;
 const MAX_WINDOWS = 8;
 const MAX_PLATFORMS = 8;
@@ -25,6 +26,18 @@ const MAX_MEM_MB = 16777216;
 const isPlainObject = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
 const onlyKeys = (obj, allowed) => Object.keys(obj).every((k) => allowed.includes(k));
 const isBoxCount = (n) => Number.isInteger(n) && n >= 1 && n <= MAX_BOXES;
+const isSlotCount = (n) => Number.isInteger(n) && n >= 1 && n <= MAX_SLOTS;
+const slotsField = (n) => (isSlotCount(n) ? { slots: n } : {});
+
+function engineSlots(getEngine) {
+  if (typeof getEngine !== 'function') return undefined;
+  try {
+    const engine = getEngine();
+    return engine && typeof engine.slotTotal === 'function' ? engine.slotTotal() : undefined;
+  } catch {
+    return undefined;
+  }
+}
 
 function toMinutes(hhmm) {
   const m = HHMM_RE.exec(hhmm);
@@ -163,12 +176,13 @@ function runConfirmed(offer, confirm) {
   return want.length === got.length && want.every((n, i) => n === got[i]);
 }
 
-function offerEntry(offer, facts, now, { run = false } = {}) {
+function offerEntry(offer, facts, now, { run = false, slots } = {}) {
   const clean = sanitizeBoxOffer(offer);
   if (!clean || !clean.enabled) return null;
   return {
     scope: clean.scope === RUN && run === true ? RUN : DISCOVERY,
     boxes: clean.boxes,
+    ...slotsField(slots),
     open: scheduleOpen(clean, now instanceof Date ? now : new Date()),
     kinds: [...PRODUCED_KINDS],
     facts: produceFacts(typeof facts === 'function' ? facts() : facts),
@@ -221,14 +235,17 @@ function sanitizeWireOffers(raw) {
   const own = sanitizeWireEntry(raw.own);
   if (!own) return null;
   if (own.facts.runtime && isPlainObject(raw.capacity)) own.facts.runtime = { ...own.facts.runtime, ...runtimeCapacity(raw.capacity) };
-  return { own };
+  return { own: { ...own, ...slotsField(raw.slots) } };
 }
 
 function wireOffers(own) {
-  if (!isPlainObject(own) || !isPlainObject(own.facts) || !isPlainObject(own.facts.runtime)) return { own: own || null };
-  const { platforms, ...rest } = own.facts.runtime;
+  if (!isPlainObject(own)) return { own: own || null };
+  const { slots, ...entry } = own;
+  const out = { own: entry, ...slotsField(slots) };
+  if (!isPlainObject(entry.facts) || !isPlainObject(entry.facts.runtime)) return out;
+  const { platforms, ...rest } = entry.facts.runtime;
   const capacity = runtimeCapacity(rest);
-  const out = { own: { ...own, facts: { ...own.facts, runtime: { platforms } } } };
+  out.own = { ...entry, facts: { ...entry.facts, runtime: { platforms } } };
   if (Object.keys(capacity).length) out.capacity = capacity;
   return out;
 }
@@ -257,6 +274,8 @@ module.exports = {
   NODE_NAME_RE,
   MAX_PEERS,
   MAX_BOXES,
+  MAX_SLOTS,
+  engineSlots,
   sanitizeBoxOffer,
   offerFromEnv,
   scheduleOpen,

@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+- Test runners: `clodexctl get offers` shows a SLOTS column, the number of test jobs a node runs at once, next to BOXES; the two were unrelated and only BOXES was shown.
+
 ## 5.213.0 — 2026-11-28
 
 - Test runners: the record of a hand's named test run now lists the files it named, not only how many.

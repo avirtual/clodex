@@ -1698,7 +1698,7 @@ function createSuiteRunner({
 
   recover().then(reconcile).catch((e) => log(`suite-runner: reconcile failed: ${e.message}`)).then(() => { recovering = false; if (pumpAfterRecovery) pump(); });
 
-  return { info, activity, submit, putPack, commit, poll, output, readOutput, cancel, tick, start, close, drain, fence, busy: anyLive, activeCount: () => active.size };
+  return { info, activity, submit, putPack, commit, poll, output, readOutput, cancel, tick, start, close, drain, fence, busy: anyLive, activeCount: () => active.size, slotTotal: () => slotTotal };
 }
 
 module.exports = {

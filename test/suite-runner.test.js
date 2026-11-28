@@ -1736,6 +1736,13 @@ for (const [label, slots, total, started] of [
   });
 }
 
+test('slotTotal is the slot total info reports, clamped the same way', async (t) => {
+  for (const [slots, total] of [[3, 3], [9, 4], [0, 1]]) {
+    const f = await fixture(t, { runnerOver: { slots } });
+    assert.deepStrictEqual([f.runner.slotTotal(), (await f.runner.info()).slots.total], [total, total], `slots ${slots}`);
+  }
+});
+
 test('a draining runner finishes its running job with its result, starts no queued job, queues a submit, reports no free slot, calls back once, then resumes', async (t) => {
   const f = await holdingFixture(t, { runnerOver: { slots: 3 } });
   await f.upload(f.body('d1'));
