@@ -442,7 +442,38 @@ test('t2458: a hand run that stays local is answered with env and handEnv over i
   const tr = { peer: 'runner-1', hands: 'off', env: { A: '1', B: '2', PATH: '/x' }, handEnv: { B: 'hand', C: '3', CLODEX_SUITE_KIND: 'verify' }, verifyEnv: { V: '1' }, mergeEnv: { M: '1' } };
   const f = hostFor({ client: stubClient(), team: { ...teamWith('off'), testRunner: tr } });
   f.host.onMessage(ask(f.dir));
-  assert.deepStrictEqual(await f.done, { run: 'local', why: 'hands:off', override: null, env: { A: '1', B: 'hand', C: '3' } });
+  assert.deepStrictEqual(await f.done, { run: 'local', why: 'hands:off', override: null, env: { A: '1', B: 'hand', C: '3' }, envDropped: [{ name: 'PATH', why: 'reserved' }, { name: 'CLODEX_SUITE_KIND', why: 'reserved' }] });
+});
+
+test('t2462: a local answer with nothing dropped carries no envDropped key', async () => {
+  const tr = { peer: 'runner-1', hands: 'off', env: { A: '1' } };
+  const f = hostFor({ client: stubClient(), team: { ...teamWith('off'), testRunner: tr } });
+  f.host.onMessage(ask(f.dir));
+  assert.deepStrictEqual(await f.done, { run: 'local', why: 'hands:off', override: null, env: { A: '1' } });
+});
+
+const DROPPED_KEYS = ['CLODEX_SUITE_ENV_DROPPED'];
+
+test('t2462: a local answer naming dropped env hands them to the runner and adds one digest line after the result', async () => {
+  const root = mkRoot(CAPTURED.green, DROPPED_KEYS);
+  const r = await runWithHost(root, '{}', path.join(root, 'h'), () => [{
+    run: 'local', why: 'hands:off', override: null, env: { T2458_A: '1' },
+    envDropped: [{ name: 'PATH', why: 'reserved' }, { name: 'LD_X', why: 'bad value' }], envDroppedCut: true,
+  }]);
+  assert.strictEqual(r.code, 0, 'ENTER: the local run went green');
+  assert.deepStrictEqual(r.ran.env, { CLODEX_SUITE_ENV_DROPPED: '{"envDropped":[{"name":"PATH","why":"reserved"},{"name":"LD_X","why":"bad value"}],"envDroppedCut":true}' });
+  assert.strictEqual(r.lines.length, 2, r.lines.join('\n'));
+  assert.match(r.lines[0], /^\[[^\]]+\] 3\/3 green \(\d+m \d{2}s\)$/);
+  assert.strictEqual(r.lines[1], 'team env not applied here: PATH (reserved), LD_X (bad value), …');
+});
+
+test('t2462: a local answer with no envDropped gives the runner no dropped variable and a one-line digest', async () => {
+  const root = mkRoot(CAPTURED.green, DROPPED_KEYS);
+  const r = await runWithHost(root, '{}', path.join(root, 'h'), () => [{ run: 'local', why: 'hands:off', override: null, env: { T2458_A: '1' } }]);
+  assert.strictEqual(r.code, 0, 'ENTER: the local run went green');
+  assert.deepStrictEqual(r.ran.env, { CLODEX_SUITE_ENV_DROPPED: null });
+  assert.strictEqual(r.lines.length, 1, r.lines.join('\n'));
+  assert.match(r.lines[0], /^\[[^\]]+\] 3\/3 green \(\d+m \d{2}s\)$/);
 });
 
 test('local:true: the request carries it, and the runner gets the route and override to record; its env has no channel variable', async () => {

@@ -6820,6 +6820,63 @@ for (const [label, opts, want] of PHASE_LOCAL_ROWS) {
   });
 }
 
+const DROPPED_PROBE = (probe) => 'const fs = require("fs");\n'
+  + `fs.writeFileSync(${JSON.stringify(probe)}, JSON.stringify({ dropped: process.env.CLODEX_SUITE_ENV_DROPPED === undefined ? null : process.env.CLODEX_SUITE_ENV_DROPPED }));\n`
+  + 'console.log("TOTALS: 5 pass, 0 fail, 5 tests");\n';
+
+const DROPPED_ROWS = [
+  ['verify', {}, PHASE_ENV_RUNNER, '{"envDropped":[{"name":"PATH","why":"reserved"},{"name":"CLODEX_SUITE_KIND","why":"reserved"},{"name":"CLODEX_TEST_LOCK_MERGE","why":"reserved"}]}'],
+  ['post-merge', { merge: true }, { ...PHASE_ENV_RUNNER, mergeEnv: { T_M: '1', HOME: '/h' } }, '{"envDropped":[{"name":"PATH","why":"reserved"},{"name":"CLODEX_SUITE_KIND","why":"reserved"},{"name":"CLODEX_TEST_LOCK_MERGE","why":"reserved"},{"name":"HOME","why":"reserved"}]}'],
+  ['verify, nothing refused', {}, { peer: 'runner-1', hands: 'off', gate: 'off', env: { T_A: '1' } }, null],
+];
+
+for (const [label, opts, tr, want] of DROPPED_ROWS) {
+  test(`t2462: a ${label} run on the source machine hands the runner the names it dropped, and the result carries them`, async () => {
+    const repo = mkRepo();
+    const f = mkLoop({ repo, suite: 'green' });
+    const probe = pathReal.join(repo.dir, 'dropped.json');
+    fsReal.writeFileSync(pathReal.join(repo.dir, 'wt', 'scripts', 'run-tests.js'), DROPPED_PROBE(probe));
+    const r = await f.m._runTicketSuite({ ...f.team, testRunner: tr }, f.one(), null, opts);
+    assert.strictEqual(r.green, true, 'ENTER: the probe runner ran to a green TOTALS');
+    assert.strictEqual(JSON.parse(fsReal.readFileSync(probe, 'utf8')).dropped, want);
+    if (want === null) assert.ok(!('envDropped' in r), 'nothing dropped leaves the result shape as it was');
+    else assert.deepStrictEqual({ envDropped: r.envDropped.dropped }, JSON.parse(want));
+  });
+}
+
+test('t2462: a green verify that dropped team env names them on one line of the lead\'s notice', async () => {
+  const repo = mkRepo();
+  commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
+  const f = mkLoop({ repo, suite: 'green' });
+  f.team.testRunner = { peer: 'runner-1', hands: 'off', gate: 'off', env: { PATH: '/x', T_A: '1' } };
+  f.tstore.save(f.team.root, [{ ...f.one(), state: 'done', loopStep: 'verify', report: 'r', reportedBy: 'team-hand' }]);
+  const events = traceLoopRows(f);
+
+  await f.m._runTicketLoop(f.team, 't1');
+  await new Promise((r) => setImmediate(r));
+
+  assert.strictEqual(f.created.length, 1, 'ENTER: the reviewer was spawned');
+  const green = events.find((e) => e !== 'SPAWN' && e.body.includes('suite green'));
+  assert.ok(green, 'ENTER: the green notice was sent');
+  assert.match(green.body, / — spawning reviewer\nteam env not applied here: PATH \(reserved\)$/);
+});
+
+test('t2462: a red verify that dropped team env names them on one line of the lead\'s re-measuring notice', async () => {
+  const repo = mkRepo();
+  commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
+  const f = mkLoop({ repo, suite: 'red' });
+  f.team.testRunner = { peer: 'runner-1', hands: 'off', gate: 'off', env: { PATH: '/x', T_A: '1' } };
+  f.tstore.save(f.team.root, [{ ...f.one(), state: 'done', loopStep: 'verify', report: 'r', reportedBy: 'team-hand' }]);
+  const events = traceLoopRows(f);
+
+  await f.m._runTicketLoop(f.team, 't1');
+  await new Promise((r) => setImmediate(r));
+
+  const red = events.find((e) => e !== 'SPAWN' && e.body.includes('suite red'));
+  assert.ok(red, 'ENTER: the re-measuring notice was sent');
+  assert.match(red.body, / — re-measuring\nteam env not applied here: PATH \(reserved\)$/);
+});
+
 test('t2254: a run killed by the suite timeout gets its end record from the loop, under the id it handed the runner', async () => {
   const repo = mkRepo();
   const f = mkLoop({ repo, suite: 'green', suiteTimeoutMs: 3000 });

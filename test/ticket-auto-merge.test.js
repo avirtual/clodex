@@ -825,6 +825,18 @@ test('#45 F2: a red suite after an accept already tore the branch down names the
   assert.ok(!esc[0].body.includes('the branch is untouched'), 'and no longer claims the branch is untouched');
 });
 
+test('t2462: a red post-merge suite that dropped team env names them in the escalation', async () => {
+  const { f } = mkMergeWithTree({ suite: 'red' });
+  f.team.testRunner = { peer: 'runner-1', hands: 'off', gate: 'off', mergeEnv: { HOME: '/h' } };
+
+  await f.m._autoMergeTicket(f.team, 't1', LANDED, ACCEPT);
+
+  const esc = f.esc();
+  assert.strictEqual(esc.length, 1, 'ENTER: the red suite escalated');
+  assert.match(esc[0].body, /after the merge — /, 'ENTER: on the red arm');
+  assert.ok(esc[0].body.includes('\nteam env not applied here: HOME (reserved)'), esc[0].body);
+});
+
 test('#45 F2: a red suite after an accept that KEPT the branch does not call it deleted', async () => {
   const { repo, f } = mkMergeWithTree({ suite: 'red' });
   const realSuite = f.m._runTicketSuite.bind(f.m);

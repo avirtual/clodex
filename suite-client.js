@@ -1197,6 +1197,47 @@ function localPhaseEnv(tr, kind) {
   return Object.fromEntries(Object.entries(phaseEnv(tr, kind)).filter(([k, v]) => !jobEnvRefusal(k, v)));
 }
 
+const ENV_DROPPED_MAX = 20;
+const ENV_DROPPED_NAME_MAX = 64;
+
+function envDropWhy(k, v) {
+  if (!jobEnvRefusal(k, v)) return null;
+  if (JOB_ENV_BASE_KEYS.includes(k) || k.startsWith('CLODEX_')) return 'reserved';
+  return JOB_ENV_NAME_RE.test(k) ? 'bad value' : 'bad name';
+}
+
+function cutBytes(s, max) {
+  if (Buffer.byteLength(s) <= max) return s;
+  let out = '';
+  for (const ch of s) {
+    if (Buffer.byteLength(out + ch) > max) break;
+    out += ch;
+  }
+  return out;
+}
+
+function localPhaseDropped(tr, kind) {
+  const all = Object.entries(phaseEnv(tr, kind)).map(([k, v]) => ({ name: k, why: envDropWhy(k, v) })).filter((d) => d.why);
+  if (!all.length) return null;
+  let cut = all.length > ENV_DROPPED_MAX;
+  const dropped = all.slice(0, ENV_DROPPED_MAX).map((d) => {
+    const name = cutBytes(d.name, ENV_DROPPED_NAME_MAX);
+    if (name !== d.name) cut = true;
+    return { name, why: d.why };
+  });
+  return cut ? { dropped, cut: true } : { dropped };
+}
+
+function envDroppedLine(d) {
+  if (!d || !Array.isArray(d.dropped) || !d.dropped.length) return null;
+  return `team env not applied here: ${d.dropped.map((x) => `${x.name} (${x.why})`).join(', ')}${d.cut ? ', …' : ''}`;
+}
+
+function envDroppedRow(d) {
+  if (!d || !Array.isArray(d.dropped) || !d.dropped.length) return {};
+  return { envDropped: d.dropped, ...(d.cut ? { envDroppedCut: true } : {}) };
+}
+
 function route({ team = null, kind = 'hand', scope = 'full', local = false } = {}) {
   const tr = team && team.testRunner;
   if (!tr || !tr.peer) return { where: 'local', why: 'no test runner' };
@@ -1283,7 +1324,7 @@ function createChannelHost({
     if (d.where === 'local') {
       if (d.override) notifyLead(`${seat}: clodex-run-tests ran here on request ({"local": true}); team ${team.name} routes hand runs to ${team.testRunner.peer}`);
       const env = localPhaseEnv(team.testRunner, 'hand');
-      return say({ run: 'local', why: d.why, override: d.override || null, ...(Object.keys(env).length ? { env } : {}) });
+      return say({ run: 'local', why: d.why, override: d.override || null, ...(Object.keys(env).length ? { env } : {}), ...envDroppedRow(localPhaseDropped(team.testRunner, 'hand')) });
     }
     if (!client) return say({ run: 'remote', runner: d.peer, unknown: 'no suite client on this node' });
     let box;
@@ -1343,4 +1384,4 @@ function createChannelHost({
   };
 }
 
-module.exports = { createSuiteClient, createChannelHost, route, jobEnvRefusal, phaseEnv, localPhaseEnv, PHASE_ENV_KEYS, lastTotals, localHalf, failingNames, agreement, boxVerdict, fallbackOf, FALLBACK_CODES, pickRunner, runnerLoad, pickRecord, consideredOf, waitNote, ledgerPicks, ledgerFiles, LEDGER_FILES_MAX, LEDGER_PATH_MAX, CONSIDERED_MAX, pickLine, poolNote, aloneNote, HAND_QUEUE_MS, HAND_RUN_MS, handSlackMs, handExecSlackMs, HUNG_RE, BUILD_BUDGET_MS, LOST_AFTER_MS };
+module.exports = { createSuiteClient, createChannelHost, route, jobEnvRefusal, phaseEnv, localPhaseEnv, localPhaseDropped, envDroppedLine, envDroppedRow, ENV_DROPPED_MAX, ENV_DROPPED_NAME_MAX, PHASE_ENV_KEYS, lastTotals, localHalf, failingNames, agreement, boxVerdict, fallbackOf, FALLBACK_CODES, pickRunner, runnerLoad, pickRecord, consideredOf, waitNote, ledgerPicks, ledgerFiles, LEDGER_FILES_MAX, LEDGER_PATH_MAX, CONSIDERED_MAX, pickLine, poolNote, aloneNote, HAND_QUEUE_MS, HAND_RUN_MS, handSlackMs, handExecSlackMs, HUNG_RE, BUILD_BUDGET_MS, LOST_AFTER_MS };

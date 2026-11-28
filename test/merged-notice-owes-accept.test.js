@@ -337,6 +337,7 @@ const LOUD = [
   ['unioned', { unioned: 'CHANGELOG.md' }, 'kept BOTH'],
   ['rehomed', { rehomed: { file: 'CHANGELOG.md', lines: 2 } }, 'CHANGELOG.md: a release stamped the section this branch wrote into, so the loop moved its 2 added line(s) under the current ## Unreleased'],
   ['rehome failed', { rehomeFailed: 'amending the merge commit failed: hook said no' }, 'still under a release heading stamped after it was cut — the loop could not move them under ## Unreleased (amending the merge commit failed: hook said no)'],
+  ['team env dropped', { envLine: 'team env not applied here: PATH (reserved)' }, '\nteam env not applied here: PATH (reserved)\n'],
   ['stamp', { ticket: { suiteRemeasured: { first: '1 failing', firstFailing: 'x' } } }, 're-measured'],
   ['accepted by someone else', { closeOut: { ok: true, closedOut: true, already: true, text: 'ticket t1 accepted — lead accepted it while the post-merge suite ran' } }, 'Closed out: lead accepted it'],
   ['changelog owed', { changelog: { known: true, touched: false, present: true } }, 'is OWED'],

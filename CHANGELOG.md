@@ -14,6 +14,7 @@ blocks a release.
 ## Unreleased
 
 - Test runners: `clodexctl get offers` shows a SLOTS column, the number of test jobs a node runs at once, next to BOXES; the two were unrelated and only BOXES was shown.
+- Test runners: a run on the source machine now names the team env variables it did not apply (reserved names such as PATH), in the run's digest and ledger row, instead of dropping them in silence.
 
 ## 5.213.0 — 2026-11-28
 
