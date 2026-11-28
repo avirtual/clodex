@@ -2341,19 +2341,22 @@ test('t2439: info counts a job submitted and awaiting its pack as pending, besid
 
 function lateRm(realFs, fail = null) {
   const removals = [];
+  const waits = [];
   const io = { ...realFs, promises: { ...realFs.promises, rm: (p, o) => new Promise((resolve, reject) => {
     removals.push({ p, land: () => (fail ? Promise.reject(fail) : realFs.promises.rm(p, o)).then(resolve, reject) });
+    for (const w of waits.filter((x) => removals.length >= x.n)) w.resolve();
   }) } };
-  return { io, removals };
+  const arrived = (n) => (removals.length >= n ? Promise.resolve() : new Promise((resolve) => waits.push({ n, resolve })));
+  return { io, removals, arrived };
 }
 
 test('t2470: while a finished job tree removal is pending, info, poll and the output answer and the next job waits for the slot', async (t) => {
-  const { io, removals } = lateRm(resolveFs());
+  const { io, removals, arrived } = lateRm(resolveFs());
   const f = await fixture(t, { wrap: () => noneIsolation({ user: 'suite-test', kill: () => {}, fs: io }) });
   await f.upload(f.body('first'));
   assert.strictEqual((await f.runner.submit(f.body('second'))).state, 'queued');
   await waitState(f.runner, 'first', 'done');
-  await drain();
+  await arrived(1);
   const firstDir = jobPaths(f.work, 'first').dir;
   assert.deepStrictEqual([removals.map((r) => r.p), fs.existsSync(firstDir)], [[firstDir], true], 'ENTER: the first tree removal is pending');
   const i = await f.runner.info();
@@ -2368,18 +2371,18 @@ test('t2470: while a finished job tree removal is pending, info, poll and the ou
   await removals[0].land();
   await waitState(f.runner, 'second', 'done');
   assert.deepStrictEqual([f.calls.map((c) => c.job), fs.existsSync(firstDir)], [['first', 'second'], false]);
-  await drain();
+  await arrived(2);
   await removals[1].land();
 });
 
 test('t2470: a failed job tree removal is logged once with its path, keeps the outcome and does not hold the queue', async (t) => {
-  const { io, removals } = lateRm(resolveFs(), new Error('EACCES: permission denied'));
+  const { io, removals, arrived } = lateRm(resolveFs(), new Error('EACCES: permission denied'));
   const logs = [];
   const f = await fixture(t, { wrap: () => noneIsolation({ user: 'suite-test', kill: () => {}, fs: io }), runnerOver: { log: (m) => logs.push(m) } });
   await f.upload(f.body('first'));
   assert.strictEqual((await f.runner.submit(f.body('second'))).state, 'queued');
   await waitState(f.runner, 'first', 'done');
-  await drain();
+  await arrived(1);
   await removals[0].land().catch(() => {});
   const second = await waitState(f.runner, 'second', 'done');
   const firstDir = jobPaths(f.work, 'first').dir;
@@ -2395,23 +2398,26 @@ test('t2470: a box job tree removal that fails does not hold box jobs', async (t
   await waitState(f.runner, 'b1', 'done');
   await drain();
   assert.deepStrictEqual((await f.runner.info()).box, { state: 'ready', env: BOX_IDENTITY });
-  assert.strictEqual((await waitState(f.runner, 'b2', 'done')).outcome, 'pass');
+  const b2 = await waitState(f.runner, 'b2', 'done');
+  assert.deepStrictEqual([b2.reason, b2.exit], [null, { code: 0, signal: null }]);
 });
 
 test('t2470: retention sets a pruned job store aside at once, removes it in the background, and a boot sweeps a store left mid-removal', async (t) => {
   let clock = 1000;
   const removals = [];
+  let called;
+  const firstCall = new Promise((r) => { called = r; });
   const f = await fixture(t, {
     now: () => (clock += 1),
     limits: { keepCount: 1 },
-    runnerOver: { removeTree: (p) => new Promise((resolve) => { removals.push({ p, resolve }); }) },
+    runnerOver: { removeTree: (p) => new Promise((resolve) => { removals.push({ p, resolve }); called(); }) },
   });
   const store = path.join(f.root, 'suite-runner', 'jobs');
   await f.upload(f.body('old'));
   await waitState(f.runner, 'old', 'done');
   await f.upload(f.body('new'));
   await waitState(f.runner, 'new', 'done');
-  await drain();
+  await firstCall;
   assert.strictEqual(removals.length, 1, 'ENTER: one store removal is pending');
   const gone = removals[0].p;
   assert.deepStrictEqual([path.dirname(gone), path.basename(gone).startsWith('.gone~'), fs.existsSync(gone)], [store, true, true]);
