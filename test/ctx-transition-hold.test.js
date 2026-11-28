@@ -17,15 +17,19 @@ function rig({ root = mkTmpRoot('clx-ctxhold-'), session = {} } = {}) {
   const m = mk({
     REGISTRY_DIR: root, PENDING_DIR,
     fs, path,
+    pathFor: require('../clodex-paths').pathFor, runDirFor: require('../clodex-paths').runDirFor,
     parkDelivery: pend.parkDelivery, drainPending: pend.drainPending,
     hasActivePending: pend.hasActivePending, countPending: pend.countPending,
     isDraftOpen: require('../proxy-util').isDraftOpen,
     shouldHoldDm: require('../proxy-util').shouldHoldDm,
     peerStatusLabel: require('../proxy-util').peerStatusLabel,
+    isHumanPtyInput: require('../proxy-util').isHumanPtyInput,
+    draftChunkSignal: require('../proxy-util').draftChunkSignal,
     parseIntent: require('../intent-scanner').parseIntent,
     looksLikeIntent: require('../intent-scanner').looksLikeIntent,
     shadowIntentKey: require('../intent-scanner').shadowIntentKey,
     execBodyCap: 64 * 1024,
+    stripLevelOf: () => 0,
     getPersistence: () => ({
       list: () => [...persisted.values()],
       get: (n) => persisted.get(n) || null,
@@ -156,13 +160,17 @@ test('reload: mail present at the idle edge stays on disk across the kill and re
     };
     let injected = null;
     h.m._injectReloadHandoff = (sess, text, _t, _why, gen) => { injected = { sess, text, gen }; };
-    for (const k of ['_dropRosterSent', '_reattachAction']) h.m[k] = () => null;
+    for (const k of ['_dropRosterSent', '_reattachAction', '_preserveAcrossRestart']) h.m[k] = () => null;
+    h.m.resumeCwdOf = () => '/tmp';
+    const errs = [];
+    h.m._sendRespawnFailed = (_n, _e, err) => errs.push(err);
     h.m._handleContextIntent(old, 'reload', 'next steps');
     assert.strictEqual(h.m._injectHoldReason(old), 'reload-window');
     h.m._drainPendingAtIdle(old);
     assert.deepStrictEqual(h.written, [], 'the idle-edge drain types nothing into the CLI about to die');
     await new Promise((r) => setImmediate(r));
     await ticks();
+    assert.deepStrictEqual(errs, []);
     assert.ok(fresh && injected && injected.sess === fresh, 'ENTER: the seat respawned and the handoff was routed');
     assert.strictEqual(h.onDisk(), 1, 'the mail is still on disk after the kill');
     h.m._ctxHoldOnBootReady(fresh);
