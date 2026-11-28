@@ -14,6 +14,90 @@ const { pathFor, runDirFor } = require('../clodex-paths');
 const { mkTmpRoot } = require('./lib/tmp-roots');
 
 const HOOK_SPAWN = { timeout: 30000, killSignal: 'SIGKILL' };
+const HOOK_WATCHDOG_MS = 20000;
+const STALL_REPORT_MAX = 8192;
+
+function processTree(rootPid) {
+  const ps = cp.spawnSync('ps', ['-A', '-o', 'pid=,ppid=,stat=,etime=,command='], { encoding: 'utf8', timeout: 5000 });
+  const rows = String(ps.stdout || '').split('\n').map((l) => l.trim().match(/^(\d+)\s+(\d+)\s+(\S+)\s+(\S+)\s+(.*)$/)).filter(Boolean)
+    .map((m) => ({ pid: Number(m[1]), ppid: Number(m[2]), stat: m[3], etime: m[4], command: m[5].slice(0, 200) }));
+  const tree = [];
+  const queue = [rootPid];
+  while (queue.length) {
+    const pid = queue.shift();
+    const row = rows.find((r) => r.pid === pid);
+    if (row) tree.push(row);
+    for (const r of rows) if (r.ppid === pid) queue.push(r.pid);
+  }
+  return tree;
+}
+
+function stackOf(pid) {
+  if (process.platform === 'darwin') {
+    const r = cp.spawnSync('sample', [String(pid), '1', '-file', '/dev/stdout'], { encoding: 'utf8', timeout: 10000 });
+    const text = String(r.stdout || '');
+    const at = text.indexOf('Call graph:');
+    return at >= 0 ? text.slice(at) : text;
+  }
+  for (const f of ['stack', 'status']) {
+    try { return fs.readFileSync(`/proc/${pid}/${f}`, 'utf8'); } catch {}
+  }
+  return '';
+}
+
+function stallReport(state, tree) {
+  const head = [
+    `hook spawn still running after ${state.watchdogMs} ms`,
+    `stdin: ${state.written} of ${state.total} bytes written, ended: ${state.ended}${state.stdinError ? `, error: ${state.stdinError}` : ''}`,
+    'process tree (pid ppid stat etime command):',
+    ...tree.map((p) => `  ${p.pid} ${p.ppid} ${p.stat} ${p.etime} ${p.command}`),
+  ].join('\n').slice(0, STALL_REPORT_MAX / 2);
+  const each = Math.floor((STALL_REPORT_MAX - head.length) / Math.max(1, tree.length)) - 40;
+  const stacks = tree.map((p) => `--- stack of ${p.pid}:\n${String(p.stack || '').slice(0, Math.max(0, each))}`);
+  return [head, ...stacks].join('\n').slice(0, STALL_REPORT_MAX);
+}
+
+function spawnWatched(args, input, { watchdogMs = HOOK_WATCHDOG_MS } = {}) {
+  const child = cp.spawn('bash', args, { ...HOOK_SPAWN, stdio: ['pipe', 'pipe', 'pipe'] });
+  const buf = Buffer.from(input, 'utf8');
+  const state = { watchdogMs, written: 0, total: buf.length, ended: false, stdinError: null, tree: null };
+  const out = [];
+  const err = [];
+  child.stdout.on('data', (d) => out.push(d));
+  child.stderr.on('data', (d) => err.push(d));
+  child.stdin.on('error', (e) => { state.stdinError = e.code || e.message; });
+  let report = null;
+  const fire = () => {
+    if (report != null) return;
+    const tree = processTree(child.pid);
+    for (const p of tree) p.stack = stackOf(p.pid);
+    state.tree = tree;
+    report = stallReport(state, tree);
+    for (const p of tree) { try { process.kill(p.pid, 'SIGKILL'); } catch {} }
+  };
+  const done = new Promise((resolve, reject) => {
+    const timer = setTimeout(fire, watchdogMs);
+    child.on('error', (e) => { clearTimeout(timer); reject(e); });
+    child.on('close', (status, signal) => {
+      clearTimeout(timer);
+      if (report != null) reject(new Error(report));
+      else resolve({ status, signal, stdout: Buffer.concat(out).toString('utf8'), stderr: Buffer.concat(err).toString('utf8') });
+    });
+  });
+  const CHUNK = 65536;
+  let off = 0;
+  const pump = () => {
+    while (off < buf.length) {
+      const chunk = buf.subarray(off, off + CHUNK);
+      off += chunk.length;
+      const more = child.stdin.write(chunk, (e) => { if (!e) state.written += chunk.length; });
+      if (!more) { child.stdin.once('drain', pump); return; }
+    }
+    child.stdin.end(() => { state.ended = true; });
+  };
+  pump();
+  return { child, state, done, fire };
+}
 function tmp() { return mkTmpRoot('clodex-hooks-'); }
 function mk(REGISTRY_DIR) {
   return createCliHooks({
@@ -1692,15 +1776,14 @@ test('pending drain: the hook freshens an aged orphan claim before rehoming it',
   assert.ok(ages[0] < require('../pending-store').CLAIM_STALE_MS, `orphan was ${ages[0]}ms old at rename`);
 });
 
-test('pending drain: a hook input larger than ARG_MAX still drains the parked message', () => {
+test('pending drain: a hook input larger than ARG_MAX still drains the parked message', async () => {
   const REGISTRY_DIR = tmp();
   const h = mk(REGISTRY_DIR);
   h.setupClaudeHook('big');
   parkFor(REGISTRY_DIR, 'big', { 'm0.json': { text: 'hello parked' } });
   const input = JSON.stringify({ hook_event_name: 'PostToolUse', tool_name: 'Write', tool_input: { content: 'x'.repeat(2 * 1024 * 1024) } });
   assert.ok(input.length > 1048576);
-  const r = cp.spawnSync('bash', [pathFor(REGISTRY_DIR, 'big', 'pendingScript')], { ...HOOK_SPAWN, input, encoding: 'utf-8' });
-  assert.ifError(r.error);
+  const r = await spawnWatched([pathFor(REGISTRY_DIR, 'big', 'pendingScript')], input).done;
   assert.strictEqual(r.status, 0);
   assert.match(JSON.parse(r.stdout).hookSpecificOutput.additionalContext, /hello parked/);
 });
@@ -1792,9 +1875,40 @@ test('every bash hook spawn in this file carries HOOK_SPAWN, so a stalled child 
   const src = fs.readFileSync(__filename, 'utf8');
   const calls = src.match(/(?:spawn|spawnSync|execFileSync)\('bash'/g) || [];
   const guarded = src.match(/(?:spawn|spawnSync|execFileSync)\('bash',[^{]*\{\s*\.\.\.HOOK_SPAWN\b/g) || [];
-  assert.strictEqual(calls.length, 25);
+  assert.strictEqual(calls.length, 24);
   assert.strictEqual(guarded.length, calls.length);
   assert.deepStrictEqual(HOOK_SPAWN, { timeout: 30000, killSignal: 'SIGKILL' });
+});
+
+function goneOrZombie(pid) {
+  try { process.kill(pid, 0); } catch (e) { return e.code === 'ESRCH'; }
+  const ps = cp.spawnSync('ps', ['-p', String(pid), '-o', 'stat='], { encoding: 'utf8', timeout: 5000 });
+  return !String(ps.stdout).trim() || String(ps.stdout).trim().startsWith('Z');
+}
+
+test('t2473: the large-stdin watchdog records the process tree, its stacks and the stdin byte count, then kills the whole tree', async () => {
+  const dir = tmp();
+  const script = path.join(dir, 'stuck.sh');
+  fs.writeFileSync(script, '#!/bin/bash\nsleep 30 &\necho ready >&2\nwait\n');
+  const total = 1024 * 1024;
+  const w = spawnWatched([script], 'x'.repeat(total));
+  const rejected = w.done.then(() => null, (e) => e);
+  await new Promise((resolve) => {
+    w.child.stderr.on('data', (d) => { if (String(d).includes('ready')) resolve(); });
+    rejected.then(resolve);
+  });
+  w.fire();
+  const e = await rejected;
+  assert.ok(e instanceof Error, 'ENTER: the watchdog failed the spawn');
+  const msg = e.message;
+  assert.ok(msg.length <= STALL_REPORT_MAX);
+  assert.match(msg, new RegExp(`stdin: \\d+ of ${total} bytes written, ended: false`));
+  const tree = w.state.tree;
+  assert.deepStrictEqual([tree[0].pid, tree.some((p) => / sleep 30$|^sleep 30$/.test(p.command))], [w.child.pid, true]);
+  for (const p of tree) assert.match(msg, new RegExp(`^  ${p.pid} ${p.ppid} `, 'm'));
+  if (process.platform === 'darwin') assert.match(msg, /--- stack of \d+:\nCall graph:/);
+  assert.ok(w.state.written < total);
+  for (const p of tree) assert.ok(goneOrZombie(p.pid), `pid ${p.pid} (${p.command}) survived the watchdog`);
 });
 
 test('pending drain (hook): each handed-over entry spools one delivered.jsonl line, in claim order', () => {
@@ -2381,7 +2495,7 @@ test('clodent turn hooks: the clodent registration is the claude one plus the tu
   assert.strictEqual(fs.existsSync(p('cc1')('turnScript')), false);
 });
 
-test('clodent turn hooks: the turn script is byte-pinned, swallows stdin, prints nothing and appends one turn_hook attn line per event', () => {
+test('clodent turn hooks: the turn script is byte-pinned, swallows stdin, prints nothing and appends one turn_hook attn line per event', async () => {
   const REGISTRY_DIR = tmp();
   const h = mk(REGISTRY_DIR);
   h.setupClaudeHook('cl2', ...CLODENT_HOOK_ARGS);
@@ -2393,8 +2507,9 @@ printf '{"turn_hook":"%s"}\\n' "$1" >> "${attn}" 2>/dev/null || true
 exit 0
 `);
   for (const ev of ['UserPromptSubmit', 'Stop', 'SessionStart']) {
-    const out = cp.execFileSync('bash', [scriptPath, ev], { ...HOOK_SPAWN, input: JSON.stringify({ hook_event_name: ev, prompt: 'x'.repeat(70000) }), encoding: 'utf-8' });
-    assert.strictEqual(out, '');
+    const r = await spawnWatched([scriptPath, ev], JSON.stringify({ hook_event_name: ev, prompt: 'x'.repeat(70000) })).done;
+    assert.strictEqual(r.status, 0, r.stderr);
+    assert.strictEqual(r.stdout, '');
   }
   const lines = fs.readFileSync(attn, 'utf-8').split('\n').filter(Boolean).map((l) => JSON.parse(l));
   assert.deepStrictEqual(lines, [{ turn_hook: 'UserPromptSubmit' }, { turn_hook: 'Stop' }, { turn_hook: 'SessionStart' }]);
