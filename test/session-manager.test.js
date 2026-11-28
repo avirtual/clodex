@@ -1702,7 +1702,7 @@ test('t2492: reboot: a 30m drop names the blockers in the seat line and the broa
   assert.strictEqual(cancelled.broadcasts.filter((b) => b.type === 'reboot').pop().body, 'reboot CANCELLED (operator)');
 });
 
-test('t2492: reboot: the 10-minute progress line reaches the requester as a passive park, never a waking inject', async () => {
+test('t2492: reboot: _rebootProgress parks the 10-minute progress line passively, never a waking inject', async () => {
   const { m, relaunches, injected, parks } = mkReboot({ intents: ['reboot'] });
   await m._handleIntent('a', { type: 'reboot', body: 'nightly' });
   assert.strictEqual(typeof relaunches[0].onProgress, 'function', 'ENTER: the host is handed a progress callback');
@@ -1726,7 +1726,7 @@ function mkWaitWho(state) {
   return { m, injected };
 }
 
-test('t2492: who: the requester sees every blocker, a seat on another team its own team plus a count', async () => {
+test('t2492: who (_restartWaitWhoLine): the requester sees every blocker, a seat on another team its own team plus a count', async () => {
   const armedAt = Date.UTC(2026, 10, 28, 14, 20);
   const st = {
     armedAt, at: armedAt + 5 * 60_000, requesters: ['avh-ride-lead'],
