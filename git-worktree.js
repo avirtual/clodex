@@ -161,6 +161,7 @@ async function createWorktree(cwd, branch, opts = null) {
   // tracking ref (origin/main), a tag, or a SHA are all fine.
   let baseRef = null;
   let baseSha = null;
+  let upstreamRef = null;
   if (!exists) {
     const wantBase = base && String(base).trim();
     baseRef = wantBase || (await defaultBranch(repo)) || 'HEAD';
@@ -168,6 +169,14 @@ async function createWorktree(cwd, branch, opts = null) {
     baseSha = sha.ok ? (sha.stdout.trim() || null) : null;
     if (baseRef !== 'HEAD' && !baseSha) {
       return { ok: false, error: `Base ref not found: ${baseRef}` };
+    }
+    if (baseSha && baseRef !== 'HEAD') {
+      const full = await git(repo, ['rev-parse', '--symbolic-full-name', baseRef]);
+      const fullRef = full.ok ? full.stdout.trim() : '';
+      if (fullRef.startsWith('refs/remotes/')) {
+        const setup = await git(repo, ['config', '--get', 'branch.autoSetupMerge']);
+        if (!(setup.ok && setup.stdout.trim().toLowerCase() === 'false')) upstreamRef = fullRef;
+      }
     }
   }
 
@@ -188,6 +197,10 @@ async function createWorktree(cwd, branch, opts = null) {
     : ['worktree', 'add', '-b', br, dest, baseSha || baseRef];
   const r = await git(repo, args);
   if (!r.ok) return { ok: false, error: (r.stderr || 'git worktree add failed').trim() };
+  if (upstreamRef) {
+    const up = await git(repo, ['branch', `--set-upstream-to=${upstreamRef}`, br]);
+    if (!up.ok) console.warn(`[git-worktree] ${br}: could not set upstream ${upstreamRef}: ${(up.stderr || '').trim()}`);
+  }
   return { ok: true, path: dest, branch: br, base: exists ? null : baseRef, baseSha, repo };
 }
 
