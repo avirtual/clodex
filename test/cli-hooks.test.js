@@ -58,7 +58,7 @@ function stallReport(state, tree) {
 }
 
 function spawnWatched(args, input, { watchdogMs = HOOK_WATCHDOG_MS } = {}) {
-  const child = cp.spawn('bash', args, { ...HOOK_SPAWN, stdio: ['pipe', 'pipe', 'pipe'] });
+  const child = cp.spawn('bash', args, { ...HOOK_SPAWN, detached: true, stdio: ['pipe', 'pipe', 'pipe'] });
   const buf = Buffer.from(input, 'utf8');
   const state = { watchdogMs, written: 0, total: buf.length, ended: false, stdinError: null, tree: null };
   const out = [];
@@ -74,6 +74,7 @@ function spawnWatched(args, input, { watchdogMs = HOOK_WATCHDOG_MS } = {}) {
     state.tree = tree;
     report = stallReport(state, tree);
     for (const p of tree) { try { process.kill(p.pid, 'SIGKILL'); } catch {} }
+    try { process.kill(-child.pid, 'SIGKILL'); } catch {}
   };
   const done = new Promise((resolve, reject) => {
     const timer = setTimeout(fire, watchdogMs);
@@ -96,7 +97,7 @@ function spawnWatched(args, input, { watchdogMs = HOOK_WATCHDOG_MS } = {}) {
     child.stdin.end(() => { state.ended = true; });
   };
   pump();
-  return { child, state, done, fire };
+  return { child, state, done };
 }
 function tmp() { return mkTmpRoot('clodex-hooks-'); }
 function mk(REGISTRY_DIR) {
@@ -1889,18 +1890,13 @@ function goneOrZombie(pid) {
 test('t2473: the large-stdin watchdog records the process tree, its stacks and the stdin byte count, then kills the whole tree', async () => {
   const dir = tmp();
   const script = path.join(dir, 'stuck.sh');
-  fs.writeFileSync(script, '#!/bin/bash\nsleep 30 &\necho ready >&2\nwait\n');
+  fs.writeFileSync(script, '#!/bin/bash\nsleep 30 &\nwait\n');
   const total = 1024 * 1024;
-  const w = spawnWatched([script], 'x'.repeat(total));
-  const rejected = w.done.then(() => null, (e) => e);
-  await new Promise((resolve) => {
-    w.child.stderr.on('data', (d) => { if (String(d).includes('ready')) resolve(); });
-    rejected.then(resolve);
-  });
-  w.fire();
-  const e = await rejected;
+  const w = spawnWatched([script], 'x'.repeat(total), { watchdogMs: 500 });
+  const e = await w.done.then(() => null, (err) => err);
   assert.ok(e instanceof Error, 'ENTER: the watchdog failed the spawn');
   const msg = e.message;
+  assert.match(msg, /^hook spawn still running after 500 ms$/m);
   assert.ok(msg.length <= STALL_REPORT_MAX);
   assert.match(msg, new RegExp(`stdin: \\d+ of ${total} bytes written, ended: false`));
   const tree = w.state.tree;
