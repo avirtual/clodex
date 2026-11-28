@@ -23,6 +23,7 @@ const { idleClearAfterMs, IDLE_CLEAR_MIN_MS } = require('./assistant-sleep');
 const { localHalf, failingNames } = require('./suite-client');
 const { RUNNER_ENV_TOKENS } = require('./intent-registry');
 const { OUTPUT_UNREAD_NOTICE, phaseEnv, localPhaseEnv, localPhaseDropped, envDroppedLine, envDroppedRow, boxVerdict, fallbackOf, FALLBACK_CODES, pickRunner, runnerLoad, pickRecord, consideredOf, pickLine, aloneNote, BUILD_BUDGET_MS, HUNG_RE, HAND_QUEUE_MS } = require('./suite-client');
+const { cleanCustom, customName } = require('./box-args');
 const {
   matchSeatRole, nameRole, defaultLeadSeat, ROLE_RE, RESERVED_ROLE_KEYS, STOCK_ROLE_DEFS,
   DEFAULT_ROLE_DISPATCH, TRUNK_HEAD, normalizeTestRoots, TEST_ROOTS_MAX, effectiveHandCap, DONE_VALUES, normalizeDone, NAME_RE: NODE_NAME_RE, TEST_RUNNER_HANDS, TEST_RUNNER_GATE, TEST_RUNNER_FALLBACK, TEST_RUNNER_WIRE_PUSH: WIRE_PUSH, TEST_RUNNER_POOL_MAX,
@@ -7176,7 +7177,8 @@ function createTicketMethods(deps, shared) {
         return ` (home, by ${flat(suite.bypass.by)}: ${flat(suite.bypass.reason)})`;
       }
       const alone = suite.decidedBy === 'box' ? aloneNote(suite) : null;
-      if (suite.decidedBy === 'box') return `${suite.rerouted ? ` (box, rerouted from ${suite.rerouted.from} to ${suite.rerouted.to})` : ' (box)'}${alone ? ` ${alone}` : ''}${suite.box && suite.box.output === 'unavailable' ? ` — ${OUTPUT_UNREAD_NOTICE}` : ''}`;
+      const custom = suite.decidedBy === 'box' && suite.box ? customName(cleanCustom(suite.box.custom)) : null;
+      if (suite.decidedBy === 'box') return `${suite.rerouted ? ` (box, rerouted from ${suite.rerouted.from} to ${suite.rerouted.to})` : ' (box)'}${custom ? ` on an owner-customised box (${custom})` : ''}${alone ? ` ${alone}` : ''}${suite.box && suite.box.output === 'unavailable' ? ` — ${OUTPUT_UNREAD_NOTICE}` : ''}`;
       return ` (home, box unavailable: ${suite.fallback})`;
     },
 
@@ -7423,6 +7425,7 @@ function createTicketMethods(deps, shared) {
           definitionHash: stamped.definitionHash || null, image: stamped.imageId || null,
           fallbackCode: box.decided ? null : box.fallbackCode ?? null, fallbackClass: box.decided ? null : box.fallbackClass ?? null,
         };
+        if (box.decided && cleanCustom(stamped.custom)) out.box.custom = cleanCustom(stamped.custom);
         if (box.out && box.out.rerouted) Object.assign(out, { rerouted: box.out.rerouted, attempts: box.out.attempts });
         if (box.decided && rec && rec.exclusive) out.exclusive = rec.exclusive;
         this._boxRow(team, ticket, box, boxed ? null : localHalf({ ...res, durationMs: out.durationMs }));

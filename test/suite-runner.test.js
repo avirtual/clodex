@@ -2538,3 +2538,79 @@ test('t2470: retention sets a pruned job store aside at once, removes it in the 
   assert.strictEqual(fs.existsSync(gone), false);
   removals[0].resolve();
 });
+
+const LIST_A = ['--device=/dev/dri', '--env=SECRET_TOKEN=zzz'];
+const LIST_B = ['--group-add=993'];
+const jobArgOf = (id) => (c) => c.cmd === 'docker' && c.args.includes(`clodex.suite.job=${id}`);
+const ownOf = (c) => c.args.slice(c.args.indexOf('SHELL=/bin/sh') + 1, c.args.indexOf('-c') - 1);
+
+test('t2483: a job queued under list A runs with A after the setting changes to B, and its stamp says A', async (t) => {
+  let blocker = null;
+  const f = await fixture(t, {
+    runnerOver: { box: labelledBox({ boxArgs: LIST_A, boxArgsLabel: 'card-a' }).box },
+    onSpawn: (c) => {
+      if (jobArgOf('blocker')(c)) { blocker = c.child; return; }
+      c.child.stdout.write('TOTALS: 1 pass, 0 fail, 1 tests\n');
+      c.child.finish(0);
+    },
+  });
+  assert.strictEqual((await f.upload(f.body('blocker', 'hand', { isolation: 'container' }))).ok, true);
+  await waitState(f.runner, 'blocker', 'running');
+  assert.strictEqual((await f.runner.submit(f.body('q', 'hand', { isolation: 'container', boxArgs: LIST_B }))).state, 'queued');
+  const queued = (await f.runner.poll(['q'])).jobs[0];
+  assert.deepStrictEqual(queued.env.box.custom, { fingerprint: 'db6e81fe4f40', label: 'card-a' }, 'ENTER: admitted under A');
+  assert.ok(!JSON.stringify(queued).includes('SECRET_TOKEN'), 'the status answer carries no raw option');
+  assert.ok(!JSON.stringify(await f.runner.info()).includes('SECRET_TOKEN'), 'the info answer carries no raw option');
+  f.runner.close();
+  const next = f.make({ box: labelledBox({ boxArgs: LIST_B, boxArgsLabel: 'card-b' }).box });
+  t.after(() => next.close());
+  next.start();
+  const done = await waitState(next, 'q', 'done');
+  assert.deepStrictEqual([done.reason, done.env.box.custom], [null, { fingerprint: 'db6e81fe4f40', label: 'card-a' }]);
+  assert.deepStrictEqual(f.calls.filter(jobArgOf('q')).map(ownOf), [LIST_A]);
+  assert.ok(!JSON.stringify(done).includes('SECRET_TOKEN'), 'the finished status carries no raw option');
+});
+
+test('t2483: a submitted body carrying boxArgs is ignored: a runner with no list runs the plain line', async (t) => {
+  const f = await fixture(t, { runnerOver: { box: labelledBox().box } });
+  assert.strictEqual((await f.upload(f.body('plain', 'hand', { isolation: 'container', boxArgs: LIST_B }))).ok, true);
+  const done = await waitState(f.runner, 'plain', 'done');
+  assert.deepStrictEqual([done.reason, 'custom' in done.env.box], [null, false]);
+  assert.deepStrictEqual(f.calls.filter(jobArgOf('plain')).map(ownOf), [[]]);
+});
+
+for (const [phase, extra] of [['test', {}], ['setup', { setup: { run: 'npm ci', key: ['package.json'], paths: ['node_modules'] } }]]) {
+  test(`t2483: docker run exiting 125 under owner box options at the ${phase} exec ends box-args-failed with the label only; Docker's stderr goes to the runner log`, async (t) => {
+    const logged = [];
+    const f = await fixture(t, {
+      runnerOver: { box: labelledBox({ boxArgs: LIST_A, boxArgsLabel: 'card-a' }).box, log: (m) => logged.push(m) },
+      onSpawn: (c) => {
+        c.child.stderr.write('docker: Error response from daemon: error gathering device information while adding custom device "--env=SECRET_TOKEN=zzz"\n');
+        c.child.finish(125);
+      },
+    });
+    assert.strictEqual((await f.upload(f.body('j', 'hand', { isolation: 'container', ...extra }))).ok, true);
+    const done = await waitState(f.runner, 'j', 'done');
+    assert.deepStrictEqual([done.reason, done.exit], ['box-args-failed', { code: 125, signal: null }]);
+    const stderr = (await f.runner.output('j', { stream: 'stderr' })).text;
+    assert.strictEqual(stderr, 'suite-runner: the runner owner\'s box options failed to start the box (card-a)\n');
+    assert.ok(!JSON.stringify(done).includes('SECRET_TOKEN'), 'the status answer carries no raw option');
+    assert.ok(logged.some((m) => m.includes('j: docker run exited 125 under the owner box options: docker: Error response from daemon')), logged.join('\n'));
+  });
+}
+
+test('t2483: a suite that starts and exits non-zero under owner box options is an ordinary test result; a 125 without a list stays box-failed', async (t) => {
+  const f = await fixture(t, {
+    runnerOver: { box: labelledBox({ boxArgs: LIST_A }).box },
+    onSpawn: (c) => {
+      c.child.stdout.write('TOTALS: 0 pass, 1 fail, 1 tests\n');
+      c.child.finish(1);
+    },
+  });
+  assert.strictEqual((await f.upload(f.body('red', 'hand', { isolation: 'container' }))).ok, true);
+  const red = await waitState(f.runner, 'red', 'done');
+  assert.deepStrictEqual([red.reason, red.exit, red.record.outcome], [null, { code: 1, signal: null }, 'fail']);
+  const g2 = await fixture(t, { runnerOver: { box: labelledBox().box }, onSpawn: (c) => c.child.finish(125) });
+  assert.strictEqual((await g2.upload(g2.body('plain125', 'hand', { isolation: 'container' }))).ok, true);
+  assert.strictEqual((await waitState(g2.runner, 'plain125', 'done')).reason, 'box-failed');
+});

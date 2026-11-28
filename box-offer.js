@@ -1,5 +1,7 @@
 'use strict';
 
+const { customField } = require('./box-args');
+
 const NODE_NAME_RE = /^(?!\.+$)[a-zA-Z0-9._-]{1,64}$/;
 const HHMM_RE = /^([01]\d|2[0-3]):([0-5]\d)$/;
 const PLATFORM_RE = /^[a-z0-9]{1,16}\/[a-z0-9_]{1,16}$/;
@@ -28,6 +30,16 @@ const onlyKeys = (obj, allowed) => Object.keys(obj).every((k) => allowed.include
 const isBoxCount = (n) => Number.isInteger(n) && n >= 1 && n <= MAX_BOXES;
 const isSlotCount = (n) => Number.isInteger(n) && n >= 1 && n <= MAX_SLOTS;
 const slotsField = (n) => (isSlotCount(n) ? { slots: n } : {});
+
+function engineCustom(getEngine) {
+  if (typeof getEngine !== 'function') return null;
+  try {
+    const engine = getEngine();
+    return engine && typeof engine.boxCustom === 'function' ? engine.boxCustom() : null;
+  } catch {
+    return null;
+  }
+}
 
 function engineSlots(getEngine) {
   if (typeof getEngine !== 'function') return undefined;
@@ -176,13 +188,14 @@ function runConfirmed(offer, confirm) {
   return want.length === got.length && want.every((n, i) => n === got[i]);
 }
 
-function offerEntry(offer, facts, now, { run = false, slots } = {}) {
+function offerEntry(offer, facts, now, { run = false, slots, custom } = {}) {
   const clean = sanitizeBoxOffer(offer);
   if (!clean || !clean.enabled) return null;
   return {
     scope: clean.scope === RUN && run === true ? RUN : DISCOVERY,
     boxes: clean.boxes,
     ...slotsField(slots),
+    ...customField(custom),
     open: scheduleOpen(clean, now instanceof Date ? now : new Date()),
     kinds: [...PRODUCED_KINDS],
     facts: produceFacts(typeof facts === 'function' ? facts() : facts),
@@ -235,13 +248,13 @@ function sanitizeWireOffers(raw) {
   const own = sanitizeWireEntry(raw.own);
   if (!own) return null;
   if (own.facts.runtime && isPlainObject(raw.capacity)) own.facts.runtime = { ...own.facts.runtime, ...runtimeCapacity(raw.capacity) };
-  return { own: { ...own, ...slotsField(raw.slots) } };
+  return { own: { ...own, ...slotsField(raw.slots), ...customField(raw.custom) } };
 }
 
 function wireOffers(own) {
   if (!isPlainObject(own)) return { own: own || null };
-  const { slots, ...entry } = own;
-  const out = { own: entry, ...slotsField(slots) };
+  const { slots, custom, ...entry } = own;
+  const out = { own: entry, ...slotsField(slots), ...customField(custom) };
   if (!isPlainObject(entry.facts) || !isPlainObject(entry.facts.runtime)) return out;
   const { platforms, ...rest } = entry.facts.runtime;
   const capacity = runtimeCapacity(rest);
@@ -276,6 +289,7 @@ module.exports = {
   MAX_BOXES,
   MAX_SLOTS,
   engineSlots,
+  engineCustom,
   sanitizeBoxOffer,
   offerFromEnv,
   scheduleOpen,

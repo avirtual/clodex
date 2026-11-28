@@ -6,6 +6,7 @@ const crypto = require('crypto');
 const childProcess = require('child_process');
 const { resolveFs } = require('./resolve-fs');
 const { baseArgOf } = require('./team-box');
+const { boxArgsRefusal, boxCustom } = require('./box-args');
 
 const fs = resolveFs();
 
@@ -119,7 +120,9 @@ function boxPlatform(identity) {
   return `linux/${identity.arch === 'x64' ? 'amd64' : identity.arch}`;
 }
 
-function runArgv({ image, runnerKey, n, uid, gid, jobDir, job, argv, env, shares = [] }) {
+function runArgv({ image, runnerKey, n, uid, gid, jobDir, job, argv, env, shares = [], boxArgs = [] }) {
+  const ownWhy = boxArgsRefusal(boxArgs);
+  if (ownWhy) throw new Error(ownWhy);
   const shareMounts = [];
   for (const s of shares) {
     if (!SHARE_NAME_RE.test(s.name) || String(s.src).includes(',')) throw new Error(`share not mountable: ${JSON.stringify(s.name)}`);
@@ -147,6 +150,7 @@ function runArgv({ image, runnerKey, n, uid, gid, jobDir, job, argv, env, shares
     ...shareMounts,
     ...mounts,
     ...envArgs,
+    ...boxArgs,
     image,
     '-c', DEADMAN,
     'sh', ...argv,
@@ -178,7 +182,7 @@ function listProcs() {
   });
 }
 
-function boxIdentity({ imageId, arch, cpus, definitionHash = null, rev = null, env = process.env, platform = process.platform, hostArch = process.arch }) {
+function boxIdentity({ imageId, arch, cpus, definitionHash = null, rev = null, env = process.env, platform = process.platform, hostArch = process.arch, custom = null }) {
   const boxArch = arch === 'amd64' ? 'x64' : arch;
   let clodex = null;
   try { clodex = require('./package.json').version; } catch {}
@@ -197,10 +201,21 @@ function boxIdentity({ imageId, arch, cpus, definitionHash = null, rev = null, e
     tz: 'UTC',
     lang: 'C.UTF-8',
     isolation: 'container',
-    box: { imageId, definitionHash, rev },
+    box: { imageId, definitionHash, rev, ...(custom ? { custom } : {}) },
     host: { platform, arch: hostArch },
-    envKey: crypto.createHash('sha256').update(JSON.stringify(['container', imageId, 'linux', boxArch, cpus, 'UTC', 'C.UTF-8'])).digest('hex').slice(0, 12),
+    envKey: boxEnvKey(imageId, boxArch, cpus, custom),
   };
+}
+
+function boxEnvKey(imageId, boxArch, cpus, custom) {
+  return crypto.createHash('sha256').update(JSON.stringify(['container', imageId, 'linux', boxArch, cpus, 'UTC', 'C.UTF-8', ...(custom ? [custom.fingerprint] : [])])).digest('hex').slice(0, 12);
+}
+
+function restamp(env, custom) {
+  if (!env || !env.box) return env;
+  const box = { ...env.box };
+  delete box.custom;
+  return { ...env, box: { ...box, ...(custom ? { custom: { ...custom } } : {}) }, envKey: boxEnvKey(env.box.imageId, env.arch, env.cpus, custom) };
 }
 
 function boxIsolation({
@@ -208,8 +223,13 @@ function boxIsolation({
   uid = process.getuid(), gid = process.getgid(), now = Date.now, env = process.env,
   platform = process.platform, arch = process.arch, timers = DEFAULT_TIMERS,
   procs = listProcs, statfs = (dir) => fs.statfsSync(dir), version = require('./package.json').version,
+  boxArgs = [], boxArgsLabel = null,
 }) {
   const runnerKey = runnerKeyOf(stateDir);
+  const ownWhy = boxArgsRefusal(boxArgs);
+  if (ownWhy) throw new Error(`the test runner box options are invalid: ${ownWhy}`);
+  const ownArgs = [...boxArgs];
+  const custom = boxCustom(ownArgs, boxArgsLabel);
   let counter = 0;
   let cached = null;
 
@@ -274,7 +294,7 @@ function boxIsolation({
     if (!i.ok || imageId !== image) return { state: 'unavailable', why: `image ${id12} is not present on this runner` };
     if (d.os !== 'linux') return { state: 'unavailable', why: `docker daemon OS is ${d.os}, not linux` };
     if (imageOs !== 'linux' || imageArch !== d.arch) return { state: 'unavailable', why: `image ${id12} is ${imageOs}/${imageArch}, the daemon is linux/${d.arch}` };
-    return { state: 'ready', env: boxIdentity({ imageId: image, arch: imageArch, cpus: d.cpus, env, platform, hostArch: arch }) };
+    return { state: 'ready', env: boxIdentity({ imageId: image, arch: imageArch, cpus: d.cpus, env, platform, hostArch: arch, custom }) };
   }
 
   async function lookNamed({ definitionHash, rev = null }) {
@@ -303,7 +323,7 @@ function boxIsolation({
     for (const id of parents) fit.delete(id);
     if (!fit.size) return { state: 'no-image', why: `no image for box ${hash12} on this runner for linux/${d.arch}` };
     if (fit.size > 1) return { state: 'ambiguous', why: `more than one image carries box ${hash12} on this runner: ${[...fit].join(', ')}` };
-    return { state: 'ready', env: boxIdentity({ imageId: [...fit][0], arch: d.arch, cpus: d.cpus, definitionHash, rev, env, platform, hostArch: arch }) };
+    return { state: 'ready', env: boxIdentity({ imageId: [...fit][0], arch: d.arch, cpus: d.cpus, definitionHash, rev, env, platform, hostArch: arch, custom }) };
   }
 
   async function confirmNoClient(token, pid) {
@@ -390,6 +410,8 @@ function boxIsolation({
     detach: true,
     runnerKey,
     labelsOnly: !image,
+    boxArgs: () => [...ownArgs],
+    custom: () => (custom ? { ...custom } : null),
     clear,
     async probe(want = null) {
       if (want) return lookNamed(want);
@@ -412,7 +434,7 @@ function boxIsolation({
     spawn({ jobDir, argv, env: jobEnv, spawn, job, shares = [] }) {
       counter += 1;
       const stamped = job.identity && job.identity.box ? job.identity.box.imageId : null;
-      const full = runArgv({ image: stamped || image, runnerKey, n: counter, uid, gid, jobDir, job, argv, env: jobEnv, shares });
+      const full = runArgv({ image: stamped || image, runnerKey, n: counter, uid, gid, jobDir, job, argv, env: jobEnv, shares, boxArgs: Array.isArray(job.boxArgs) ? job.boxArgs : [] });
       return spawn(full[0], full.slice(1), { detached: true, stdio: ['pipe', 'pipe', 'pipe'] });
     },
     async kill(child, jobDir, job) {
@@ -448,4 +470,4 @@ function boxIsolation({
   };
 }
 
-module.exports = { createDocker, boxIsolation, runArgv, buildArgv, boxIdentity, runnerKeyOf, listProcs, BOX_ENV, DEADMAN, BUILD_LABEL };
+module.exports = { createDocker, boxIsolation, runArgv, buildArgv, boxIdentity, restamp, runnerKeyOf, listProcs, BOX_ENV, DEADMAN, BUILD_LABEL };

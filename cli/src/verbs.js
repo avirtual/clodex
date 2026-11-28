@@ -914,9 +914,11 @@ async function patch(bundle) {
 async function patchTestjobs({ client, ctx, printer, flags }) {
   const hasSlots = flags.slots != null;
   const hasExclusive = flags.exclusive != null;
-  if (!hasSlots && !hasExclusive) throw new CliError(EXIT.USAGE, 'patch testjobs needs --slots N or --exclusive honour|ignore');
-  if (hasSlots && hasExclusive) throw new CliError(EXIT.USAGE, 'patch testjobs takes --slots or --exclusive, one per call');
+  const hasBoxArgs = flags['box-arg'] != null || flags['no-box-args'] === true || flags['box-args-label'] != null;
+  if (!hasSlots && !hasExclusive && !hasBoxArgs) throw new CliError(EXIT.USAGE, 'patch testjobs needs --slots N, --exclusive honour|ignore, or --box-arg / --no-box-args / --box-args-label');
+  if ([hasSlots, hasExclusive, hasBoxArgs].filter(Boolean).length > 1) throw new CliError(EXIT.USAGE, 'patch testjobs takes --slots, --exclusive or the box options flags, one per call');
   if (hasExclusive) return patchTestjobsExclusive({ client, ctx, printer, flags });
+  if (hasBoxArgs) return patchTestjobsBoxArgs({ client, ctx, printer, flags });
   if (flags.slots === true) throw new CliError(EXIT.USAGE, 'patch testjobs needs --slots N');
   const raw = String(flags.slots);
   if (!/^\d+$/.test(raw)) throw new CliError(EXIT.USAGE, `--slots must be a whole number, not "${raw}"`);
@@ -940,6 +942,23 @@ async function patchTestjobsExclusive({ client, ctx, printer, flags }) {
   const res = await client.post('/api/testjobs/exclusive', 'patch testjobs', { exclusive: want });
   if (flags.json) return printer.json(res);
   printer.line(`test runner exclusive requests set to ${res.exclusive} — ${appliedText(res)}`);
+}
+
+async function patchTestjobsBoxArgs({ client, ctx, printer, flags }) {
+  const list = flags['box-arg'];
+  if (list != null && flags['no-box-args'] === true) throw new CliError(EXIT.USAGE, 'patch testjobs takes --box-arg or --no-box-args, not both');
+  const label = flags['box-args-label'];
+  if (label === true) throw new CliError(EXIT.USAGE, 'patch testjobs needs --box-args-label NAME (an empty name clears it)');
+  const body = {
+    ...(list != null ? { boxArgs: list.map(String) } : flags['no-box-args'] === true ? { boxArgs: [] } : {}),
+    ...(label != null ? { boxArgsLabel: String(label) } : {}),
+  };
+  await R.requireResource(client, 'testjobs/box-args', 'post', R.ctxLabel(ctx, flags));
+  const res = await client.post('/api/testjobs/box-args', 'patch testjobs', body);
+  if (flags.json) return printer.json(res);
+  const c = res.custom;
+  const what = c ? `${res.count} box option${res.count === 1 ? '' : 's'} (${c.label ? `${c.label}, ` : ''}fingerprint ${c.fingerprint})` : 'no box options';
+  printer.line(`test runner set to ${what} — ${appliedText(res)}`);
 }
 
 async function patchProfile({ client, ctx, printer, flags, args, name }) {

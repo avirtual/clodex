@@ -14,6 +14,7 @@ blocks a release.
 ## Unreleased
 
 - Test runners: a node stopped by a signal now says which of the jobs it cuts are runs it sent to other machines; a hand's test run whose output could not be read reports the totals the runner recorded instead of 'no TOTALS line'; and a restart removes job directories a previous quit left half-removed.
+- Test runners: the owner of a runner can add its own options to how its test boxes start — for example passing a GPU device into the box — in Preferences or with `clodexctl patch testjobs --box-arg`. The options stay on that machine: other machines see only a label and a fingerprint, a run on such a box is marked as customised, and a box that cannot start because of them is reported as a runner problem, not a test failure.
 
 ## 5.215.0 — 2026-11-28
 

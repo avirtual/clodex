@@ -1178,7 +1178,7 @@ token), `queue budget` (the job did not start within 5 min,
 `BOX_DECIDE_QUEUE_MS`), `run budget` (the 41 min client budget, the runner's
 kill, or no answer within that plus 2 min), `runner restart`, `tree mismatch`,
 `definition mismatch` (also an isolation mismatch), `no share` (the runner lacks a requested share at its version, or the stamped shares differ from the ask), `no totals` (no TOTALS
-line, or zero tests), `box build` (the runner's build of a missing image failed or was refused, or did not finish within the lead's 25 min build budget, `BUILD_BUDGET_MS`) and `outcome unknown` (cancelled, refused, output
+line, or zero tests), `box build` (the runner's build of a missing image failed or was refused, or did not finish within the lead's 25 min build budget, `BUILD_BUDGET_MS`), `box options` (`box-args-failed`: the runner owner's box options kept `docker run` from starting the box) and `outcome unknown` (cancelled, refused, output
 unavailable, snapshot or upload failure), plus `no box definition` when the
 definition was cleared after the gate was set. Beside the reason the result carries `fallbackCode` and `fallbackClass` (`transient`, `deterministic`, `budget` or `unknown`) from `FALLBACK_CODES` in suite-client.js; `box build` splits into `box-build-budget`, `box-build-failed` and `box-build-interrupted` (the runner reports the build cancelled or stopped). A box result that arrives after
 the fallback began is ignored. Each run writes one compare row with

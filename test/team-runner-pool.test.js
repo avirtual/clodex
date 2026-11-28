@@ -525,6 +525,7 @@ const FALLBACK_ROWS = [
   ['runner build stopped', said('box build on runner: the build was stopped: lease-expired'), 'box build', 'box-build-interrupted', 'transient'],
   ['runner build failed', said('box build on runner: docker build exited 1: ERROR: boom'), 'box build', 'box-build-failed', 'deterministic'],
   ['runner build refused by its cap', said('box build on runner: 3 box builds in the last 24 h for k; the cap is 3'), 'box build', 'box-build-failed', 'deterministic'],
+  ['owner box options failed to start the box', said('the runner owner\'s box options failed to start the box (card-a)'), 'box options', 'box-args-failed', 'deterministic'],
   ['runner refused the job', said('runner refused the job: nope'), 'outcome unknown', 'outcome-unknown', 'unknown'],
   ['an unplaced runner reason', said('cancelled on runner'), 'outcome unknown', 'outcome-unknown', 'unknown'],
   ['no-summary outcome', measured({ outcome: 'no-summary' }), 'no totals', 'no-totals', 'deterministic'],
@@ -554,7 +555,7 @@ async function decideFor(row) {
 }
 
 test('t2378: every producing fallback condition yields its literal reason, code and class', async () => {
-  assert.strictEqual(FALLBACK_ROWS.length, 34);
+  assert.strictEqual(FALLBACK_ROWS.length, 35);
   for (const [name, input, reason, code, cls] of FALLBACK_ROWS) {
     if (input.decide) {
       const got = await decideFor(input);
@@ -589,13 +590,14 @@ const FALLBACK_RETRY = {
   'run-budget': false,
   'box-build-budget': false,
   'box-build-failed': false,
+  'box-args-failed': false,
   'box-build-interrupted': true,
   'outcome-unknown': false,
 };
 
-test('t2453: the retry flag of each of the 13 fallback codes is the literal one', () => {
+test('t2453: the retry flag of each of the 14 fallback codes is the literal one', () => {
   assert.deepStrictEqual(Object.keys(FALLBACK_RETRY).sort(), Object.keys(FALLBACK_CODES).sort());
-  assert.strictEqual(Object.keys(FALLBACK_CODES).length, 13);
+  assert.strictEqual(Object.keys(FALLBACK_CODES).length, 14);
   for (const [code, retry] of Object.entries(FALLBACK_RETRY)) assert.strictEqual(FALLBACK_CODES[code].retry, retry, code);
 });
 

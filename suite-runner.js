@@ -9,6 +9,8 @@ const { lastTotals, jobEnvRefusal } = require('./suite-client');
 const { git } = require('./git-worktree');
 const { resolveFs } = require('./resolve-fs');
 const { boxFingerprint } = require('./team-box');
+const { customName, BOX_ARGS_FAILED } = require('./box-args');
+const { restamp } = require('./suite-box');
 
 const fs = resolveFs();
 
@@ -74,6 +76,7 @@ const BUILDS_PER_DAY = 12;
 const BUILD_DISK_FLOOR = 10 * 1024 ** 3;
 const BUILD_TAIL_LINES = 20;
 const BUILD_TAIL_BYTES = 8 * 1024;
+const BOX_ARGS_LOG_BYTES = 4096;
 const BOX_PRUNE_EVERY_MS = 60 * MIN;
 
 const ACTIVITY_RECENT = 10;
@@ -786,11 +789,11 @@ function createSuiteRunner({
   }
 
   function adopt(hash, env, trigger) {
-    trigger.identity = env;
+    trigger.identity = restamp(env, trigger.custom || null);
     delete trigger.build;
     save(trigger);
     for (const w of waitersOf(hash)) {
-      w.identity = env;
+      w.identity = restamp(env, w.custom || null);
       delete w.build;
       setState(w, 'queued');
     }
@@ -1121,6 +1124,20 @@ function createSuiteRunner({
     job.out = { stdoutBytes: 0, stderrBytes: 0, truncated: false };
   }
 
+  const customised = (job) => Array.isArray(job.boxArgs) && job.boxArgs.length > 0;
+
+  function boxArgsFailed(job, r) {
+    let said = '';
+    try { said = fs.readFileSync(outFile(job.id, 'stderr'), 'utf8').slice(-BOX_ARGS_LOG_BYTES).trim(); } catch {}
+    log(`suite-runner: ${job.id}: docker run exited 125 under the owner box options: ${said || '(no stderr)'}`);
+    resetOutputs(job);
+    const custom = job.identity && job.identity.box ? job.identity.box.custom : null;
+    const text = `suite-runner: ${BOX_ARGS_FAILED} (${customName(custom) || 'unstamped'})\n`;
+    fs.writeFileSync(outFile(job.id, 'stderr'), text);
+    job.out.stderrBytes = Buffer.byteLength(text);
+    return finish(job, { reason: 'box-args-failed', exit: { code: 125, signal: r.signal || null } }, r.killing);
+  }
+
   function childEnv(job, jobDir) {
     const env = { ...(job.env || {}) };
     for (const k of FLAG_KEYS) if (job.flags && typeof job.flags[k] === 'string') env[k] = job.flags[k];
@@ -1251,6 +1268,7 @@ function createSuiteRunner({
       const r = await exec(job, jobDir, ['/bin/sh', '-c', job.setup.run], job.setup.timeoutMs || lim.setupTimeoutMs);
       if (job.stop) return finish(job, { reason: job.stop, exit: null }, r.killing);
       if (r.spawnFailed && isolation.mode === 'container') return finish(job, { reason: 'setup-failed', exit: null });
+      if (isolation.mode === 'container' && r.code === 125 && customised(job)) return boxArgsFailed(job, r);
       if (isolation.mode === 'container' && r.code === 125) return finish(job, { reason: 'box-failed', exit: { code: 125, signal: r.signal || null } }, r.killing);
       if (r.code !== 0) return finish(job, { reason: 'setup-failed', exit: { code: r.code, signal: r.signal || null } }, r.killing);
       await isolation.seal(jobDir, deps.entry, job.setup.paths);
@@ -1278,6 +1296,7 @@ function createSuiteRunner({
     job.runMs = now() - runStartedAt;
     const boxed = isolation.mode === 'container';
     if (boxed && r.spawnFailed && !job.stop) return finish(job, { reason: 'setup-failed', exit: null });
+    if (boxed && r.code === 125 && !job.stop && !r.timedOut && customised(job)) return boxArgsFailed(job, r);
     const reason = job.stop || (r.timedOut ? 'timeout' : null) || (boxed && (r.code === 125 || r.error) ? 'box-failed' : null);
     return finish(job, { reason, exit: { code: r.code, signal: r.signal || null } }, r.killing);
   }
@@ -1569,6 +1588,8 @@ function createSuiteRunner({
 
   function jobFrom(body, origin, stamp, build) {
     const boxed = body.isolation === 'container';
+    const ownArgs = boxed && box && typeof box.boxArgs === 'function' ? box.boxArgs() : [];
+    const ownCustom = ownArgs.length && typeof box.custom === 'function' ? box.custom() : null;
     return {
       id: body.id, attempt: body.attempt || 1, repoKey: body.repoKey, kind: body.kind, scope: body.scope || null,
       team: body.team || null, ticket: body.ticket || null, seat: body.seat || null,
@@ -1581,6 +1602,8 @@ function createSuiteRunner({
       ...(boxed && Array.isArray(body.shares) && body.shares.length ? { shares: body.shares.map(({ share, version }) => ({ share, version })) } : {}),
       ...(typeof origin === 'string' && origin ? { origin: origin.slice(0, 64) } : {}),
       ...(build ? { build } : {}),
+      ...(ownArgs.length ? { boxArgs: ownArgs } : {}),
+      ...(ownCustom ? { custom: ownCustom } : {}),
       ...(body.exclusive === true ? { exclusive: true } : {}),
       ...(body.shadow === true ? { shadow: true } : {}),
     };
@@ -1768,7 +1791,7 @@ function createSuiteRunner({
 
   recover().then(reconcile).catch((e) => log(`suite-runner: reconcile failed: ${e.message}`)).then(() => { recovering = false; if (pumpAfterRecovery) pump(); });
 
-  return { info, activity, submit, putPack, commit, poll, output, readOutput, cancel, tick, start, close, drain, fence, busy: anyLive, activeCount: () => active.size, slotTotal: () => slotTotal };
+  return { info, activity, submit, putPack, commit, poll, output, readOutput, cancel, tick, start, close, drain, fence, busy: anyLive, activeCount: () => active.size, slotTotal: () => slotTotal, boxCustom: () => (box && typeof box.custom === 'function' ? box.custom() : null) };
 }
 
 module.exports = {

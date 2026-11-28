@@ -760,3 +760,68 @@ test('t2466: a Preferences apply naming exclusive stores both states and reaches
   assert.strictEqual(set({}, { ...VALID, exclusive: 'honour' }).ok, true);
   assert.deepStrictEqual([store.suiteRunner, calls.reload], [{ ...VALID }, 2]);
 });
+
+const GPU_ARGS = ['--device=/dev/dri', '--group-add=993'];
+
+test('t2483: sanitizeSuiteRunner keeps a valid boxArgs list and label, drops an empty one, and refuses the whole record for one bad element', () => {
+  assert.deepStrictEqual(sanitizeSuiteRunner({ ...VALID, boxArgs: GPU_ARGS, boxArgsLabel: 'gpu' }), { ...VALID, boxArgs: GPU_ARGS, boxArgsLabel: 'gpu' });
+  assert.deepStrictEqual(sanitizeSuiteRunner({ ...VALID, boxArgs: [], boxArgsLabel: '' }), VALID);
+  assert.strictEqual(sanitizeSuiteRunner({ ...VALID, boxArgs: ['--device=/dev/dri', 'ubuntu'] }), null);
+  assert.strictEqual(sanitizeSuiteRunner({ ...VALID, boxArgs: GPU_ARGS, boxArgsLabel: 'a b' }), null);
+});
+
+test('t2483: a Preferences apply with a bad box option is refused with the validator reason and stores nothing', () => {
+  const { set, store, calls } = ipcFixture({ initial: { ...VALID } });
+  const res = set({}, { ...VALID, boxArgs: ['--device=/dev/dri', '--name=x'] });
+  assert.deepStrictEqual([res.ok, res.error], [false, 'box option 2 --name is reserved by Clodex']);
+  assert.deepStrictEqual([store.suiteRunner, calls.reload], [{ ...VALID }, 0]);
+  assert.deepStrictEqual(set({}, { ...VALID, boxArgsLabel: 'a b' }).error, 'the box options label must be at most 32 letters, digits, dot, dash or underscore');
+});
+
+test('t2483: a Preferences apply that does not name boxArgs keeps the stored list and label; one naming an empty list clears them', () => {
+  const { set, store, calls } = ipcFixture({ initial: { ...VALID, boxArgs: GPU_ARGS, boxArgsLabel: 'gpu' } });
+  assert.strictEqual(set({}, { ...VALID, slots: 2 }).ok, true);
+  assert.deepStrictEqual(store.suiteRunner, { ...VALID, slots: 2, boxArgs: GPU_ARGS, boxArgsLabel: 'gpu' });
+  assert.strictEqual(set({}, { ...VALID, slots: 2, boxArgs: [], boxArgsLabel: '' }).ok, true);
+  assert.deepStrictEqual([store.suiteRunner, calls.reload], [{ ...VALID, slots: 2 }, 2]);
+});
+
+test('t2483: suiteRunnerOptions carries boxArgs and its label only when the setting has a list', () => {
+  const base = suiteRunnerOptions({}, '/r', { platform: 'linux', setting: VALID });
+  assert.ok(!('boxArgs' in base) && !('boxArgsLabel' in base), 'no list, no keys');
+  const opts = suiteRunnerOptions({}, '/r', { platform: 'linux', setting: { ...VALID, boxArgs: GPU_ARGS, boxArgsLabel: 'gpu' } });
+  assert.deepStrictEqual(opts, { ...base, boxArgs: GPU_ARGS, boxArgsLabel: 'gpu' });
+});
+
+test('t2483: startSuiteRunner hands the setting list and label to the box adapter only, never to the runner', () => {
+  const made = [];
+  const built = [];
+  const load = () => ({
+    createSuiteRunner: (o) => { made.push(o); return { start() {} }; },
+    noneIsolation: () => 'none-iso',
+    userIsolation: () => 'user-iso',
+    statePaths: (root) => ({ dir: `${root}/suite-runner` }),
+  });
+  const loadBox = () => ({ boxIsolation: (o) => { built.push(o); return { image: o.image }; } });
+  const opts = { root: '/home/c', work: '/srv/w', isolation: 'none', limits: {}, forced: [], boxArgs: GPU_ARGS, boxArgsLabel: 'gpu' };
+  assert.strictEqual(startSuiteRunner(opts, { log: { warn() {}, error() {} }, load, loadBox }).error, null);
+  const { log, ...rest } = made[0];
+  assert.deepStrictEqual([typeof log, rest], ['function', { root: '/home/c', work: '/srv/w', isolation: 'none-iso', limits: {}, box: { image: null } }]);
+  assert.deepStrictEqual(built, [{ image: null, work: '/srv/w', stateDir: '/home/c/suite-runner', boxArgs: GPU_ARGS, boxArgsLabel: 'gpu' }]);
+});
+
+test('t2483: setSuiteRunnerBoxArgs stores a list and label, keeps one it is not given, clears on an empty list, and refuses a bad one by index', (t) => {
+  const f = slotsFixture(t, { ...FULL });
+  assert.strictEqual(f.wiring.getSuiteEngine(), f.runners[0], 'ENTER: a live runner');
+  assert.deepStrictEqual(f.wiring.setSuiteRunnerBoxArgs({ boxArgs: ['--device=/dev/dri', 'ubuntu'] }), { ok: false, status: 400, error: 'box option 2 must be an option starting with - (a bare word would end Docker\'s options and replace the image)' });
+  assert.deepStrictEqual(f.wiring.setSuiteRunnerBoxArgs({}), { ok: false, status: 400, error: 'name boxArgs (a list) or boxArgsLabel' });
+  assert.deepStrictEqual(f.settings.suiteRunner, FULL);
+  assert.deepStrictEqual(f.wiring.setSuiteRunnerBoxArgs({ boxArgs: GPU_ARGS, boxArgsLabel: 'gpu' }), { ok: true, count: 2, custom: { fingerprint: '0b334ad4c4a0', label: 'gpu' }, applied: 'now', running: 0 });
+  assert.deepStrictEqual(f.settings.suiteRunner, { ...FULL, boxArgs: GPU_ARGS, boxArgsLabel: 'gpu' });
+  assert.deepStrictEqual([f.wiring.getSuiteEngine().opts.boxArgs, f.wiring.getSuiteEngine().opts.boxArgsLabel], [GPU_ARGS, 'gpu']);
+  assert.deepStrictEqual(f.wiring.setSuiteRunnerBoxArgs({ boxArgsLabel: 'card' }).custom, { fingerprint: '0b334ad4c4a0', label: 'card' });
+  assert.deepStrictEqual(f.settings.suiteRunner.boxArgs, GPU_ARGS, 'a label change keeps the list');
+  assert.deepStrictEqual(f.wiring.setSuiteRunnerBoxArgs({ boxArgs: [] }), { ok: true, count: 0, custom: null, applied: 'now', running: 0 });
+  assert.strictEqual('boxArgs' in f.settings.suiteRunner, false);
+  assert.strictEqual(f.wiring.getSuiteEngine().opts.boxArgs, undefined);
+});

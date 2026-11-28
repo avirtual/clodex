@@ -234,3 +234,23 @@ test('t2455: GET /api/testjobs passes the source ledger picks through when the a
   const r = await req(port, '/api/testjobs');
   assert.deepStrictEqual([r.status, r.json], [200, { ok: true, enabled: true, snapshot: SNAPSHOT, picks }]);
 });
+
+test('t2483: POST /api/testjobs/box-args hands only boxArgs and boxArgsLabel to its setter and returns its answer; a suite token is refused', async (t) => {
+  const asked = [];
+  const port = await startNode(t, {
+    listTestjobs: () => ({ enabled: true, snapshot: SNAPSHOT }),
+    setTestjobBoxArgs: (v) => { asked.push(v); return Array.isArray(v.boxArgs) ? { ok: true, count: v.boxArgs.length, custom: null, applied: 'now', running: 0 } : { ok: false, status: 400, error: 'name boxArgs (a list) or boxArgsLabel' }; },
+  });
+  const rows = [
+    ['{"boxArgs":["--device=/dev/dri"],"boxArgsLabel":"gpu","slots":3}', 200, { ok: true, count: 1, custom: null, applied: 'now', running: 0 }],
+    ['{"slots":3}', 400, { ok: false, error: 'name boxArgs (a list) or boxArgsLabel' }],
+    ['not json', 400, { ok: false, error: 'bad JSON' }],
+  ];
+  for (const [raw, status, body] of rows) {
+    const r = await post(port, '/api/testjobs/box-args', raw);
+    assert.deepStrictEqual([r.status, r.json], [status, body], raw);
+  }
+  assert.deepStrictEqual(asked, [{ boxArgs: ['--device=/dev/dri'], boxArgsLabel: 'gpu' }, { boxArgs: undefined, boxArgsLabel: undefined }]);
+  const scoped = await post(port, '/api/testjobs/box-args', '{"boxArgs":[]}', { token: SUITE_TOKEN });
+  assert.strictEqual(scoped.status, 403);
+});

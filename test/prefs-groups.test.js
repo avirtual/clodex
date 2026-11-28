@@ -41,6 +41,7 @@ const CONTROLS = [
   'prefs-suite-runner-isolation', 'prefs-suite-runner-isolation-env', 'prefs-suite-runner-none-note', 'prefs-suite-runner-shares',
   'prefs-suite-runner-work', 'prefs-suite-runner-work-env', 'prefs-suite-runner-status',
   'prefs-suite-runner-boxImage', 'prefs-suite-runner-boxImage-env', 'prefs-suite-runner-slots', 'prefs-suite-runner-buildBoxes', 'prefs-suite-runner-exclusive',
+  'prefs-suite-runner-boxArgs', 'prefs-suite-runner-boxArgsLabel',
   'prefs-box-offer-block', 'prefs-box-offer-enabled', 'prefs-box-offer-boxes', 'prefs-box-offer-availability',
   'prefs-box-offer-schedule', 'prefs-box-offer-schedule-add', 'prefs-box-offer-peers', 'prefs-box-offer-peers-note',
   'prefs-box-offer-facts', 'prefs-box-offer-status', 'prefs-box-offer-apply', 'prefs-box-offer-scope', 'prefs-box-offer-run-note', 'prefs-box-offer-claims',

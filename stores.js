@@ -33,10 +33,11 @@ const { seatLayoutActive } = require('./seat-layout');
 const { migrateLivingAllowlist } = require('./intent-catalog');
 const { VOICE_MODES } = require('./voice-settings');
 const { sanitizeBoxOffer } = require('./box-offer');
+const { boxArgsRefusal, boxArgsLabelRefusal } = require('./box-args');
 
 const SUITE_RUNNER_KEYS = ['enabled', 'isolation', 'work'];
 const BOX_IMAGE_RE = /^sha256:[0-9a-f]{64}$/;
-const SUITE_RUNNER_OPTIONAL = ['boxImage', 'slots', 'shares', 'buildBoxes', 'exclusive'];
+const SUITE_RUNNER_OPTIONAL = ['boxImage', 'slots', 'shares', 'buildBoxes', 'exclusive', 'boxArgs', 'boxArgsLabel'];
 const MAX_SUITE_SLOTS = 4;
 const MAX_SUITE_SHARES = 8;
 const SHARE_NAME_RE = /^(?!\.+$)[a-zA-Z0-9._-]{1,64}$/;
@@ -74,12 +75,16 @@ function sanitizeSuiteRunner(v) {
     if (typeof v.work !== 'string' || v.work.length > 1024 || !path.isAbsolute(v.work)) return null;
     if (v.work.split(/[\\/]/).includes('..')) return null;
   }
+  if (v.boxArgs != null && boxArgsRefusal(v.boxArgs)) return null;
+  if (boxArgsLabelRefusal(v.boxArgsLabel)) return null;
   const slots = suiteSlots(v.slots);
   const shares = suiteShares(v.shares);
   return {
     enabled: v.enabled, isolation: v.isolation, work: v.work, ...(v.boxImage ? { boxImage: v.boxImage } : {}), ...(slots > 1 ? { slots } : {}), ...(shares ? { shares } : {}),
     ...(v.buildBoxes === true ? { buildBoxes: true } : {}),
     ...(v.exclusive === 'ignore' ? { exclusive: 'ignore' } : {}),
+    ...(Array.isArray(v.boxArgs) && v.boxArgs.length ? { boxArgs: [...v.boxArgs] } : {}),
+    ...(v.boxArgsLabel ? { boxArgsLabel: v.boxArgsLabel } : {}),
   };
 }
 
