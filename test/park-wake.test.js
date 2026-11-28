@@ -6,7 +6,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { mk, mkPark } = require('./lib/session-fixtures');
 const { mkTmpRoot, tmpHomeOs } = require('./lib/tmp-roots');
-const { parkDelivery, countPending, claimParkedById } = require('../pending-store');
+const { parkDelivery, countPending, claimParkedById, parkBacklog } = require('../pending-store');
 const { initStores } = require('../stores.js');
 
 const T0 = Date.UTC(2026, 10, 28, 0, 0, 0);
@@ -161,6 +161,51 @@ test('the age survives a restart, a resend re-park and a later message', withClo
   assert.deepStrictEqual(second.m._sweepParkWake(T0 + 12 * H - 1), []);
   assert.deepStrictEqual(second.m._sweepParkWake(T0 + 12 * H), ['root']);
   assert.match(second.injected[0], /oldest[\s\S]*later/);
+}));
+
+test('a same-machine sender is told 1 waiting, then 3 waiting with the oldest age', withClock(async (t) => {
+  const r = rig(t);
+  r.m.sessions.set('clodex', { name: 'clodex', agentType: 'claude', activityState: 'busy', createdAt: 1, pty: { write() {} } });
+  const notice = async () => {
+    r.injected.length = 0;
+    await r.m._handleIntent('clodex', { type: 'dm', target: 'root', body: 'local notice' });
+    assert.strictEqual(r.injected.length, 1, r.injected.join('\n'));
+    const id = (r.injected[0].match(/ as (\S+) — /) || [])[1];
+    return [r.injected[0], id];
+  };
+  const localFor = (clause, id) => `[agent:dm] parked for root (cold) as ${id} — ${clause}. If it can't wait, emit \`[agent:resend ${id}]\` to wake them now (delivers the parked copy — don't retype the message).`;
+  const [first, id1] = await notice();
+  assert.strictEqual(first, localFor("1 waiting, oldest under 1m; it'll be delivered with root's next turn", id1));
+  t.mock.timers.setTime(T0 + 2 * H);
+  parkDelivery(r.PENDING_DIR, 'root', '[agent:from b] typed park', `${Date.now()}.000000001`, null, false, 1);
+  t.mock.timers.setTime(T0 + 7 * H + 5 * 60_000);
+  const [third, id3] = await notice();
+  assert.strictEqual(countPending(r.PENDING_DIR, 'root'), 3, 'ENTER: the store holds the two sends and the typed park');
+  assert.strictEqual(third, localFor("3 waiting, oldest 7h; it'll be delivered with root's next turn", id3));
+}));
+
+test('a resend that re-parks keeps the first park\'s held time, so the age wake still counts from it', withClock(async (t) => {
+  const r = rig(t, { hours: 12 });
+  r.m.sessions.set('clodex', { name: 'clodex', agentType: 'claude', activityState: 'busy', createdAt: 1, pty: { write() {} } });
+  const r0 = r.m._gatedDeliver('root', 'clodex', 'oldest', false);
+  t.mock.timers.setTime(T0 + 3 * H);
+  r.injected.length = 0;
+  await r.m._handleIntent('clodex', { type: 'resend', id: r0.parked });
+  assert.deepStrictEqual(r.injected, [`[agent:resend] root is cold; re-parked as ${r0.parked} — it'll deliver after the dialog is answered.`]);
+  assert.strictEqual(countPending(r.PENDING_DIR, 'root'), 1, 'ENTER: the resend re-parked the message');
+  assert.deepStrictEqual(r.m._sweepParkWake(T0 + 12 * H - 1), []);
+  assert.deepStrictEqual(r.m._sweepParkWake(T0 + 12 * H), ['root']);
+}));
+
+test('a hold-park written before the upgrade (no held field) never triggers the age wake; its file stamp still counts as its age', withClock(async (t) => {
+  const r = rig(t, { hours: 12 });
+  const dir = path.join(r.PENDING_DIR, 'root');
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, `${T0 - 30 * H}.000000001.old01.json`), '{"text":"[agent:from b] pre-upgrade","id":"old01","born":1}');
+  assert.deepStrictEqual(parkBacklog(r.PENDING_DIR, 'root'), { count: 1, oldestAt: T0 - 30 * H, heldAt: null });
+  assert.deepStrictEqual(r.m._sweepParkWake(T0), []);
+  assert.deepStrictEqual(r.m._sweepParkWake(T0 + 100 * H), []);
+  assert.strictEqual(countPending(r.PENDING_DIR, 'root'), 1);
 }));
 
 test('after the automatic wake a second batch stays parked, across a restart, and the bounce says so', withClock(async (t) => {
