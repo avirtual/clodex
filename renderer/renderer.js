@@ -39,7 +39,7 @@ const {
 } = require('./lib/plugin-source-dialog');
 const { evalRendererModule } = require('./lib/plugin-module-eval');
 const { pluginOrigin } = require('./lib/plugin-origin');
-const { prefsGate } = require('./lib/prefs-gate');
+const { prefsGate, parkWakeHoursValue } = require('./lib/prefs-gate');
 const { skillOffSetFor, applySkillAliases, deferredSkillDeny, skillDenyIsDeferred, skillDenyKeepList, skillDenyForPeer } = require('../skills-off');
 const { planNewSession, respawnFocusWindow } = require('./lib/focus-policy');
 const { anyOverlayOpen, dialogOverlayIds, performCloseChord } = require('./lib/chord-guard');
@@ -9824,7 +9824,7 @@ async function writePrefsSettings() {
     discoverOnStartup: prefsDiscoverOnStartup ? prefsDiscoverOnStartup.checked : false,
     ...(prefsIdlePauseHours && prefsIdlePauseHours.value.trim() ? { idlePauseHours: Number(prefsIdlePauseHours.value) } : {}),
     ...(prefsIdlePauseAuto ? { idlePauseAuto: prefsIdlePauseAuto.checked } : {}),
-    ...(prefsParkWake && prefsParkWakeHours ? { parkWakeHours: prefsParkWake.checked ? Number(prefsParkWakeHours.value) : 0 } : {}),
+    ...(prefsParkWake && prefsParkWakeHours ? { parkWakeHours: parkWakeHoursValue(prefsParkWake.checked, prefsParkWakeHours.value) } : {}),
     remoteEnabled: prefsRemoteEnabled.checked,
     ...(prefsRemoteBasePath
       ? patchUnlessEnvLocked(prefsEnvLocked, 'remoteBasePath', prefsRemoteBasePath.value)

@@ -11755,7 +11755,7 @@ body:not(.web-frontend):has(#sidebar[data-folded="1"]) #main {
             <span>Box options label</span>
             <input type="text" id="prefs-suite-runner-boxArgsLabel" maxlength="32" autocomplete="off" spellcheck="false" style="flex: 1;">
           </div>
-          <p class="hint-text">Extra options added to docker run for every test box on this machine, one per line with the value attached (for example --device=/dev/dri). They apply to the code of every team this runner accepts jobs from. Other machines see only the label and a fingerprint.</p>
+          <p class="hint-text">Extra options added to docker run for every test box on this machine, one per line with the value attached (for example --device=/dev/dri). They apply to the code of every team this runner accepts jobs from. Other machines see only the label and a fingerprint. They have no effect on jobs this runner runs without a box.</p>
           <div class="prefs-row" style="margin-top: 6px;">
             <span>Shared folders</span>
           </div>
@@ -30380,7 +30380,12 @@ ${lines[j].trimEnd()}` : ` ${lines[j].trim()}`;
         }
         return out;
       }
-      module.exports = { prefsGate, PROXY_DEPENDENT };
+      function parkWakeHoursValue(checked, raw) {
+        if (!checked) return 0;
+        const n = String(raw == null ? "" : raw).trim() === "" ? NaN : Math.round(Number(raw));
+        return Number.isFinite(n) ? Math.min(48, Math.max(1, n)) : 12;
+      }
+      module.exports = { prefsGate, parkWakeHoursValue, PROXY_DEPENDENT };
     }
   });
 
@@ -54641,7 +54646,7 @@ ${detail}` });
       } = require_plugin_source_dialog();
       var { evalRendererModule } = require_plugin_module_eval();
       var { pluginOrigin } = require_plugin_origin();
-      var { prefsGate } = require_prefs_gate();
+      var { prefsGate, parkWakeHoursValue } = require_prefs_gate();
       var { skillOffSetFor, applySkillAliases, deferredSkillDeny, skillDenyIsDeferred, skillDenyKeepList, skillDenyForPeer } = require_skills_off();
       var { planNewSession, respawnFocusWindow } = require_focus_policy();
       var { anyOverlayOpen, dialogOverlayIds, performCloseChord } = require_chord_guard();
@@ -64234,7 +64239,7 @@ ${res.stderr}` : "");
           discoverOnStartup: prefsDiscoverOnStartup ? prefsDiscoverOnStartup.checked : false,
           ...prefsIdlePauseHours && prefsIdlePauseHours.value.trim() ? { idlePauseHours: Number(prefsIdlePauseHours.value) } : {},
           ...prefsIdlePauseAuto ? { idlePauseAuto: prefsIdlePauseAuto.checked } : {},
-          ...prefsParkWake && prefsParkWakeHours ? { parkWakeHours: prefsParkWake.checked ? Number(prefsParkWakeHours.value) : 0 } : {},
+          ...prefsParkWake && prefsParkWakeHours ? { parkWakeHours: parkWakeHoursValue(prefsParkWake.checked, prefsParkWakeHours.value) } : {},
           remoteEnabled: prefsRemoteEnabled.checked,
           ...prefsRemoteBasePath ? patchUnlessEnvLocked(prefsEnvLocked, "remoteBasePath", prefsRemoteBasePath.value) : {}
         });
