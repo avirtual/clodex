@@ -492,7 +492,7 @@ test('t2400: at the 30m cap with a live runner job the restart is dropped, not f
   waiter.arm({ requester: 'hand-7' });
   clock.advance(31 * 60_000);
   assert.deepStrictEqual(events, []);
-  assert.deepStrictEqual(seen, [[['hand-7'], { suiteJobs: 1, sessionsBusy: false },
+  assert.deepStrictEqual(seen, [[['hand-7'], { suiteJobs: [{ id: 'j1', team: 'alpha' }], sessionsBusy: false },
     '1 suite job this machine is running for other teams did not finish — the pending restart was dropped. Try again when work settles. Requested by: hand-7.']]);
   assert.deepStrictEqual(fences, [true, false]);
   assert.strictEqual(waiter.isArmed(), false);

@@ -152,8 +152,8 @@ initLog();
 log.info('app', `startup — Clodex headless (pid ${process.pid}, dataDir ${userDataPath})`);
 
 function restartNow() {
-  let cut = 0;
-  try { cut = engine.suiteRestartJobs().length; } catch {}
+  let cut = [];
+  try { cut = engine.suiteRestartJobs(); } catch {}
   log.info('app', restartNowLine(cut));
   if (webHost) { try { webHost.close(); } catch {} }
   try { engine.shutdown(); } catch {}
