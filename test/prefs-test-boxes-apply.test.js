@@ -71,6 +71,7 @@ function harness({ runnerAnswer = null } = {}) {
     prefsSuiteRunnerBlock: block('runner'),
     prefsSuiteRunnerEnabled: el(), prefsSuiteRunnerIsolation: el(), prefsSuiteRunnerWork: el(),
     prefsSuiteRunnerBoxImage: el(), prefsSuiteRunnerSlots: el(), prefsSuiteRunnerBuildBoxes: el(), prefsSuiteRunnerExclusive: el(),
+    prefsSuiteRunnerBoxArgs: null, prefsSuiteRunnerBoxArgsLabel: null,
     prefsSuiteRunnerShares: null, prefsSuiteRunnerShareRows: null,
     prefsSuiteRunnerNoneNote: el(), prefsSuiteRunnerStatus: el(),
     prefsTestBoxesUnsaved: el(),

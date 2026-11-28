@@ -11748,6 +11748,15 @@ body:not(.web-frontend):has(#sidebar[data-folded="1"]) #main {
           </label>
           <p class="hint-text">A team can mark its test jobs exclusive so each one has this machine to itself. Off: such a job shares this machine's job slots like any other.</p>
           <div class="prefs-row" style="margin-top: 6px;">
+            <span>Box options</span>
+            <textarea id="prefs-suite-runner-boxArgs" rows="3" placeholder="--option=value" autocomplete="off" spellcheck="false" style="flex: 1;"></textarea>
+          </div>
+          <div class="prefs-row">
+            <span>Box options label</span>
+            <input type="text" id="prefs-suite-runner-boxArgsLabel" maxlength="32" autocomplete="off" spellcheck="false" style="flex: 1;">
+          </div>
+          <p class="hint-text">Extra options added to docker run for every test box on this machine, one per line with the value attached (for example --device=/dev/dri). They apply to the code of every team this runner accepts jobs from. Other machines see only the label and a fingerprint.</p>
+          <div class="prefs-row" style="margin-top: 6px;">
             <span>Shared folders</span>
           </div>
           <div id="prefs-suite-runner-shares"></div>
@@ -30999,10 +31008,122 @@ ${text}` : text;
     }
   });
 
+  // box-args.js
+  var require_box_args = __commonJS({
+    "box-args.js"(exports, module) {
+      "use strict";
+      var crypto2 = require_crypto_shim();
+      var BOX_ARGS_MAX = 32;
+      var BOX_ARG_MAX = 512;
+      var BOX_ARGS_LABEL_RE = /^[A-Za-z0-9._-]{1,32}$/;
+      var FINGERPRINT_RE = /^[0-9a-f]{12}$/;
+      var BOX_ARGS_FAILED = "the runner owner's box options failed to start the box";
+      var RESERVED_LONG = [
+        "--name",
+        "--rm",
+        "--detach",
+        "--entrypoint",
+        "--cidfile",
+        "--interactive",
+        "--tty",
+        "--restart",
+        "--workdir",
+        "--platform",
+        "--pull",
+        "--init",
+        "--log-driver",
+        "--log-opt",
+        "--label",
+        "--label-file"
+      ];
+      var RESERVED_SHORT = { d: "--detach", i: "--interactive", t: "--tty", w: "--workdir", l: "--label" };
+      var BARE_LONG = [
+        "--privileged",
+        "--read-only",
+        "--oom-kill-disable",
+        "--no-healthcheck",
+        "--publish-all",
+        "--sig-proxy",
+        "--disable-content-trust",
+        "--quiet"
+      ];
+      var BARE_SHORT = ["P", "q"];
+      var ATTACH = "needs its value attached with = (for example --device=/dev/dri)";
+      function shortRefusal(body) {
+        for (let i = 0; i < body.length; i += 1) {
+          const c = body[i];
+          if (RESERVED_SHORT[c]) return `-${c} (${RESERVED_SHORT[c]}) is reserved by Clodex`;
+          if (BARE_SHORT.includes(c) && body[i + 1] !== "=") continue;
+          if (BARE_SHORT.includes(c)) return null;
+          return body.slice(i + 1).replace(/^=/, "") ? null : `-${c} ${ATTACH}`;
+        }
+        return null;
+      }
+      function boxArgRefusal(arg) {
+        if (typeof arg !== "string" || !arg.length || arg.length > BOX_ARG_MAX) return `must be text of 1 to ${BOX_ARG_MAX} characters`;
+        if (/[\0\r\n]/.test(arg)) return "must not contain a NUL or a line break";
+        if (!arg.startsWith("-") || arg === "-") return "must be an option starting with - (a bare word would end Docker's options and replace the image)";
+        if (arg === "--") return "-- would end Docker's options";
+        if (!arg.startsWith("--")) return shortRefusal(arg.slice(1));
+        const eq = arg.indexOf("=");
+        const name = eq < 0 ? arg : arg.slice(0, eq);
+        if (RESERVED_LONG.includes(name)) return `${name} is reserved by Clodex`;
+        if (eq < 0 && !BARE_LONG.includes(name)) return `${name} ${ATTACH}`;
+        return null;
+      }
+      function boxArgsRefusal(list) {
+        if (!Array.isArray(list)) return "box options must be a list";
+        if (list.length > BOX_ARGS_MAX) return `at most ${BOX_ARGS_MAX} box options, not ${list.length}`;
+        for (let i = 0; i < list.length; i += 1) {
+          const why = boxArgRefusal(list[i]);
+          if (why) return `box option ${i + 1} ${why}`;
+        }
+        return null;
+      }
+      function boxArgsLabelRefusal(label) {
+        if (label == null || label === "") return null;
+        if (typeof label !== "string" || !BOX_ARGS_LABEL_RE.test(label)) return "the box options label must be at most 32 letters, digits, dot, dash or underscore";
+        return null;
+      }
+      function boxArgsFingerprint(list) {
+        if (!Array.isArray(list) || !list.length) return null;
+        return crypto2.createHash("sha256").update(JSON.stringify(list)).digest("hex").slice(0, 12);
+      }
+      function boxCustom(list, label = null) {
+        const fingerprint = boxArgsFingerprint(list);
+        if (!fingerprint) return null;
+        return { fingerprint, label: typeof label === "string" && BOX_ARGS_LABEL_RE.test(label) ? label : null };
+      }
+      function cleanCustom(raw) {
+        if (!raw || typeof raw !== "object" || Array.isArray(raw) || !FINGERPRINT_RE.test(String(raw.fingerprint))) return null;
+        return { fingerprint: raw.fingerprint, label: typeof raw.label === "string" && BOX_ARGS_LABEL_RE.test(raw.label) ? raw.label : null };
+      }
+      var customField = (raw) => {
+        const custom = cleanCustom(raw);
+        return custom ? { custom } : {};
+      };
+      var customName = (custom) => custom ? custom.label || custom.fingerprint : null;
+      module.exports = {
+        BOX_ARGS_MAX,
+        BOX_ARG_MAX,
+        BOX_ARGS_FAILED,
+        boxArgRefusal,
+        boxArgsRefusal,
+        boxArgsLabelRefusal,
+        boxArgsFingerprint,
+        boxCustom,
+        cleanCustom,
+        customField,
+        customName
+      };
+    }
+  });
+
   // box-offer.js
   var require_box_offer = __commonJS({
     "box-offer.js"(exports, module) {
       "use strict";
+      var { customField } = require_box_args();
       var NODE_NAME_RE = /^(?!\.+$)[a-zA-Z0-9._-]{1,64}$/;
       var HHMM_RE = /^([01]\d|2[0-3]):([0-5]\d)$/;
       var PLATFORM_RE = /^[a-z0-9]{1,16}\/[a-z0-9_]{1,16}$/;
@@ -31030,6 +31151,15 @@ ${text}` : text;
       var isBoxCount = (n) => Number.isInteger(n) && n >= 1 && n <= MAX_BOXES;
       var isSlotCount = (n) => Number.isInteger(n) && n >= 1 && n <= MAX_SLOTS;
       var slotsField = (n) => isSlotCount(n) ? { slots: n } : {};
+      function engineCustom(getEngine) {
+        if (typeof getEngine !== "function") return null;
+        try {
+          const engine = getEngine();
+          return engine && typeof engine.boxCustom === "function" ? engine.boxCustom() : null;
+        } catch {
+          return null;
+        }
+      }
       function engineSlots(getEngine) {
         if (typeof getEngine !== "function") return void 0;
         try {
@@ -31163,13 +31293,14 @@ ${text}` : text;
         const got = Array.from(confirm2.peers).sort();
         return want.length === got.length && want.every((n, i) => n === got[i]);
       }
-      function offerEntry(offer, facts, now, { run = false, slots } = {}) {
+      function offerEntry(offer, facts, now, { run = false, slots, custom } = {}) {
         const clean = sanitizeBoxOffer(offer);
         if (!clean || !clean.enabled) return null;
         return {
           scope: clean.scope === RUN && run === true ? RUN : DISCOVERY,
           boxes: clean.boxes,
           ...slotsField(slots),
+          ...customField(custom),
           open: scheduleOpen(clean, now instanceof Date ? now : /* @__PURE__ */ new Date()),
           kinds: [...PRODUCED_KINDS],
           facts: produceFacts(typeof facts === "function" ? facts() : facts)
@@ -31216,12 +31347,12 @@ ${text}` : text;
         const own = sanitizeWireEntry(raw.own);
         if (!own) return null;
         if (own.facts.runtime && isPlainObject(raw.capacity)) own.facts.runtime = { ...own.facts.runtime, ...runtimeCapacity(raw.capacity) };
-        return { own: { ...own, ...slotsField(raw.slots) } };
+        return { own: { ...own, ...slotsField(raw.slots), ...customField(raw.custom) } };
       }
       function wireOffers(own) {
         if (!isPlainObject(own)) return { own: own || null };
-        const { slots, ...entry } = own;
-        const out = { own: entry, ...slotsField(slots) };
+        const { slots, custom, ...entry } = own;
+        const out = { own: entry, ...slotsField(slots), ...customField(custom) };
         if (!isPlainObject(entry.facts) || !isPlainObject(entry.facts.runtime)) return out;
         const { platforms, ...rest } = entry.facts.runtime;
         const capacity = runtimeCapacity(rest);
@@ -31252,6 +31383,7 @@ ${text}` : text;
         MAX_BOXES,
         MAX_SLOTS,
         engineSlots,
+        engineCustom,
         sanitizeBoxOffer,
         offerFromEnv,
         scheduleOpen,
@@ -31415,7 +31547,9 @@ Allow?`;
           ...Number.isInteger(slots) && slots > 1 ? { slots } : {},
           ...Array.isArray(shares) && shares.length ? { shares } : {},
           ...buildBoxes ? { buildBoxes: true } : {},
-          ...form.exclusive == null ? {} : { exclusive: form.exclusive === "ignore" ? "ignore" : "honour" }
+          ...form.exclusive == null ? {} : { exclusive: form.exclusive === "ignore" ? "ignore" : "honour" },
+          ...form.boxArgs == null ? {} : { boxArgs: String(form.boxArgs).split(/\r?\n/).map((l) => l.trim()).filter(Boolean) },
+          ...form.boxArgsLabel == null ? {} : { boxArgsLabel: String(form.boxArgsLabel).trim() }
         };
       }
       var SHARE_FIELDS = [["name", "name"], ["path", "/absolute/folder"], ["version", "version"]];
@@ -60767,6 +60901,8 @@ Click for live activity`;
       var prefsSuiteRunnerSlots = document.getElementById("prefs-suite-runner-slots");
       var prefsSuiteRunnerBuildBoxes = document.getElementById("prefs-suite-runner-buildBoxes");
       var prefsSuiteRunnerExclusive = document.getElementById("prefs-suite-runner-exclusive");
+      var prefsSuiteRunnerBoxArgs = document.getElementById("prefs-suite-runner-boxArgs");
+      var prefsSuiteRunnerBoxArgsLabel = document.getElementById("prefs-suite-runner-boxArgsLabel");
       var prefsSuiteRunnerShares = document.getElementById("prefs-suite-runner-shares");
       var prefsSuiteRunnerShareRows = null;
       var prefsSuiteRunnerStatus = document.getElementById("prefs-suite-runner-status");
@@ -64167,6 +64303,8 @@ ${res.stderr}` : "");
         prefsSuiteRunnerSlots.value = String(rec.slots || 1);
         if (prefsSuiteRunnerBuildBoxes) prefsSuiteRunnerBuildBoxes.checked = rec.buildBoxes === true;
         if (prefsSuiteRunnerExclusive) prefsSuiteRunnerExclusive.checked = rec.exclusive !== "ignore";
+        if (prefsSuiteRunnerBoxArgs) prefsSuiteRunnerBoxArgs.value = (rec.boxArgs || []).join("\n");
+        if (prefsSuiteRunnerBoxArgsLabel) prefsSuiteRunnerBoxArgsLabel.value = rec.boxArgsLabel || "";
         prefsSuiteRunnerShareRows = prefsSuiteRunnerShares ? suiteShareEditor(document, prefsSuiteRunnerShares, rec.shares || []) : null;
         for (const k of ["enabled", "isolation", "work", "boxImage"]) {
           document.getElementById(`prefs-suite-runner-${k}-env`).classList.toggle("hidden", !forced.has(k));
@@ -64202,6 +64340,8 @@ ${res.stderr}` : "");
           slots: prefsSuiteRunnerSlots.value,
           ...prefsSuiteRunnerBuildBoxes ? { buildBoxes: prefsSuiteRunnerBuildBoxes.checked } : {},
           ...prefsSuiteRunnerExclusive ? { exclusive: prefsSuiteRunnerExclusive.checked ? "honour" : "ignore" } : {},
+          ...prefsSuiteRunnerBoxArgs ? { boxArgs: prefsSuiteRunnerBoxArgs.value } : {},
+          ...prefsSuiteRunnerBoxArgsLabel ? { boxArgsLabel: prefsSuiteRunnerBoxArgsLabel.value } : {},
           ...prefsSuiteRunnerShareRows ? { shares: prefsSuiteRunnerShareRows.read() } : {}
         });
       }
