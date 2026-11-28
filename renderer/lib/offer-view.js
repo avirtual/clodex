@@ -162,6 +162,8 @@ function suiteRunnerRecordFromForm(shown, form) {
     ...(Array.isArray(shares) && shares.length ? { shares } : {}),
     ...(buildBoxes ? { buildBoxes: true } : {}),
     ...(form.exclusive == null ? {} : { exclusive: form.exclusive === 'ignore' ? 'ignore' : 'honour' }),
+    ...(form.boxArgs == null ? {} : { boxArgs: String(form.boxArgs).split(/\r?\n/).map((l) => l.trim()).filter(Boolean) }),
+    ...(form.boxArgsLabel == null ? {} : { boxArgsLabel: String(form.boxArgsLabel).trim() }),
   };
 }
 

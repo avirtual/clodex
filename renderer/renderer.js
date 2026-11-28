@@ -6580,6 +6580,8 @@ const prefsSuiteRunnerBoxImage = document.getElementById('prefs-suite-runner-box
 const prefsSuiteRunnerSlots = document.getElementById('prefs-suite-runner-slots');
 const prefsSuiteRunnerBuildBoxes = document.getElementById('prefs-suite-runner-buildBoxes');
 const prefsSuiteRunnerExclusive = document.getElementById('prefs-suite-runner-exclusive');
+const prefsSuiteRunnerBoxArgs = document.getElementById('prefs-suite-runner-boxArgs');
+const prefsSuiteRunnerBoxArgsLabel = document.getElementById('prefs-suite-runner-boxArgsLabel');
 const prefsSuiteRunnerShares = document.getElementById('prefs-suite-runner-shares');
 let prefsSuiteRunnerShareRows = null;
 const prefsSuiteRunnerStatus = document.getElementById('prefs-suite-runner-status');
@@ -9942,6 +9944,8 @@ function renderSuiteRunnerPrefs(st) {
   prefsSuiteRunnerSlots.value = String(rec.slots || 1);
   if (prefsSuiteRunnerBuildBoxes) prefsSuiteRunnerBuildBoxes.checked = rec.buildBoxes === true;
   if (prefsSuiteRunnerExclusive) prefsSuiteRunnerExclusive.checked = rec.exclusive !== 'ignore';
+  if (prefsSuiteRunnerBoxArgs) prefsSuiteRunnerBoxArgs.value = (rec.boxArgs || []).join('\n');
+  if (prefsSuiteRunnerBoxArgsLabel) prefsSuiteRunnerBoxArgsLabel.value = rec.boxArgsLabel || '';
   prefsSuiteRunnerShareRows = prefsSuiteRunnerShares ? suiteShareEditor(document, prefsSuiteRunnerShares, rec.shares || []) : null;
   for (const k of ['enabled', 'isolation', 'work', 'boxImage']) {
     document.getElementById(`prefs-suite-runner-${k}-env`).classList.toggle('hidden', !forced.has(k));
@@ -9972,6 +9976,8 @@ function suiteRunnerRecordToSave() {
     slots: prefsSuiteRunnerSlots.value,
     ...(prefsSuiteRunnerBuildBoxes ? { buildBoxes: prefsSuiteRunnerBuildBoxes.checked } : {}),
     ...(prefsSuiteRunnerExclusive ? { exclusive: prefsSuiteRunnerExclusive.checked ? 'honour' : 'ignore' } : {}),
+    ...(prefsSuiteRunnerBoxArgs ? { boxArgs: prefsSuiteRunnerBoxArgs.value } : {}),
+    ...(prefsSuiteRunnerBoxArgsLabel ? { boxArgsLabel: prefsSuiteRunnerBoxArgsLabel.value } : {}),
     ...(prefsSuiteRunnerShareRows ? { shares: prefsSuiteRunnerShareRows.read() } : {}),
   });
 }

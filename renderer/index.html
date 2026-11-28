@@ -1439,6 +1439,15 @@
           </label>
           <p class="hint-text">A team can mark its test jobs exclusive so each one has this machine to itself. Off: such a job shares this machine's job slots like any other.</p>
           <div class="prefs-row" style="margin-top: 6px;">
+            <span>Box options</span>
+            <textarea id="prefs-suite-runner-boxArgs" rows="3" placeholder="--option=value" autocomplete="off" spellcheck="false" style="flex: 1;"></textarea>
+          </div>
+          <div class="prefs-row">
+            <span>Box options label</span>
+            <input type="text" id="prefs-suite-runner-boxArgsLabel" maxlength="32" autocomplete="off" spellcheck="false" style="flex: 1;">
+          </div>
+          <p class="hint-text">Extra options added to docker run for every test box on this machine, one per line with the value attached (for example --device=/dev/dri). They apply to the code of every team this runner accepts jobs from. Other machines see only the label and a fingerprint.</p>
+          <div class="prefs-row" style="margin-top: 6px;">
             <span>Shared folders</span>
           </div>
           <div id="prefs-suite-runner-shares"></div>

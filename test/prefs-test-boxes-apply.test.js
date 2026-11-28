@@ -283,3 +283,18 @@ test('t2466: suiteRunnerRecordFromForm passes exclusive through and omits it whe
   assert.deepStrictEqual(offerView.suiteRunnerRecordFromForm(shown, { ...form, exclusive: 'honour' }), { ...base, exclusive: 'honour' });
   assert.deepStrictEqual(offerView.suiteRunnerRecordFromForm(shown, form), base);
 });
+
+test('t2483: the markup carries the box options textarea, its label field and the exact help text', () => {
+  assert.match(section(), /<textarea id="prefs-suite-runner-boxArgs"[^>]*><\/textarea>/);
+  assert.match(section(), /<input type="text" id="prefs-suite-runner-boxArgsLabel"/);
+  assert.ok(section().includes('<p class="hint-text">Extra options added to docker run for every test box on this machine, one per line with the value attached (for example --device=/dev/dri). They apply to the code of every team this runner accepts jobs from. Other machines see only the label and a fingerprint.</p>'));
+});
+
+test('t2483: suiteRunnerRecordFromForm reads one box option per line and the label, and omits both when the form does not name them', () => {
+  const shown = { setting: { enabled: true, isolation: 'user', work: null, boxArgs: ['--privileged'] }, forced: [] };
+  const form = { enabled: true, isolation: 'user', work: '', boxImage: '', slots: '1' };
+  const base = { enabled: true, isolation: 'user', work: null };
+  assert.deepStrictEqual(offerView.suiteRunnerRecordFromForm(shown, { ...form, boxArgs: ' --device=/dev/dri \r\n\n--group-add=993\n', boxArgsLabel: ' gpu ' }), { ...base, boxArgs: ['--device=/dev/dri', '--group-add=993'], boxArgsLabel: 'gpu' });
+  assert.deepStrictEqual(offerView.suiteRunnerRecordFromForm(shown, { ...form, boxArgs: '', boxArgsLabel: '' }), { ...base, boxArgs: [], boxArgsLabel: '' });
+  assert.deepStrictEqual(offerView.suiteRunnerRecordFromForm(shown, form), base);
+});
