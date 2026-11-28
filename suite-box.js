@@ -203,8 +203,19 @@ function boxIdentity({ imageId, arch, cpus, definitionHash = null, rev = null, e
     isolation: 'container',
     box: { imageId, definitionHash, rev, ...(custom ? { custom } : {}) },
     host: { platform, arch: hostArch },
-    envKey: crypto.createHash('sha256').update(JSON.stringify(['container', imageId, 'linux', boxArch, cpus, 'UTC', 'C.UTF-8', ...(custom ? [custom.fingerprint] : [])])).digest('hex').slice(0, 12),
+    envKey: boxEnvKey(imageId, boxArch, cpus, custom),
   };
+}
+
+function boxEnvKey(imageId, boxArch, cpus, custom) {
+  return crypto.createHash('sha256').update(JSON.stringify(['container', imageId, 'linux', boxArch, cpus, 'UTC', 'C.UTF-8', ...(custom ? [custom.fingerprint] : [])])).digest('hex').slice(0, 12);
+}
+
+function restamp(env, custom) {
+  if (!env || !env.box) return env;
+  const box = { ...env.box };
+  delete box.custom;
+  return { ...env, box: { ...box, ...(custom ? { custom: { ...custom } } : {}) }, envKey: boxEnvKey(env.box.imageId, env.arch, env.cpus, custom) };
 }
 
 function boxIsolation({
@@ -459,4 +470,4 @@ function boxIsolation({
   };
 }
 
-module.exports = { createDocker, boxIsolation, runArgv, buildArgv, boxIdentity, runnerKeyOf, listProcs, BOX_ENV, DEADMAN, BUILD_LABEL };
+module.exports = { createDocker, boxIsolation, runArgv, buildArgv, boxIdentity, restamp, runnerKeyOf, listProcs, BOX_ENV, DEADMAN, BUILD_LABEL };

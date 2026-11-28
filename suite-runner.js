@@ -10,6 +10,7 @@ const { git } = require('./git-worktree');
 const { resolveFs } = require('./resolve-fs');
 const { boxFingerprint } = require('./team-box');
 const { customName, BOX_ARGS_FAILED } = require('./box-args');
+const { restamp } = require('./suite-box');
 
 const fs = resolveFs();
 
@@ -782,11 +783,11 @@ function createSuiteRunner({
   }
 
   function adopt(hash, env, trigger) {
-    trigger.identity = env;
+    trigger.identity = restamp(env, trigger.custom || null);
     delete trigger.build;
     save(trigger);
     for (const w of waitersOf(hash)) {
-      w.identity = env;
+      w.identity = restamp(env, w.custom || null);
       delete w.build;
       setState(w, 'queued');
     }
@@ -1543,6 +1544,7 @@ function createSuiteRunner({
   function jobFrom(body, origin, stamp, build) {
     const boxed = body.isolation === 'container';
     const ownArgs = boxed && box && typeof box.boxArgs === 'function' ? box.boxArgs() : [];
+    const ownCustom = ownArgs.length && typeof box.custom === 'function' ? box.custom() : null;
     return {
       id: body.id, attempt: body.attempt || 1, repoKey: body.repoKey, kind: body.kind, scope: body.scope || null,
       team: body.team || null, ticket: body.ticket || null, seat: body.seat || null,
@@ -1556,6 +1558,7 @@ function createSuiteRunner({
       ...(typeof origin === 'string' && origin ? { origin: origin.slice(0, 64) } : {}),
       ...(build ? { build } : {}),
       ...(ownArgs.length ? { boxArgs: ownArgs } : {}),
+      ...(ownCustom ? { custom: ownCustom } : {}),
       ...(body.exclusive === true ? { exclusive: true } : {}),
       ...(body.shadow === true ? { shadow: true } : {}),
     };

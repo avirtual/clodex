@@ -35,7 +35,7 @@ const GIB = 1024 ** 3;
 const tokenOf = (c) => c.args.find((a) => a.startsWith('clodex.box.build=')).slice('clodex.box.build='.length);
 const iidOf = (c) => c.args[c.args.indexOf('--iidfile') + 1];
 
-async function fixture(t, { buildBoxes = true, slots = 1, limits = {}, freeBytes = 100 * GIB, procsFail = () => false, before = () => {} } = {}) {
+async function fixture(t, { buildBoxes = true, slots = 1, limits = {}, freeBytes = 100 * GIB, procsFail = () => false, before = () => {}, boxOver = {} } = {}) {
   const root = mkTmpRoot('suite-box-build-');
   const repo = path.join(root, 'near');
   fs.mkdirSync(repo);
@@ -85,11 +85,12 @@ async function fixture(t, { buildBoxes = true, slots = 1, limits = {}, freeBytes
     if (procsFail()) throw new Error('ps denied');
     return [...alive].map(([pid, command]) => ({ pid, command }));
   };
-  const box = boxIsolation({
+  const makeBox = (over) => boxIsolation({
     image: null, work, stateDir: statePaths(root).dir, docker, kill, uid: 501, gid: 20, env: { CLODEX_NODE_NAME: 'box-host' },
     procs, statfs: () => ({ bavail: freeBytes / 4096, bsize: 4096 }), version: '9.9.9',
-    timers: { setTimeout: (fn) => setImmediate(fn), clearTimeout: () => {} },
+    timers: { setTimeout: (fn) => setImmediate(fn), clearTimeout: () => {} }, ...over,
   });
+  const box = makeBox(boxOver);
   const spawn = (cmd, args, opts) => {
     const child = new EventEmitter();
     child.pid = 5000 + calls.length;
@@ -121,9 +122,9 @@ async function fixture(t, { buildBoxes = true, slots = 1, limits = {}, freeBytes
     return child;
   };
   before({ root, alive, images });
-  const make = (on) => createSuiteRunner({
+  const make = (on, withBox = box) => createSuiteRunner({
     root, work, isolation: noneIsolation({ user: 'suite-test', kill: () => {} }), spawn, now: () => clock, timers,
-    platform: 'linux', arch: 'x64', box, buildBoxes: on, slots, limits,
+    platform: 'linux', arch: 'x64', box: withBox, buildBoxes: on, slots, limits,
   });
   let runner = make(buildBoxes);
   t.after(() => {
@@ -157,7 +158,7 @@ async function fixture(t, { buildBoxes = true, slots = 1, limits = {}, freeBytes
   return {
     root, work, calls, images, alive, kills, events, docker, pending, handlers, body, upload, builds, succeed, stderr, box,
     get runner() { return runner; },
-    restart: ({ buildBoxes: on, close }) => { if (close) runner.close(); runner = make(on); return runner; },
+    restart: ({ buildBoxes: on, close, boxOver: over }) => { if (close) runner.close(); runner = make(on, over ? makeBox(over) : box); return runner; },
     tick: (ms) => { clock += ms; },
     stateFile: (name) => path.join(statePaths(root).dir, name),
   };
@@ -498,6 +499,44 @@ test('t2366: a queued build job that meets a runner reloaded with builds off end
   assert.strictEqual(j2.reason, 'box-failed');
   assert.strictEqual(await f.stderr('j2'), 'suite-runner: box build: builds are off on this runner\n');
   assert.strictEqual(f.builds().length, 1);
+});
+
+test('t2483: build jobs queued under owner list A run with A and are stamped A after the runner is remade with list B; a job admitted under B is stamped B', async (t) => {
+  const LIST_A = ['--device=/dev/dri', '--env=SECRET_TOKEN=zzz'];
+  const LIST_B = ['--group-add=993'];
+  const f = await fixture(t, { boxOver: { boxArgs: LIST_A, boxArgsLabel: 'card-a' } });
+  const started = heldBuild(f);
+  await f.upload(f.body('j1', BUILD()));
+  const c = await started;
+  assert.strictEqual((await f.upload(f.body('j2', BUILD(DEF2)))).state, 'queued');
+  assert.strictEqual((await f.upload(f.body('j3', BUILD(DEF2)))).state, 'queued');
+  const old = f.runner;
+  old.close();
+  f.alive.delete(c.child.pid);
+  c.child.finish(1);
+  await until(async () => (await old.poll(['j1'])).jobs[0].state === 'done');
+  let rebuilt;
+  const held = new Promise((r) => { rebuilt = r; });
+  f.handlers.build = (b) => rebuilt(b);
+  const r = f.restart({ buildBoxes: true, boxOver: { boxArgs: LIST_B, boxArgsLabel: 'card-b' } });
+  r.start();
+  const b = await held;
+  assert.strictEqual((await f.upload(f.body('j4', BUILD(DEF2)))).state, 'build', 'ENTER: j4 waits on the same build under B');
+  fs.writeFileSync(iidOf(b), IMG_BUILT);
+  f.images.push({ id: IMG_BUILT, labels: [`clodex.box=${HASH2}`, `clodex.box.build=${tokenOf(b)}`] });
+  f.alive.delete(b.child.pid);
+  b.child.finish(0);
+  const done = [];
+  for (const id of ['j2', 'j3', 'j4']) done.push(await waitState(r, id, 'done'));
+  assert.deepStrictEqual(done.map((j) => [j.id, j.reason, j.env.box.custom, j.env.envKey]), [
+    ['j2', null, { fingerprint: 'db6e81fe4f40', label: 'card-a' }, '0b2e1d4f2b36'],
+    ['j3', null, { fingerprint: 'db6e81fe4f40', label: 'card-a' }, '0b2e1d4f2b36'],
+    ['j4', null, { fingerprint: '71107fba7a43', label: 'card-b' }, '000000000000'],
+  ]);
+  const ownOf = (call) => call.args.slice(call.args.indexOf('SHELL=/bin/sh') + 1, call.args.indexOf('-c') - 1);
+  const runOf = (id) => f.calls.filter((call) => call.cmd === 'docker' && call.args.includes(`clodex.suite.job=${id}`)).map(ownOf);
+  assert.deepStrictEqual(['j2', 'j3', 'j4'].map(runOf), [[LIST_A], [LIST_A], [LIST_B]]);
+  assert.ok(!JSON.stringify(done).includes('SECRET_TOKEN'), 'the status answers carry no raw option');
 });
 
 test('t2366: a build that ends on its own reaches endBuild with no pid and no process-group kill follows', async (t) => {
