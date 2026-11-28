@@ -460,6 +460,10 @@ intent park to the held store instead of failing "no such agent";
 typed. A reminder in the gap takes its existing offline park, which lands in
 the held store. A name with no record, a failed hold or a seat deleted in the
 gap still fails "no such agent". The MERGED notice has no retry or replay.
+An ESCALATED notice parked in the gap keeps `loopStep`, and its watch is
+kept under the lead's name (`_gapEscalations`) until the seat's next turn
+start adopts it (`_adoptGapEscalations`); without that the delivered
+escalation would leave `loopStep` set and the stall sweep would alarm on it.
 
 ### Draft and busy protections by seat type
 
