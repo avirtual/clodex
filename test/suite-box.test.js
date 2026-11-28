@@ -506,16 +506,17 @@ test('t2470: reap removes the job dir through a pending async rm with no sync wa
   const watch = (name) => (p, ...rest) => { if (String(p).startsWith(jobDir)) syncs.push(name); return realFs[name](p, ...rest); };
   const rms = [];
   let fail = null;
+  let onRm = () => {};
   const lateFs = {
     ...realFs,
     lstatSync: watch('lstatSync'), readdirSync: watch('readdirSync'), chmodSync: watch('chmodSync'), rmSync: watch('rmSync'),
-    promises: { ...realFs.promises, rm: (p, o) => new Promise((resolve, reject) => { rms.push({ p, land: () => (fail ? Promise.reject(fail) : realFs.promises.rm(p, o)).then(resolve, reject) }); }) },
+    promises: { ...realFs.promises, rm: (p, o) => new Promise((resolve, reject) => { rms.push({ p, land: () => (fail ? Promise.reject(fail) : realFs.promises.rm(p, o)).then(resolve, reject) }); onRm(); }) },
   };
   const { boxIsolation: box } = loadBoxWith({ fs: lateFs, 'original-fs': lateFs });
   const adapterLate = box({ image: IMAGE, work: root, stateDir: STATE, uid: 501, gid: 20, docker: stubDocker(() => ({ stdout: '' })) });
   let reaped = false;
   const reaping = adapterLate.reap(jobDir, null, ARM_JOB).then(() => { reaped = true; });
-  for (let i = 0; i < 20 && !rms.length; i++) await new Promise((r) => setImmediate(r));
+  await Promise.race([new Promise((r) => { onRm = r; }), reaping]);
   assert.deepStrictEqual([rms.map((r) => r.p), reaped, realFs.existsSync(jobDir)], [[jobDir], false, true], 'ENTER: the rm is pending');
   await rms[0].land();
   await reaping;
@@ -523,7 +524,7 @@ test('t2470: reap removes the job dir through a pending async rm with no sync wa
   realFs.mkdirSync(jobDir, { recursive: true });
   fail = new Error('EACCES: permission denied');
   const failing = adapterLate.reap(jobDir, null, ARM_JOB);
-  for (let i = 0; i < 20 && rms.length < 2; i++) await new Promise((r) => setImmediate(r));
+  await Promise.race([new Promise((r) => { onRm = r; }), failing.catch(() => {})]);
   rms[1].land().catch(() => {});
   await assert.rejects(failing, (e) => e.removal === true && e.message === `removing ${jobDir} failed: EACCES: permission denied`);
 });

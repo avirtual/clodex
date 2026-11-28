@@ -2356,7 +2356,7 @@ test('t2470: while a finished job tree removal is pending, info, poll and the ou
   await f.upload(f.body('first'));
   assert.strictEqual((await f.runner.submit(f.body('second'))).state, 'queued');
   await waitState(f.runner, 'first', 'done');
-  await arrived(1);
+  await Promise.race([arrived(1), waitState(f.runner, 'second', 'done')]);
   const firstDir = jobPaths(f.work, 'first').dir;
   assert.deepStrictEqual([removals.map((r) => r.p), fs.existsSync(firstDir)], [[firstDir], true], 'ENTER: the first tree removal is pending');
   const i = await f.runner.info();
@@ -2382,7 +2382,7 @@ test('t2470: a failed job tree removal is logged once with its path, keeps the o
   await f.upload(f.body('first'));
   assert.strictEqual((await f.runner.submit(f.body('second'))).state, 'queued');
   await waitState(f.runner, 'first', 'done');
-  await arrived(1);
+  await Promise.race([arrived(1), waitState(f.runner, 'second', 'done')]);
   await removals[0].land().catch(() => {});
   const second = await waitState(f.runner, 'second', 'done');
   const firstDir = jobPaths(f.work, 'first').dir;
