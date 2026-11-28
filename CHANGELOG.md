@@ -14,6 +14,7 @@ blocks a release.
 ## Unreleased
 
 - Context clear and reload: a message that cannot be kept while an agent restarts is now reported to its sender as not delivered, a restored hold that never completes is reported instead of holding messages silently, and the clearing mark stays on the agent's row through a compact.
+- Headless nodes: when the system kills one runaway child process for using too much memory, the Clodex service now keeps running instead of restarting and stopping every agent on the host. Nodes deployed before this release need a `clodexctl upgrade` or a redeploy (both rewrite the installed unit), or for a hand-installed unit the `OOMPolicy=continue` drop-in in peering/README.md, to get the setting.
 
 ## 5.218.0 — 2026-11-28
 
