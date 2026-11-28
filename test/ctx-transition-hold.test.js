@@ -699,15 +699,15 @@ async function escalateInGap(h, e) {
 }
 
 test('reload gap: an ESCALATED notice is delivered once to the respawned lead and leaves the loop state a live idle lead leaves', async () => {
-  const { live, e: le } = parkedForLiveLead();
-  live.s.lastUserInputTs = 0;
-  live.m._drainPendingAtIdle(live.s);
-  live.m._emitActivity('a', 'thinking');
-  assert.strictEqual(le.told(), 1);
-  const want = le.state(live.s._parkedEscalations);
-  assert.strictEqual(want.loopStep, undefined, 'ENTER: the drained escalation released the hold');
   mock.timers.enable({ apis: ['setTimeout'] });
   try {
+    const { live, e: le } = parkedForLiveLead();
+    live.s.lastUserInputTs = 0;
+    live.m._drainPendingAtIdle(live.s);
+    live.m._emitActivity('a', 'thinking');
+    assert.strictEqual(le.told(), 1);
+    const want = le.state(live.s._parkedEscalations);
+    assert.strictEqual(want.loopStep, undefined, 'ENTER: the drained escalation released the hold');
     const h = gapRig();
     const e = escRig(h);
     await escalateInGap(h, e);
@@ -728,11 +728,11 @@ test('reload gap: an ESCALATED notice is delivered once to the respawned lead an
 });
 
 test('reload gap: a failed respawn leaves the escalation counted, watched and held as a parked undelivered one; the badge click delivers it', async () => {
-  const { live, e: le } = parkedForLiveLead();
-  const want = le.state(live.s._parkedEscalations);
-  assert.deepStrictEqual([want.loopStep, want.watched], ['verify', ['t9']], 'ENTER: the reference is held and watched');
   mock.timers.enable({ apis: ['setTimeout'] });
   try {
+    const { live, e: le } = parkedForLiveLead();
+    const want = le.state(live.s._parkedEscalations);
+    assert.deepStrictEqual([want.loopStep, want.watched], ['verify', ['t9']], 'ENTER: the reference is held and watched');
     const h = gapRig();
     const e = escRig(h);
     await escalateInGap(h, e);
