@@ -7644,8 +7644,8 @@ function createSessionManager(deps) {
       catch (e) { log.error('intent', `reboot: settings write failed (proceeding): ${e.message}`); }
       this._broadcast('ipc-message', { type: 'reboot', from: who, to: 'clodex', body: `rebooting${reason ? `: ${reason}` : ''}` });
       log.info('intent', `reboot by ${who}${reason ? `: ${reason}` : ''}`);
-      let suiteJobs = 0;
-      try { suiteJobs = suiteRestartJobs ? (suiteRestartJobs() || []).length : 0; } catch {}
+      let suiteJobs = [];
+      try { suiteJobs = suiteRestartJobs ? suiteRestartJobs() || [] : []; } catch {}
       reply(`reboot queued — restarting once every session and the keyboard are idle${suiteWaitClause(suiteJobs)}; sessions resume on relaunch`);
       let relaunched = false;
       try {

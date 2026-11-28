@@ -57,8 +57,34 @@ function plainLabel(s, max) {
   return t.length > max ? `${t.slice(0, max - 1)}…` : t;
 }
 
-function suiteJobsLine(jobs) {
+function outboundPhrase(jobs) {
+  const by = new Map();
+  for (const j of jobs) {
+    const where = plainLabel(j.runner, TEAM_LABEL_MAX);
+    if (!by.has(where)) by.set(where, []);
+    by.get(where).push(plainLabel([j.team, j.ticket, j.kind].filter((x) => x != null && x !== '').join(' '), TEAM_LABEL_MAX));
+  }
+  const parts = [...by].map(([where, labels]) => {
+    const named = labels.filter(Boolean);
+    return `${labels.length} run${labels.length === 1 ? '' : 's'} on ${where}${named.length ? ` (${named.join(', ')})` : ''}`;
+  });
+  const text = parts.join(', ');
+  return text.length > SUITE_LINE_MAX ? `${text.slice(0, SUITE_LINE_MAX - 1)}…` : text;
+}
+
+function splitSuiteJobs(jobs) {
   const list = Array.isArray(jobs) ? jobs.filter(Boolean) : [];
+  return { local: list.filter((j) => j.runner == null), outbound: list.filter((j) => j.runner != null) };
+}
+
+function suiteJobsLine(jobs) {
+  const { local, outbound } = splitSuiteJobs(jobs);
+  const away = outbound.length ? `${outboundPhrase(outbound)} ${outbound.length === 1 ? 'is' : 'are'} in flight.` : '';
+  const line = localJobsLine(local);
+  return [line, away].filter(Boolean).join('\n');
+}
+
+function localJobsLine(list) {
   if (!list.length) return '';
   const teams = [];
   for (const j of list) {
@@ -71,8 +97,16 @@ function suiteJobsLine(jobs) {
   return line.length > SUITE_LINE_MAX ? `${line.slice(0, SUITE_LINE_MAX - 1)}…` : line;
 }
 
-function suiteWaitClause(n) {
-  return n > 0 ? ` and ${n} suite job${n === 1 ? '' : 's'} this machine is running for other teams finish${n === 1 ? 'es' : ''}` : '';
+function suiteWaitClause(jobs) {
+  const { local, outbound } = splitSuiteJobs(jobs);
+  const n = Array.isArray(jobs) ? local.length : Number.isInteger(jobs) && jobs > 0 ? jobs : 0;
+  const parts = [
+    ...(n > 0 ? [`${n} suite job${n === 1 ? '' : 's'} this machine is running for other teams`] : []),
+    ...(outbound.length ? [outboundPhrase(outbound)] : []),
+  ];
+  if (!parts.length) return '';
+  const one = parts.length === 1 && (n || outbound.length) === 1;
+  return ` and ${parts.join(' and ')} finish${one ? 'es' : ''}`;
 }
 
 function restartDetail({ busy = 0, idle = 0, jobs = [] } = {}) {
@@ -89,8 +123,7 @@ function restartDetail({ busy = 0, idle = 0, jobs = [] } = {}) {
 }
 
 function pendingDetail(jobs) {
-  const n = Array.isArray(jobs) ? jobs.filter(Boolean).length : 0;
-  return `Clodex will restart once every session and the keyboard are idle${suiteWaitClause(n)}. Restart now anyway, cancel the pending restart, or keep waiting?`;
+  return `Clodex will restart once every session and the keyboard are idle${suiteWaitClause(Array.isArray(jobs) ? jobs.filter(Boolean) : 0)}. Restart now anyway, cancel the pending restart, or keep waiting?`;
 }
 
 // A one-shot waiter that arms a poll loop and fires `restart` only once EVERY live

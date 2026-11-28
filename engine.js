@@ -1336,7 +1336,7 @@ const SessionManager = createSessionManager({
   notifyOS,
   setAppQuitting,
   relaunchApp: restartHostWhenIdle,
-  suiteRestartJobs: () => (seams.restartWaitsForSuite ? suiteRestartJobs() : []),
+  suiteRestartJobs: () => (seams.restartWaitsForSuite ? restartSuiteJobs() : []),
   relaunchUnavailable: restartUnavailable,
   restartSession: (...a) => restartSession(...a),
   getPluginHooks: () => (pluginHost ? pluginHost.hooks : null),
@@ -2003,6 +2003,8 @@ const suiteClient = createSuiteClient({
   compareFile: path.join(REGISTRY_DIR, 'logs', 'suite-compare.jsonl'),
   log: (m) => log.info('suite-client', m),
 });
+const restartSuiteJobs = () => [...suiteRestartJobs(), ...suiteClient.outboundRuns()];
+const SUITE_RECOVER_DELAY_MS = 60000;
 
 const { createSandboxManager } = require('./sandbox');
 const sandboxManager = enableSandbox ? createSandboxManager({
@@ -2342,6 +2344,10 @@ const toolCache = createToolCache({ whichBin });
   manager.startPendingPoll();
   manager.startAssistantSweep(60000);
   manager.startTicketWatchdog();
+  const suiteRecoverTimer = setTimeout(() => {
+    suiteClient.recoverOpenRuns().catch((e) => log.error('suite-client', `boot recovery of open remote runs failed: ${e && e.message ? e.message : String(e)}`));
+  }, SUITE_RECOVER_DELAY_MS);
+  if (suiteRecoverTimer.unref) suiteRecoverTimer.unref();
 
 
   remindScheduler = createRemindScheduler({
@@ -2520,6 +2526,7 @@ const toolCache = createToolCache({ whichBin });
     try { log.info('app', 'shutdown — engine.shutdown(), killing all sessions'); } catch {}
     try { clearInterval(wsWatchdogTimer); } catch {}
     try { clearInterval(msgCleanupTimer); } catch {}
+    try { clearTimeout(suiteRecoverTimer); } catch {}
     try { loopStall.stop(); } catch {}
     if (pluginUpdateWatch) { try { pluginUpdateWatch.stop(); } catch {} }
     try { proxyPoller.stop(); } catch {}
@@ -2545,7 +2552,7 @@ const toolCache = createToolCache({ whichBin });
     reconcileCodexSwaps,
     knownSkillNames,
     refreshRemoteToken, suiteRunnerState, applySuiteRunner, suiteClaimStatus, suiteActivity, suiteActivityNow, refreshSuiteActivity, suiteOutput,
-    fenceSuiteRunner, suiteRestartJobs,
+    fenceSuiteRunner, suiteRestartJobs: restartSuiteJobs,
     getBoxOffer, boxOfferForced: envBoxOffer !== undefined, readStoredBoxOffer, getOfferFacts, offerDirectory, dialers,
     readOfferFacts: () => runtimeProbe.refresh().then(() => getOfferFacts()),
     setRemoteToken: (token) => writeRemoteEnvToken(userDataPath, token),
