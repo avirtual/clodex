@@ -286,25 +286,7 @@ inject queue to empty (capped at `INJECT_BOOT_MAXWAIT` past the edge), so a spaw
   1. **Cost/dialog hold-park** (`_parkHeldDelivery`, from `_gatedDeliver`) —
      the target is idle-and-cold (`DM_HOLD_IDLE_MS`, 30min) or dialog-blocked.
      The SENDER is notified (bounce/notice with a resend id). Does NOT arm the
-     cap — waits for the target's own next turn or an explicit resend. The
-     payload carries `held` (the first park time, kept across a restart and a
-     resend re-park). A federated sender's "parked on <node>" bounce states the
-     receiving node's backlog for that seat ("3 waiting, oldest 7h", from
-     `parkBacklog`, returned only on the answer to that dm), and `[agent:who]`
-     on the owning node shows `(N waiting)`. The one bound is opt-in and off by
-     default: `parkWakeHours` (1-48, Preferences ▸ Sessions ▸ Waiting messages).
-     With it set, the 60 s ticket watchdog (`_sweepParkWake`, from
-     `_sweepTickets`) flushes a seat whose oldest `held` entry has waited that
-     long, through `_flushParkedNow` (kind `park-age`). A seat on a dialog,
-     mid-turn, drafting or dead is skipped and rechecked next pass. Each seat
-     gets one such wake until the operator interacts with it (typed input, a ✉
-     click, an `[agent:from user]` message). The allowance is spent only when
-     the batch is actually claimed, so a lost race spends nothing. It lives in
-     `~/.clodex/park-wake.json`, keyed by seat name and createdAt, so a
-     restart does not re-arm it. Peer traffic and the seat's own turns do not
-     re-arm it either. Every hold-park logs `park-on-hold for <seat> as <id>: N
-     waiting`, and every drain logs `park-drain for <seat> (<cause>): …` with
-     the cause, count and oldest age.
+     cap — waits for the next turn, a resend or the opt-in age wake (below).
   2. **Busy/draft park** (`_maybeParkDelivery` + the fire-time divert in
      `_parkDivertFor`) — the target is mid-turn (`thinking`) or has an open
      draft / recent keystroke in its pane at the delivery instant. This is
@@ -404,6 +386,15 @@ already holds (same kind, spec up to case and whitespace, body and setter, and f
 a timed kind the same stamp) and returns the existing id with `duplicate: true`;
 for a relative `in` the earlier row is kept, so it fires at its own time.
 An offline seat with no parked-mail drain (a Codex or Muse PTY record: `caps.park` false, not `io: 'stream'`) gets `'deferred'`: nothing is parked and `_fireRecord` keeps the row with a retry `RETRY_MS` (60s) later, as it does for a one-shot whose deliver returned `'error'` or threw.
+
+### Hold-park backlog and the age wake
+
+A hold-park's payload carries `held`, its first park time, kept across a restart and a resend re-park.
+A federated sender's "parked on <node>" bounce states the receiving node's backlog for that seat ("3 waiting, oldest 7h", from `parkBacklog`), returned only on the answer to that dm; `[agent:who]` on the owning node shows `(N waiting)`.
+The only bound is opt-in and off by default: `parkWakeHours` (1-48, Preferences ▸ Sessions ▸ Waiting messages). With it set, the 60 s ticket watchdog (`_sweepParkWake`, called from `_sweepTickets`) flushes a seat whose oldest `held` entry has waited that long through `_flushParkedNow` (kind `park-age`), and the bounce says which state the seat is in.
+A seat on a dialog, mid-turn, drafting or dead is skipped and rechecked on the next pass. Each seat gets one such wake until the operator interacts with it (typed input, a ✉ click, an `[agent:from user]` message); the seat's own turns, peer traffic and a restart do not re-arm it.
+The allowance is spent only when the batch is actually claimed, so a drain that loses the claim race spends nothing and is not retried in a loop. It lives in `~/.clodex/park-wake.json`, keyed by seat name with the seat's createdAt.
+Every hold-park logs `park-on-hold for <seat> as <id>: N waiting`, and every drain logs `park-drain for <seat> (<cause>): …` with the cause, the count and the oldest age.
 
 ### Draft and busy protections by seat type
 
