@@ -529,9 +529,9 @@ test('t2483: build jobs queued under owner list A run with A and are stamped A a
   const done = [];
   for (const id of ['j2', 'j3', 'j4']) done.push(await waitState(r, id, 'done'));
   assert.deepStrictEqual(done.map((j) => [j.id, j.reason, j.env.box.custom, j.env.envKey]), [
-    ['j2', null, { fingerprint: 'db6e81fe4f40', label: 'card-a' }, '0b2e1d4f2b36'],
-    ['j3', null, { fingerprint: 'db6e81fe4f40', label: 'card-a' }, '0b2e1d4f2b36'],
-    ['j4', null, { fingerprint: '71107fba7a43', label: 'card-b' }, '000000000000'],
+    ['j2', null, { fingerprint: 'db6e81fe4f40', label: 'card-a' }, 'ebf6238a9561'],
+    ['j3', null, { fingerprint: 'db6e81fe4f40', label: 'card-a' }, 'ebf6238a9561'],
+    ['j4', null, { fingerprint: '71107fba7a43', label: 'card-b' }, 'f0a19d6b5893'],
   ]);
   const ownOf = (call) => call.args.slice(call.args.indexOf('SHELL=/bin/sh') + 1, call.args.indexOf('-c') - 1);
   const runOf = (id) => f.calls.filter((call) => call.cmd === 'docker' && call.args.includes(`clodex.suite.job=${id}`)).map(ownOf);

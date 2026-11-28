@@ -9,7 +9,7 @@ const FINGERPRINT_RE = /^[0-9a-f]{12}$/;
 const BOX_ARGS_FAILED = 'the runner owner\'s box options failed to start the box';
 const RESERVED_LONG = [
   '--name', '--rm', '--detach', '--entrypoint', '--cidfile', '--interactive', '--tty', '--restart',
-  '--workdir', '--platform', '--pull', '--init', '--log-driver', '--log-opt', '--label', '--label-file',
+  '--workdir', '--platform', '--pull', '--init', '--log-driver', '--log-opt', '--label', '--label-file', '--help', '--version',
 ];
 const RESERVED_SHORT = { d: '--detach', i: '--interactive', t: '--tty', w: '--workdir', l: '--label' };
 const BARE_LONG = [

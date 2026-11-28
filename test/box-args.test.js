@@ -17,6 +17,8 @@ const ARG_ROWS = [
   ['--name=x', '--name is reserved by Clodex'],
   ['--name', '--name is reserved by Clodex'],
   ['--rm', '--rm is reserved by Clodex'],
+  ['--help', '--help is reserved by Clodex'],
+  ['--version=true', '--version is reserved by Clodex'],
   ['--detach', '--detach is reserved by Clodex'],
   ['--detach=true', '--detach is reserved by Clodex'],
   ['-d', '-d (--detach) is reserved by Clodex'],

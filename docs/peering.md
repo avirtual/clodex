@@ -696,7 +696,8 @@ options Clodex sets itself are refused by name in both forms (`--name`,
 `--rm`, `--detach`/`-d`, `--entrypoint`, `--cidfile`,
 `--interactive`/`-i`, `--tty`/`-t`, `--restart`, `--workdir`/`-w`,
 `--platform`, `--pull`, `--init`, `--log-driver`, `--log-opt`,
-`--label`/`-l`, `--label-file`), as is a short cluster holding `d`, `i` or
+`--label`/`-l`, `--label-file`, and `--help` and `--version`, which would
+end the box before the suite ran), as is a short cluster holding `d`, `i` or
 `t`. A refusal names the element by its 1-based position and rejects the whole
 save. The label is at most 32 of `[A-Za-z0-9._-]`. `runArgv` puts the list
 after the env flags and immediately before the image. Box jobs only: native
