@@ -8215,6 +8215,7 @@ function createSessionManager(deps) {
             send: (m) => { if (child.connected) child.send(m); },
             notifyLead: (body) => this._broadcast('ipc-message', { type: 'task', from: 'ticket-loop', to: execTeam ? execTeam.lead : null, body }),
             log: (m) => log.warn('intent', m),
+            ...(deps.suiteSnapshot ? { snapshot: deps.suiteSnapshot } : {}),
             ...(handRunMs != null ? { runMs: handRunMs } : {}),
             ...(handQueueMs != null ? { queueBudgetMs: handQueueMs } : {}),
           });
