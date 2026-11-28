@@ -261,9 +261,10 @@ function terminate(sig) {
   if (terminating) return;
   terminating = true;
   log.info('app', `${sig} — engine.shutdown(), killing all sessions`);
-  let cut = 0;
-  try { cut = engine.suiteRestartJobs().length; } catch {}
-  if (cut) log.info('app', signalCutLine(sig, cut));
+  let cut = [];
+  try { cut = engine.suiteRestartJobs(); } catch {}
+  const cutLine = signalCutLine(sig, cut);
+  if (cutLine) log.info('app', cutLine);
   if (webHost) { try { webHost.close(); } catch (e) { log.error('app', `web host close error: ${e && e.message}`); } }
   try { engine.shutdown(); } catch (e) { log.error('app', `shutdown error: ${e && e.message}`); }
   releasePidLock();

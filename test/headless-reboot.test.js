@@ -394,7 +394,15 @@ test('t2407: a SIGTERM/SIGINT names the suite jobs it cuts, and says nothing whe
   assert.strictEqual(signalCutLine('SIGTERM', 1), 'SIGTERM — cutting 1 suite job this machine is running for other teams');
   assert.strictEqual(signalCutLine('SIGINT', 3), 'SIGINT — cutting 3 suite jobs this machine is running for other teams');
   const src = seamNames('headless-main.js');
-  assert.match(src, /function terminate\(sig\) \{[\s\S]*?let cut = 0;\s*try \{ cut = engine\.suiteRestartJobs\(\)\.length; \} catch \{\}\s*if \(cut\) log\.info\('app', signalCutLine\(sig, cut\)\);[\s\S]*?engine\.shutdown\(\);/);
+  assert.match(src, /function terminate\(sig\) \{[\s\S]*?let cut = \[\];\s*try \{ cut = engine\.suiteRestartJobs\(\); \} catch \{\}\s*const cutLine = signalCutLine\(sig, cut\);\s*if \(cutLine\) log\.info\('app', cutLine\);[\s\S]*?engine\.shutdown\(\);/);
+});
+
+test('t2480: a SIGTERM names a local job and an outbound run apart', () => {
+  const away = { id: 'x', team: 'avh', ticket: 't2108', kind: 'verify', runner: 'work' };
+  assert.strictEqual(signalCutLine('SIGTERM', [{ id: 'j1', team: 'alpha' }, away]),
+    'SIGTERM — cutting 1 suite job this machine is running for other teams and 1 run on work (avh t2108 verify)');
+  assert.strictEqual(signalCutLine('SIGINT', [away]), 'SIGINT — cutting 1 run on work (avh t2108 verify)');
+  assert.strictEqual(signalCutLine('SIGTERM', []), '');
 });
 
 test('t2407: window-all-closed on non-darwin only asks to quit, so the quit guard decides before engine.shutdown runs', () => {
