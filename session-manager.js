@@ -7139,8 +7139,8 @@ function createSessionManager(deps) {
                   notice = r.noUrgent
                     ? `[agent:dm] parked for ${intent.target} (${why}) as ${parkId} — it'll be delivered after the human answers the dialog.`
                     : fromIdent
-                    ? `[agent:dm] parked for ${intent.target} (${why}) as ${parkId} — it'll be delivered with ${intent.target}'s next turn.`
-                    : `[agent:dm] parked for ${intent.target} (${why}) as ${parkId} — it'll be delivered with ${intent.target}'s next turn. If it can't wait, emit \`[agent:resend ${parkId}]\` to wake them now (delivers the parked copy — don't retype the message).`;
+                    ? `[agent:dm] parked for ${intent.target} (${why}) as ${parkId} — ${parkedWaitingClause(r.waiting, intent.target)}.`
+                    : `[agent:dm] parked for ${intent.target} (${why}) as ${parkId} — ${parkedWaitingClause(r.waiting, intent.target)}. If it can't wait, emit \`[agent:resend ${parkId}]\` to wake them now (delivers the parked copy — don't retype the message).`;
                 } else {
                   const retry = r.noUrgent
                     ? `Nothing was kept. Resend after ${intent.target} is unblocked (a human has to answer the dialog).`

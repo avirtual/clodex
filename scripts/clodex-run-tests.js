@@ -459,7 +459,7 @@ function lockRefusal(lines) {
   return null;
 }
 
-module.exports = { TEST_ROOTS, failureRows, isPoolPath, testPool, hostTestRoots, envDroppedLine };
+module.exports = { TEST_ROOTS, failureRows, isPoolPath, testPool, hostTestRoots, envDroppedLine, recordedTotals };
 if (require.main !== module) return;
 
 const CHANNEL = typeof process.send === 'function';

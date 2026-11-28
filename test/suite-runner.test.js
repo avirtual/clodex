@@ -929,9 +929,34 @@ test('t2480: eviction sets a cache entry aside as a .gone~ sibling before removi
   for (const r of removals.slice(0, 2)) r.resolve();
 });
 
+test('t2480: an entry whose eviction rename fails is logged and stays indexed; the next entry is still evicted and the index written', async (t) => {
+  const clock = 30 * 24 * 3600 * 1000;
+  const logged = [];
+  const f = await fixture(t, { now: () => clock, runnerOver: { removeTree: () => Promise.resolve(), log: (m) => logged.push(m) } });
+  await drain();
+  const locked = path.join('deps', 'locked', 'a'.repeat(64));
+  const open = path.join('deps', f.snap.repoKey, 'b'.repeat(64));
+  for (const rel of [locked, open]) {
+    fs.mkdirSync(path.join(f.work, rel), { recursive: true });
+    fs.writeFileSync(path.join(f.work, `${rel}.json`), '{}');
+  }
+  const cacheFile = path.join(f.root, 'suite-runner', 'cache.json');
+  fs.writeFileSync(cacheFile, JSON.stringify({ [locked]: 0, [open]: 1 }));
+  fs.chmodSync(path.join(f.work, 'deps', 'locked'), 0o555);
+  t.after(() => fs.chmodSync(path.join(f.work, 'deps', 'locked'), 0o755));
+  const result = await f.runner.tick();
+  assert.deepStrictEqual([result.ran, result.removed], [true, [open]]);
+  assert.deepStrictEqual([fs.existsSync(path.join(f.work, locked)), fs.existsSync(path.join(f.work, open)), JSON.parse(fs.readFileSync(cacheFile, 'utf8'))], [true, false, { [locked]: 0 }]);
+  assert.ok(logged.some((m) => m.startsWith(`suite-runner: evicting ${path.join(f.work, locked)} failed: `)), logged.join('\n'));
+});
+
 test('t2480: a job submitted while the cache size walk is in flight stops eviction before any entry goes', async (t) => {
   const clock = 30 * 24 * 3600 * 1000;
-  const f = await fixture(t, { now: () => clock });
+  let release = null;
+  let entered = null;
+  const walking = new Promise((resolve) => { entered = resolve; });
+  const gate = new Promise((resolve) => { release = resolve; });
+  const f = await fixture(t, { now: () => clock, runnerOver: { sizeOf: () => { entered(); return gate.then(() => 0); } } });
   await drain();
   await f.runner.submit(f.body('warm'));
   await f.runner.cancel('warm');
@@ -944,9 +969,11 @@ test('t2480: a job submitted while the cache size walk is in flight stops evicti
   }
   fs.writeFileSync(cacheFile, JSON.stringify({ [rels[0]]: 0, [rels[1]]: 1 }));
   const ticking = f.runner.tick();
-  const submitted = f.runner.submit(f.body('mid-walk'));
+  await walking;
+  const submitted = await f.runner.submit(f.body('mid-walk'));
+  assert.strictEqual(submitted.state, 'awaiting-pack', 'ENTER: the job went live during the walk');
+  release();
   assert.deepStrictEqual(await ticking, { ran: false });
-  assert.strictEqual((await submitted).state, 'awaiting-pack', 'ENTER: the job went live during the walk');
   assert.deepStrictEqual([rels.map((rel) => fs.existsSync(path.join(f.work, rel))), Object.keys(JSON.parse(fs.readFileSync(cacheFile, 'utf8')))], [[true, true], rels]);
 });
 
@@ -2613,4 +2640,51 @@ test('t2483: a suite that starts and exits non-zero under owner box options is a
   const g2 = await fixture(t, { runnerOver: { box: labelledBox().box }, onSpawn: (c) => c.child.finish(125) });
   assert.strictEqual((await g2.upload(g2.body('plain125', 'hand', { isolation: 'container' }))).ok, true);
   assert.strictEqual((await waitState(g2.runner, 'plain125', 'done')).reason, 'box-failed');
+});
+
+const DAEMON_125 = 'docker: Error response from daemon: unable to find group nosuchgroup-clodex: no matching entries in group file\n';
+const DAEMON_127 = 'docker: Error response from daemon: error gathering device information while adding custom device "/dev/clodex-no-such-device": no such file or directory\n';
+const DAEMON_126 = 'docker: Error response from daemon: failed to create task for container: permission denied\n';
+const SUITE_127 = 'sh: 1: node: not found\n';
+const SUITE_126 = 'sh: 1: ./run: Permission denied\n';
+const START_ROWS = [
+  ['list, daemon 125 before start', LIST_A, DAEMON_125, 125, 'box-args-failed'],
+  ['list, client unknown flag 125', LIST_A, 'unknown flag: --devices\n\nUsage:  docker run [OPTIONS] IMAGE [COMMAND] [ARG...]\n', 125, 'box-args-failed'],
+  ['list, client invalid value 125', LIST_A, 'invalid argument "x" for "--add-host" flag: bad format\n', 125, 'box-args-failed'],
+  ['list, daemon 126 before start', LIST_A, DAEMON_126, 126, 'box-args-failed'],
+  ['list, daemon 127 before start', LIST_A, DAEMON_127, 127, 'box-args-failed'],
+  ['list, suite started then 126', LIST_A, SUITE_126, 126, null],
+  ['list, suite started then 127', LIST_A, SUITE_127, 127, null],
+  ['no list, daemon 125', [], DAEMON_125, 125, 'box-failed'],
+  ['no list, daemon 126', [], DAEMON_126, 126, null],
+  ['no list, daemon 127', [], DAEMON_127, 127, null],
+];
+for (const [name, list, stderr, code, reason] of START_ROWS) {
+  test(`t2486: ${name} ends with reason ${reason}`, async (t) => {
+    const logged = [];
+    const f = await fixture(t, {
+      runnerOver: { box: labelledBox(list.length ? { boxArgs: list, boxArgsLabel: 'card-a' } : {}).box, log: (m) => logged.push(m) },
+      onSpawn: (c) => { c.child.stderr.write(stderr); c.child.finish(code); },
+    });
+    assert.strictEqual((await f.upload(f.body('j', 'hand', { isolation: 'container' }))).ok, true);
+    const done = await waitState(f.runner, 'j', 'done');
+    assert.deepStrictEqual([done.reason, done.exit], [reason, { code, signal: null }]);
+    const out = (await f.runner.output('j', { stream: 'stderr' })).text;
+    if (reason === 'box-args-failed') {
+      assert.strictEqual(out, 'suite-runner: the runner owner\'s box options failed to start the box (card-a)\n');
+      assert.ok(logged.some((m) => m === `suite-runner: j: docker run exited ${code} under the owner box options: ${stderr.trim()}`), logged.join('\n'));
+    } else {
+      assert.ok(out.includes(stderr), `the job's own stderr survives: ${out}`);
+    }
+  });
+}
+
+test('t2486: a daemon 127 at the setup exec under owner box options ends box-args-failed', async (t) => {
+  const f = await fixture(t, {
+    runnerOver: { box: labelledBox({ boxArgs: LIST_A, boxArgsLabel: 'card-a' }).box },
+    onSpawn: (c) => { c.child.stderr.write(DAEMON_127); c.child.finish(127); },
+  });
+  assert.strictEqual((await f.upload(f.body('s', 'hand', { isolation: 'container', setup: { run: 'npm ci', key: ['package.json'], paths: ['node_modules'] } }))).ok, true);
+  const done = await waitState(f.runner, 's', 'done');
+  assert.deepStrictEqual([done.reason, done.exit], ['box-args-failed', { code: 127, signal: null }]);
 });

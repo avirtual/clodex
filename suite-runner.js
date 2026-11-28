@@ -77,6 +77,8 @@ const BUILD_DISK_FLOOR = 10 * 1024 ** 3;
 const BUILD_TAIL_LINES = 20;
 const BUILD_TAIL_BYTES = 8 * 1024;
 const BOX_ARGS_LOG_BYTES = 4096;
+const BOX_START_CODES = [125, 126, 127];
+const DAEMON_START_ERROR_RE = /^docker: Error response from daemon:/m;
 const BOX_PRUNE_EVERY_MS = 60 * MIN;
 
 const ACTIVITY_RECENT = 10;
@@ -500,7 +502,7 @@ function createSuiteRunner({
   root, oldRoot = null, work, isolation = userIsolation(), limits = {}, spawn = childProcess.spawn,
   now = Date.now, log = () => {}, timers = DEFAULT_TIMERS, platform = process.platform, arch = process.arch,
   box = null, boxSweep = null, onActivity = null, activityMs = ACTIVITY_MS, slots = 1, shares = [], buildBoxes = false, exclusive = 'honour',
-  removeTree = forceRemoveAsync,
+  removeTree = forceRemoveAsync, sizeOf = bytesOf,
 }) {
   const held = Array.isArray(shares) ? shares.map(({ name, path: at, version }) => ({ name, path: at, version })) : [];
   const slotTotal = slotCount(slots);
@@ -1126,16 +1128,30 @@ function createSuiteRunner({
 
   const customised = (job) => Array.isArray(job.boxArgs) && job.boxArgs.length > 0;
 
+  function boxNeverStarted(job, r) {
+    if (!customised(job) || !BOX_START_CODES.includes(r.code)) return false;
+    if (r.code === 125) return true;
+    let head = '';
+    try {
+      const fd = fs.openSync(outFile(job.id, 'stderr'), 'r');
+      try {
+        const buf = Buffer.alloc(BOX_ARGS_LOG_BYTES);
+        head = buf.toString('utf8', 0, fs.readSync(fd, buf, 0, buf.length, 0));
+      } finally { fs.closeSync(fd); }
+    } catch {}
+    return DAEMON_START_ERROR_RE.test(head);
+  }
+
   function boxArgsFailed(job, r) {
     let said = '';
     try { said = fs.readFileSync(outFile(job.id, 'stderr'), 'utf8').slice(-BOX_ARGS_LOG_BYTES).trim(); } catch {}
-    log(`suite-runner: ${job.id}: docker run exited 125 under the owner box options: ${said || '(no stderr)'}`);
+    log(`suite-runner: ${job.id}: docker run exited ${r.code} under the owner box options: ${said || '(no stderr)'}`);
     resetOutputs(job);
     const custom = job.identity && job.identity.box ? job.identity.box.custom : null;
     const text = `suite-runner: ${BOX_ARGS_FAILED} (${customName(custom) || 'unstamped'})\n`;
     fs.writeFileSync(outFile(job.id, 'stderr'), text);
     job.out.stderrBytes = Buffer.byteLength(text);
-    return finish(job, { reason: 'box-args-failed', exit: { code: 125, signal: r.signal || null } }, r.killing);
+    return finish(job, { reason: 'box-args-failed', exit: { code: r.code, signal: r.signal || null } }, r.killing);
   }
 
   function childEnv(job, jobDir) {
@@ -1268,7 +1284,7 @@ function createSuiteRunner({
       const r = await exec(job, jobDir, ['/bin/sh', '-c', job.setup.run], job.setup.timeoutMs || lim.setupTimeoutMs);
       if (job.stop) return finish(job, { reason: job.stop, exit: null }, r.killing);
       if (r.spawnFailed && isolation.mode === 'container') return finish(job, { reason: 'setup-failed', exit: null });
-      if (isolation.mode === 'container' && r.code === 125 && customised(job)) return boxArgsFailed(job, r);
+      if (isolation.mode === 'container' && boxNeverStarted(job, r)) return boxArgsFailed(job, r);
       if (isolation.mode === 'container' && r.code === 125) return finish(job, { reason: 'box-failed', exit: { code: 125, signal: r.signal || null } }, r.killing);
       if (r.code !== 0) return finish(job, { reason: 'setup-failed', exit: { code: r.code, signal: r.signal || null } }, r.killing);
       await isolation.seal(jobDir, deps.entry, job.setup.paths);
@@ -1296,7 +1312,7 @@ function createSuiteRunner({
     job.runMs = now() - runStartedAt;
     const boxed = isolation.mode === 'container';
     if (boxed && r.spawnFailed && !job.stop) return finish(job, { reason: 'setup-failed', exit: null });
-    if (boxed && r.code === 125 && !job.stop && !r.timedOut && customised(job)) return boxArgsFailed(job, r);
+    if (boxed && !job.stop && !r.timedOut && boxNeverStarted(job, r)) return boxArgsFailed(job, r);
     const reason = job.stop || (r.timedOut ? 'timeout' : null) || (boxed && (r.code === 125 || r.error) ? 'box-failed' : null);
     return finish(job, { reason, exit: { code: r.code, signal: r.signal || null } }, r.killing);
   }
@@ -1371,10 +1387,12 @@ function createSuiteRunner({
   function evict(p) {
     const gone = goneSibling(p);
     try { fs.renameSync(p, gone); } catch (e) {
-      if (e.code === 'ENOENT') return;
-      throw e;
+      if (e.code === 'ENOENT') return true;
+      log(`suite-runner: evicting ${p} failed: ${e.message}`);
+      return false;
     }
     sweepGone(gone);
+    return true;
   }
 
   function sweepGone(p) {
@@ -1394,7 +1412,7 @@ function createSuiteRunner({
       const entries = [];
       for (const e of cacheEntries()) {
         let bytes = 0;
-        for (const p of e.paths) bytes += await bytesOf(p);
+        for (const p of e.paths) bytes += await sizeOf(p);
         entries.push({ ...e, usedAt: cache[e.rel] || 0, bytes });
       }
       if (anyLive() || active.size) return { ran: false };
@@ -1402,7 +1420,9 @@ function createSuiteRunner({
       const removed = [];
       for (const e of entries.sort((a, b) => a.usedAt - b.usedAt)) {
         if (now() - e.usedAt > lim.cacheIdleMs || total > lim.cacheMaxBytes) {
-          for (const p of e.paths) evict(p);
+          let evicted = true;
+          for (const p of e.paths) evicted = evict(p) && evicted;
+          if (!evicted) continue;
           delete cache[e.rel];
           total -= e.bytes;
           removed.push(e.rel);

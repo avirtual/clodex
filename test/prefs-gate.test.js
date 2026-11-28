@@ -8,7 +8,7 @@ const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
 const path = require('node:path');
-const { prefsGate, PROXY_DEPENDENT } = require('../renderer/lib/prefs-gate');
+const { prefsGate, parkWakeHoursValue, PROXY_DEPENDENT } = require('../renderer/lib/prefs-gate');
 
 test('proxy off: every dependent toggle is disabled with a reason', () => {
   const g = prefsGate({ proxyEnabled: false, contextHints: true });
@@ -86,4 +86,22 @@ test('gating is presentational — it exposes no value to write back', () => {
   for (const v of Object.values(g)) {
     assert.deepStrictEqual(Object.keys(v).sort(), ['disabled', 'reason']);
   }
+});
+
+test('parkWakeHoursValue: a ticked box clamps the hours to 1-48 instead of saving a value the sanitizer turns off', () => {
+  const rows = [
+    [false, '12', 0],
+    [false, '900', 0],
+    [true, '12', 12],
+    [true, '1', 1],
+    [true, '48', 48],
+    [true, '49', 48],
+    [true, '900', 48],
+    [true, '0', 1],
+    [true, '-5', 1],
+    [true, '2.6', 3],
+    [true, '', 12],
+    [true, 'abc', 12],
+  ];
+  for (const [checked, raw, want] of rows) assert.strictEqual(parkWakeHoursValue(checked, raw), want, `${checked} ${JSON.stringify(raw)}`);
 });

@@ -44,4 +44,10 @@ function prefsGate(state) {
   return out;
 }
 
-module.exports = { prefsGate, PROXY_DEPENDENT };
+function parkWakeHoursValue(checked, raw) {
+  if (!checked) return 0;
+  const n = String(raw == null ? '' : raw).trim() === '' ? NaN : Math.round(Number(raw));
+  return Number.isFinite(n) ? Math.min(48, Math.max(1, n)) : 12;
+}
+
+module.exports = { prefsGate, parkWakeHoursValue, PROXY_DEPENDENT };
