@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+- Test runners: a run on the source machine now names the team env variables it did not apply (reserved names such as PATH), in the run's digest and ledger row, instead of dropping them in silence.
+
 ## 5.213.0 — 2026-11-28
 
 - Test runners: the record of a hand's named test run now lists the files it named, not only how many.

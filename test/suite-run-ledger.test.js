@@ -92,6 +92,28 @@ test('ledger: a green own run writes one start and one end with the same id', ()
   });
 });
 
+test('t2462: a start row carries the team env names the caller dropped, after override, and a malformed list adds nothing', () => {
+  const { root, sha } = mkRunnerRoot();
+  const file = path.join(root, 'logs', 'suite-runs.jsonl');
+  const r = runRunner(root, {
+    CLODEX_SUITE_LEDGER: file, CLODEX_SUITE_RUN_ID: 'run-d', CLODEX_SUITE_KIND: 'verify', CLODEX_SUITE_TICKET: 't9',
+    CLODEX_SUITE_ENV_DROPPED: '{"envDropped":[{"name":"PATH","why":"reserved"},{"name":"LD_PRELOAD","why":"bad value"}],"envDroppedCut":true}',
+  });
+  assert.strictEqual(r.totals, 'TOTALS: 3 pass, 0 fail, 3 tests', 'ENTER: the run was green');
+  const start = settle(readLedger(file)[0], ['queuedAt', 'startedAt']);
+  assert.deepStrictEqual(start, {
+    id: 'run-d', phase: 'start', kind: 'verify', scope: 'own', ticket: 't9', seat: null,
+    tree: root, sha, dirty: false, pid: r.pid, where: 'local', route: null, override: null,
+    envDropped: [{ name: 'PATH', why: 'reserved' }, { name: 'LD_PRELOAD', why: 'bad value' }], envDroppedCut: true,
+  });
+  assert.deepStrictEqual(Object.keys(start).slice(-3), ['override', 'envDropped', 'envDroppedCut']);
+  const bad = runRunner(root, { CLODEX_SUITE_LEDGER: file, CLODEX_SUITE_RUN_ID: 'run-e', CLODEX_SUITE_ENV_DROPPED: '{"envDropped":"PATH"}' });
+  assert.strictEqual(bad.code, 0, 'ENTER: the second run was green');
+  const second = readLedger(file).find((x) => x.id === 'run-e' && x.phase === 'start');
+  assert.ok(second, 'ENTER: the second start row was written');
+  assert.ok(!('envDropped' in second) && !('envDroppedCut' in second), JSON.stringify(second));
+});
+
 test('ledger: absent kind/seat/ticket read as manual/null/null, a full run is scope full, an edited tree is dirty', () => {
   const { root, sha } = mkRunnerRoot();
   fs.appendFileSync(path.join(root, 'one.test.js'), '\n');
