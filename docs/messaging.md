@@ -286,7 +286,25 @@ inject queue to empty (capped at `INJECT_BOOT_MAXWAIT` past the edge), so a spaw
   1. **Cost/dialog hold-park** (`_parkHeldDelivery`, from `_gatedDeliver`) —
      the target is idle-and-cold (`DM_HOLD_IDLE_MS`, 30min) or dialog-blocked.
      The SENDER is notified (bounce/notice with a resend id). Does NOT arm the
-     cap — waits for the target's own next turn or an explicit resend.
+     cap — waits for the target's own next turn or an explicit resend. The
+     payload carries `held` (the first park time, kept across a restart and a
+     resend re-park). A federated sender's "parked on <node>" bounce states the
+     receiving node's backlog for that seat ("3 waiting, oldest 7h", from
+     `parkBacklog`, returned only on the answer to that dm), and `[agent:who]`
+     on the owning node shows `(N waiting)`. The one bound is opt-in and off by
+     default: `parkWakeHours` (1-48, Preferences ▸ Sessions ▸ Waiting messages).
+     With it set, the 60 s ticket watchdog (`_sweepParkWake`, from
+     `_sweepTickets`) flushes a seat whose oldest `held` entry has waited that
+     long, through `_flushParkedNow` (kind `park-age`). A seat on a dialog,
+     mid-turn, drafting or dead is skipped and rechecked next pass. Each seat
+     gets one such wake until the operator interacts with it (typed input, a ✉
+     click, an `[agent:from user]` message). The allowance is spent only when
+     the batch is actually claimed, so a lost race spends nothing. It lives in
+     `~/.clodex/park-wake.json`, keyed by seat name and createdAt, so a
+     restart does not re-arm it. Peer traffic and the seat's own turns do not
+     re-arm it either. Every hold-park logs `park-on-hold for <seat> as <id>: N
+     waiting`, and every drain logs `park-drain for <seat> (<cause>): …` with
+     the cause, count and oldest age.
   2. **Busy/draft park** (`_maybeParkDelivery` + the fire-time divert in
      `_parkDivertFor`) — the target is mid-turn (`thinking`) or has an open
      draft / recent keystroke in its pane at the delivery instant. This is

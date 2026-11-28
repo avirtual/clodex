@@ -11826,6 +11826,13 @@ body:not(.web-frontend):has(#sidebar[data-folded="1"]) #main {
           <label class="prefs-check" style="margin: 0 0 0 12px;"><input type="checkbox" id="prefs-idle-pause-auto"><span>Pause them automatically</span></label>
         </div>
         <p class="hint-text">Clodex asks once five or more sessions have been idle that long. With automatic pausing on, it pauses them without asking, however many there are. 0 turns both off.</p>
+        <h5 style="margin-top: 14px;">Waiting messages</h5>
+        <div class="prefs-row" style="margin-top: 4px;">
+          <label class="prefs-check" style="margin: 0;"><input type="checkbox" id="prefs-park-wake"><span>Deliver waiting messages after</span></label>
+          <input type="number" id="prefs-park-wake-hours" min="1" max="48" step="1" value="12" style="flex: none; width: 5em;">
+          <span>hours</span>
+        </div>
+        <p class="hint-text">Messages to an agent that has been idle a long time wait for its next turn, to avoid paying for a cold start. Turn this on to deliver them anyway once the oldest has waited this long. Each idle agent is woken this way at most once until you interact with it.</p>
       </details>
       <!-- No Plugins section here (T5/t109): neither the on/off choice nor a
            plugin's own settings belong in this dialog. Both live on the
@@ -27584,6 +27591,23 @@ ${i3.join("\n")}
       function proxyReceivedAt(p, now = Date.now()) {
         return p && typeof p.ageMs === "number" ? now - p.ageMs : now;
       }
+      function fmtWaitAge(ms) {
+        const m = Math.floor(ms / 6e4);
+        if (m < 1) return "under 1m";
+        if (m < 60) return `${m}m`;
+        const h = Math.floor(m / 60);
+        return h < 48 ? `${h}h` : `${Math.floor(h / 24)}d`;
+      }
+      function parkedWaitingClause(waiting, seat) {
+        const w = waiting && typeof waiting === "object" ? waiting : null;
+        if (!w || !Number.isInteger(w.count) || w.count < 1) return `it'll be delivered with ${seat}'s next turn`;
+        const age = Number.isFinite(w.oldestMs) && w.oldestMs >= 0 ? `, oldest ${fmtWaitAge(w.oldestMs)}` : "";
+        const head = `${w.count} waiting${age}`;
+        const wake = w.wake && typeof w.wake === "object" && Number.isInteger(w.wake.hours) && w.wake.hours >= 1 && w.wake.hours <= 48 ? w.wake : null;
+        if (!wake) return `${head}; it'll be delivered with ${seat}'s next turn`;
+        if (wake.spent === true) return `${head}; automatic delivery already used; waits for the seat's next turn`;
+        return `${head}; it'll be delivered with ${seat}'s next turn, or will be delivered after ${wake.hours}h idle`;
+      }
       module.exports = {
         PROXY_AGENT_PREFIX,
         mintProxyAgent,
@@ -27619,7 +27643,9 @@ ${i3.join("\n")}
         releaseAgeInfo,
         DM_HOLD_IDLE_MS,
         peerStatusLabel,
-        shouldHoldDm
+        shouldHoldDm,
+        fmtWaitAge,
+        parkedWaitingClause
       };
     }
   });
@@ -60731,6 +60757,8 @@ Click for live activity`;
       var prefsDiscoverOnStartup = document.getElementById("prefs-discover-on-startup");
       var prefsIdlePauseHours = document.getElementById("prefs-idle-pause-hours");
       var prefsIdlePauseAuto = document.getElementById("prefs-idle-pause-auto");
+      var prefsParkWake = document.getElementById("prefs-park-wake");
+      var prefsParkWakeHours = document.getElementById("prefs-park-wake-hours");
       var prefsToolsRow = document.getElementById("prefs-tools-row");
       var prefsToolsList = document.getElementById("prefs-tools-list");
       wireBulkToggles(prefsToolsRow, prefsToolsList);
@@ -63938,6 +63966,8 @@ ${res.stderr}` : "");
         if (prefsDiscoverOnStartup) prefsDiscoverOnStartup.checked = !!s.discoverOnStartup;
         if (prefsIdlePauseHours) prefsIdlePauseHours.value = String(s.idlePauseHours);
         if (prefsIdlePauseAuto) prefsIdlePauseAuto.checked = s.idlePauseAuto === true;
+        if (prefsParkWake) prefsParkWake.checked = Number.isInteger(s.parkWakeHours) && s.parkWakeHours > 0;
+        if (prefsParkWakeHours) prefsParkWakeHours.value = String(Number.isInteger(s.parkWakeHours) && s.parkWakeHours > 0 ? s.parkWakeHours : 12);
         restorePrefsGroups();
         if (group) for (const g of prefsGroups()) {
           if (g.dataset.group === group) g.open = true;
@@ -64066,6 +64096,7 @@ ${res.stderr}` : "");
           discoverOnStartup: prefsDiscoverOnStartup ? prefsDiscoverOnStartup.checked : false,
           ...prefsIdlePauseHours && prefsIdlePauseHours.value.trim() ? { idlePauseHours: Number(prefsIdlePauseHours.value) } : {},
           ...prefsIdlePauseAuto ? { idlePauseAuto: prefsIdlePauseAuto.checked } : {},
+          ...prefsParkWake && prefsParkWakeHours ? { parkWakeHours: prefsParkWake.checked ? Number(prefsParkWakeHours.value) : 0 } : {},
           remoteEnabled: prefsRemoteEnabled.checked,
           ...prefsRemoteBasePath ? patchUnlessEnvLocked(prefsEnvLocked, "remoteBasePath", prefsRemoteBasePath.value) : {}
         });
