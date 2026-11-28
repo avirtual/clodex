@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+- Test runners: a node stopped by a signal now says which of the jobs it cuts are runs it sent to other machines; a hand's test run whose output could not be read reports the totals the runner recorded instead of 'no TOTALS line'; and a restart removes job directories a previous quit left half-removed.
+
 ## 5.215.0 — 2026-11-28
 
 - Team tickets: a ticket no longer escalates at verify with "the branch was rebased or reset" when it was not. The recorded base could be a merge that landed on the trunk in the instant the ticket's branch was being created; it is now always the commit the branch was created from.
