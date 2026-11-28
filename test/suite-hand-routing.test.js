@@ -10,6 +10,8 @@ const { spawn, spawnSync } = require('node:child_process');
 const { mkTmpRoot, tmpHomeOs } = require('./lib/tmp-roots');
 const { route, createChannelHost, createSuiteClient, boxVerdict } = require('../suite-client');
 
+const realSetTimeout = globalThis.setTimeout;
+const realClearTimeout = globalThis.clearTimeout;
 const SCRIPT = path.join(__dirname, '..', 'scripts', 'clodex-run-tests.js');
 const TREE = 'a'.repeat(40);
 const HEAD_TREE = 'c'.repeat(40);
@@ -172,6 +174,9 @@ test('host: an unknown result is passed on as unknown with the runner name', asy
 });
 
 function execFixture(t, bin, { client = null, team = null, peers = null, desk = null, payload = '{}' } = {}) {
+  const snapCalls = [];
+  const snap = stubSnap();
+  const suiteSnapshot = { ...snap, snapshotTree: async (tree) => { snapCalls.push(tree); return snap.snapshotTree(tree); } };
   const { createSessionManager } = require('../session-manager');
   const { isFilenameToken, parseAndValidate } = require('../exec-schema');
   const REGISTRY_DIR = mkTmpRoot('suite-route-exec-');
@@ -189,7 +194,7 @@ function execFixture(t, bin, { client = null, team = null, peers = null, desk = 
     knownSkillNames: () => [], REGISTRY_DIR, isFilenameToken, parseAndValidate, os: tmpHomeOs(), fs, path,
     log: { warn() {}, info() {}, error() {} },
     getPersistence: () => ({ list: () => [], get: () => ({ execCommands: ['cmd'] }) }),
-    getSuiteClient: () => client,
+    getSuiteClient: () => client, suiteSnapshot,
     gitWorktree: { listWorktrees: async () => ({ ok: true, worktrees: [{ path: team ? team.root : '/nowhere' }] }) },
     childProcess: {
       spawn: (cmd, args, opts) => {
@@ -199,7 +204,12 @@ function execFixture(t, bin, { client = null, team = null, peers = null, desk = 
         ee.stderr = new EventEmitter();
         ee.kills = [];
         ee.kill = (sig) => ee.kills.push(sig);
-        if (opts.stdio[3] === 'ipc') { ee.connected = true; ee.sends = []; ee.send = (m) => { ee.sends.push(m); return true; }; }
+        if (opts.stdio[3] === 'ipc') {
+          ee.connected = true;
+          ee.sends = [];
+          ee.sendWaiters = new Set();
+          ee.send = (m) => { ee.sends.push(m); for (const w of [...ee.sendWaiters]) w(m); return true; };
+        }
         children.push(ee);
         return ee;
       },
@@ -217,10 +227,29 @@ function execFixture(t, bin, { client = null, team = null, peers = null, desk = 
     mock.timers.reset();
   });
   m._handleExecIntent({ name: 'hand-1', agentType: 'claude', workspaceId: 'ws1', cwd: '/x' }, 'cmd', payload);
-  return { spawned, children, broadcasts };
+  return { spawned, children, broadcasts, snapCalls };
 }
 
 const turns = async (n = 20) => { for (let i = 0; i < n; i += 1) await new Promise((r) => setImmediate(r)); };
+
+const REPLY_WAIT_MS = 10000;
+function sendOf(child, pred, what, ms = REPLY_WAIT_MS) {
+  const hit = child.sends.find(pred);
+  if (hit) return Promise.resolve(hit);
+  return new Promise((resolve, reject) => {
+    const timer = realSetTimeout(() => {
+      child.sendWaiters.delete(waiter);
+      reject(new Error(`${what} never came within ${ms} ms of real time; the child was sent ${JSON.stringify(child.sends)}`));
+    }, ms);
+    const waiter = (m) => {
+      if (!pred(m)) return;
+      realClearTimeout(timer);
+      child.sendWaiters.delete(waiter);
+      resolve(m);
+    };
+    child.sendWaiters.add(waiter);
+  });
+}
 
 test('exec: the child of clodex-run-tests.js gets the IPC channel and every other bin does not', async (t) => {
   const rows = [
@@ -759,8 +788,8 @@ test('t2414: on a pool whose first member is offline and whose pull member is de
   assert.deepStrictEqual(asked, ['pB']);
   const run = client.runs[0];
   assert.deepStrictEqual([run.peer, run.name, typeof run.repick, typeof run.reroute], ['pB', 'runner-b', 'function', 'function']);
-  for (let i = 0; i < 5000 && !f.children[0].sends.some((m) => m.run); i += 1) await turns(1);
-  const reply = f.children[0].sends.find((m) => m.run);
+  const reply = await sendOf(f.children[0], (m) => m.run, "the host's run reply");
+  assert.deepStrictEqual(f.snapCalls, [team.root], 'the tree note came from the stub snapshot, so no git process ran');
   assert.deepStrictEqual([reply.run, reply.runner, reply.unknown], ['remote', 'runner-b', null]);
   const root = mkRoot(CAPTURED.green);
   const d = await runWithHost(root, '{}', path.join(root, 'h'), () => [reply]);
@@ -838,8 +867,8 @@ test('t2416: on a mixed pool whose push member is offline the hand run is picked
   assert.deepStrictEqual(asked, ['laptop/pull']);
   const run = client.runs[0];
   assert.deepStrictEqual([run.peer, run.wire, run.name, typeof run.repick, typeof run.reroute], ['laptop', 'pull', 'laptop', 'function', 'function']);
-  for (let i = 0; i < 5000 && !f.children[0].sends.some((m) => m.run); i += 1) await turns(1);
-  const reply = f.children[0].sends.find((m) => m.run);
+  const reply = await sendOf(f.children[0], (m) => m.run, "the host's run reply");
+  assert.deepStrictEqual(f.snapCalls, [team.root], 'the tree note came from the stub snapshot, so no git process ran');
   assert.deepStrictEqual([reply.run, reply.runner, reply.unknown], ['remote', 'laptop', null]);
 });
 
