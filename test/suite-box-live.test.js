@@ -88,6 +88,7 @@ function makeRepo(root) {
   fs.writeFileSync(path.join(repo, 'test', 'b.test.js'), gitTest('B'));
   fs.writeFileSync(path.join(repo, 'test', 'red.test.js'), "'use strict';\nconsole.log('RED');\nprocess.exit(1);\n");
   fs.writeFileSync(path.join(repo, 'test', 'wait.test.js'), WAIT_TEST);
+  fs.writeFileSync(path.join(repo, 'test', 'env.test.js'), "'use strict';\nconsole.log('BOX_ARG=' + (process.env.CLODEX_LIVE_BOX_ARG || '(unset)'));\n");
   g(repo, 'add', '.');
   g(repo, 'commit', '-q', '-m', 'fixture tests');
   return repo;
@@ -211,7 +212,7 @@ if (process.argv.includes(CHILD_FLAG)) {
     });
     const { mkTmpRoot } = require('./lib/tmp-roots');
 
-    async function fixture({ box: withBox = true, dockerOver = null, defaultImage = true } = {}) {
+    async function fixture({ box: withBox = true, dockerOver = null, defaultImage = true, boxArgs = [], boxArgsLabel = null } = {}) {
       const r = makeRoots(mkTmpRoot);
       cleanups.push(() => childProcess.spawnSync('chmod', ['-R', 'u+w', r.root]));
       const image = imageId();
@@ -219,7 +220,7 @@ if (process.argv.includes(CHILD_FLAG)) {
       const logs = [];
       const dockerCalls = createDocker();
       const call = dockerOver ? dockerOver(dockerCalls.call, events) : dockerCalls.call;
-      const box = boxIsolation({ image: defaultImage ? image : null, work: r.work, stateDir: r.stateDir, docker: { call } });
+      const box = boxIsolation({ image: defaultImage ? image : null, work: r.work, stateDir: r.stateDir, docker: { call }, boxArgs, boxArgsLabel });
       scopes.add(`clodex.suite.runner=${box.runnerKey}`);
       const repo = makeRepo(r.root);
       const snap = await snapshotTree(repo);
@@ -455,6 +456,36 @@ if (process.argv.includes(CHILD_FLAG)) {
       const admit = tail.findIndex((e) => e.at === 'spawn' && e.rec.args.includes(`clodex.suite.job=${second}`));
       assert.ok(sweep >= 0 && admit > sweep, `the sweep (${sweep}) must precede the box admission (${admit})`);
       assert.deepStrictEqual(atAdmit, [{ dir: false, hold: false }]);
+    });
+
+    test('owner box options reach the box: the suite sees the --env value, the stamp carries the fingerprint, the wire status no option', async () => {
+      const own = '--env=CLODEX_LIVE_BOX_ARG=seen';
+      const f = await fixture({ boxArgs: [own], boxArgsLabel: 'live-env' });
+      const runner = f.make();
+      const v = await runJob(f, runner, 'live-own-env', { isolation: 'container', files: ['test/env.test.js'] });
+      const out = await stdoutOf(runner, 'live-own-env');
+      assert.deepStrictEqual({ reason: v.reason, exit: v.exit, totals: lastTotals(out) },
+        { reason: null, exit: { code: 0, signal: null }, totals: 'TOTALS: 1 pass, 0 fail, 1 tests' }, `stdout: ${out.slice(-800)}`);
+      assert.ok(out.includes('BOX_ARG=seen\n'), `the suite did not see the owner's --env: ${out.slice(-800)}`);
+      assert.deepStrictEqual(v.env.box.custom, { fingerprint: '35932f78c1dc', label: 'live-env' });
+      assert.deepStrictEqual(v.record.env.box.custom, { fingerprint: '35932f78c1dc', label: 'live-env' });
+      assert.ok(!JSON.stringify(v).includes(own), 'the wire status carries the raw option');
+      assert.ok(!JSON.stringify(await runner.info()).includes(own), 'the info answer carries the raw option');
+    });
+
+    test('an owner box option Docker refuses ends box-args-failed, not a test failure, and leaves no labelled container', async () => {
+      const own = '--device=/dev/clodex-no-such-device';
+      const f = await fixture({ boxArgs: [own], boxArgsLabel: 'live-dev' });
+      const runner = f.make();
+      const id = 'live-own-device';
+      const v = await runJob(f, runner, id, { isolation: 'container' });
+      assert.deepStrictEqual({ reason: v.reason, exit: v.exit, outcome: v.record.outcome, custom: v.env.box.custom },
+        { reason: 'box-args-failed', exit: { code: 125, signal: null }, outcome: 'unknown', custom: { fingerprint: '8b978dfaa59b', label: 'live-dev' } },
+        `logs: ${f.logs.join(' | ')}`);
+      const stderr = (await runner.output(id, { stream: 'stderr', offset: 0, length: 1 << 20 })).text;
+      assert.strictEqual(stderr, 'suite-runner: the runner owner\'s box options failed to start the box (live-dev)\n');
+      assert.ok(!JSON.stringify(v).includes(own), 'the wire status carries the raw option');
+      assert.deepStrictEqual(idsOf(`clodex.suite.job=${id}`), []);
     });
   }
 }
