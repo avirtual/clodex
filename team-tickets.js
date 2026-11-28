@@ -10182,11 +10182,12 @@ function createTicketMethods(deps, shared) {
           // running and a held check alike; the loop is waiting on a human, not stuck.
           if (rs && rs.kind === 'due') {
             body = `${head}automatic box retry ${rs.n}/${BOX_RETRY_MAX} is due but not admitted: ${rs.reason || 'the runner has not been checked yet'} — held ${humanizeAge(now - last)}. `
-              + `It keeps trying until ${until}, then stays held and tells you; to retry now, [agent:task verify ${tid}].`
-              + `\n\nEVIDENCE: ${t.verifyHold.evidence}`;
+              + `It keeps trying until ${until}, then stops and tells you.`
+              + `\n\nEVIDENCE: ${t.verifyHold.evidence}`
+              + `\n\nRECOVERY: ${holdRecoveryText(t.verifyHold.recovery, tid)}`;
           } else if (rs && rs.kind === 'queued') {
             body = `${head}automatic box retry ${rs.n}/${BOX_RETRY_MAX} is queued on ${rs.runner} for ${humanizeAge(now - rs.since)}, waiting its turn behind jobs already there; `
-              + `if it has not started by ${new Date(Number.isFinite(rs.cancelAt) ? rs.cancelAt : rs.deadline).toISOString()} it is cancelled and the ticket stays held.`;
+              + `if it has not started by ${new Date(Number.isFinite(rs.cancelAt) ? rs.cancelAt : rs.deadline).toISOString()} it is cancelled, which ends the automatic retries.`;
           } else if (rs && rs.kind === 'running') {
             body = `${head}automatic box retry ${rs.n}/${BOX_RETRY_MAX} is running on ${rs.runner} for ${humanizeAge(now - rs.since)}; the ticket decides when the job ends.`;
           } else if (t.verifyHold) {

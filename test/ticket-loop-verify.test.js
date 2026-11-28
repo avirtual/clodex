@@ -8306,11 +8306,12 @@ test('t2472: a retry superseded while queued is cancelled on the runner and its 
 
 const STALL_ROWS = [
   ['due but not admitted', { verifyHold: QB_HOLD, boxHoldReason: 'queue budget', boxRetry: { ...retryAt(1, 2_000_000, 1_900_000), notAdmitted: { reason: 'runner runner-1 not connected', at: 2_000_000 } } },
-    '[ticket t1] stalled: automatic box retry 2/6 is due but not admitted: runner runner-1 not connected — held 31m. It keeps trying until 1970-01-01T01:16:40.000Z, then stays held and tells you; to retry now, [agent:task verify t1].'
-    + `\n\nEVIDENCE: queue budget: ${QB_WHY}`,
+    '[ticket t1] stalled: automatic box retry 2/6 is due but not admitted: runner runner-1 not connected — held 31m. It keeps trying until 1970-01-01T01:16:40.000Z, then stops and tells you.'
+    + `\n\nEVIDENCE: queue budget: ${QB_WHY}`
+    + '\n\nRECOVERY: No box result decided this verify, and fallback:hold kept the home suite from running. Once the runner can decide, [agent:task verify t1] tries the box again.',
     'held: box — queue budget (auto retry 2/6, due, not admitted: runner runner-1 not connected)'],
   ['queued on the runner', { boxRetry: { ...retryAt(1, 1, 2, true), run: { state: 'queued', since: 2_000_000, runner: 'runner-1', jobId: 'j', peer: 'p1', wire: 'push', cancelAt: 4_600_000 } } },
-    '[ticket t1] stalled: automatic box retry 2/6 is queued on runner-1 for 14m, waiting its turn behind jobs already there; if it has not started by 1970-01-01T01:16:40.000Z it is cancelled and the ticket stays held.',
+    '[ticket t1] stalled: automatic box retry 2/6 is queued on runner-1 for 14m, waiting its turn behind jobs already there; if it has not started by 1970-01-01T01:16:40.000Z it is cancelled, which ends the automatic retries.',
     '(auto retry 2/6 queued on runner-1 for 14m)'],
   ['running on the runner', { boxRetry: { ...retryAt(1, 1, 2, true), run: { state: 'running', since: 2_500_000, runner: 'runner-1', jobId: 'j', peer: 'p1', wire: 'push' } } },
     '[ticket t1] stalled: automatic box retry 2/6 is running on runner-1 for 6m; the ticket decides when the job ends.',
