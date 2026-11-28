@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+## 5.215.0 — 2026-11-28
+
 - Team tickets: a ticket no longer escalates at verify with "the branch was rebased or reset" when it was not. The recorded base could be a merge that landed on the trunk in the instant the ticket's branch was being created; it is now always the commit the branch was created from.
 - Test runners: after a restart, a run that had been retried is closed with the result of its last attempt, not asked about its first one; and the restart and quit messages now say when the jobs they wait for are runs this machine sent elsewhere.
 
