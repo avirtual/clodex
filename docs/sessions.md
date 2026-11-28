@@ -541,7 +541,9 @@ on that arm. Shadow row `prompt-regen-at-clear` {agent, bytes}.
 On a claude pty seat, a reload and this arm hold the seat's mail across the respawn
 (`reload-window` / `clear-window`, docs/messaging.md "Clear/reload window"): the
 respawned seat carries the hold's generation on `_ctxGen`, and only its own
-handoff turn, or its boot-ready on a bodyless clear, releases it. Nothing
+handoff turn, or its boot-ready on a bodyless clear, releases it. While the
+seat is out of the sessions map its name stays addressable: deliveries park
+to the held store (`_ctxGapHold`, same doc). Nothing
 pending, or a codex or muse seat: the plain `/clear` path, unchanged.
 A Clodex-driven compact whose summary lands on such a seat (`_compactRegen`,
 from `_fireCompactContinuation`) takes the same `_coldRespawn` with
