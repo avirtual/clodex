@@ -44,6 +44,77 @@ function agentDir(root, name) {
 
 function claimsDir(root) { return path.join(root, CLAIMS); }
 
+const HELD_SUFFIX = '.held';
+
+function heldDir(root, name) {
+  agentDir(root, name);
+  return path.join(claimsDir(root), `${name}${HELD_SUFFIX}`);
+}
+
+function isHeld(root, name) {
+  try { return fs.statSync(heldDir(root, name)).isDirectory(); } catch { return false; }
+}
+
+function parkedJson(f) { return f.endsWith('.json') && !f.startsWith('.'); }
+
+function storeDirs(root, name) {
+  const dirs = [agentDir(root, name)];
+  if (isHeld(root, name)) dirs.push(heldDir(root, name));
+  return dirs;
+}
+
+function storeFiles(root, name) {
+  const out = [];
+  for (const dir of storeDirs(root, name)) {
+    try { for (const f of fs.readdirSync(dir)) out.push({ dir, f }); } catch {}
+  }
+  return out;
+}
+
+function moveParked(from, to) {
+  let files;
+  try { files = fs.readdirSync(from).filter(parkedJson).sort(); } catch { return 0; }
+  let moved = 0;
+  for (const f of files) {
+    const dest = path.join(to, f);
+    try {
+      if (fs.existsSync(dest)) { fs.unlinkSync(path.join(from, f)); continue; }
+      try { fs.renameSync(path.join(from, f), dest); } catch (e) {
+        if (!e || e.code !== 'ENOENT' || !fs.existsSync(path.join(from, f))) throw e;
+        fs.mkdirSync(to, { recursive: true, mode: 0o700 });
+        fs.renameSync(path.join(from, f), dest);
+      }
+      moved++;
+    } catch {}
+  }
+  return moved;
+}
+
+function hideParked(root, name) {
+  const held = heldDir(root, name);
+  fs.mkdirSync(held, { recursive: true, mode: 0o700 });
+  return moveParked(agentDir(root, name), held);
+}
+
+function revealParked(root, name) {
+  const held = heldDir(root, name);
+  if (!isHeld(root, name)) return 0;
+  const moved = moveParked(held, agentDir(root, name));
+  let left = null;
+  try { left = fs.readdirSync(held).filter(parkedJson); } catch {}
+  if (left && !left.length) { try { fs.rmSync(held, { recursive: true, force: true }); } catch {} }
+  return moved;
+}
+
+function heldNames(root) {
+  let names;
+  try { names = fs.readdirSync(claimsDir(root)); } catch { return []; }
+  return names.filter((n) => {
+    if (!n.endsWith(HELD_SUFFIX) || n.length <= HELD_SUFFIX.length || n.slice(0, -HELD_SUFFIX.length) === CLAIMS) return false;
+    try { return fs.statSync(path.join(claimsDir(root), n)).isDirectory(); } catch { return false; }
+  }).map((n) => n.slice(0, -HELD_SUFFIX.length));
+}
+
 function claimPath(root, entry) {
   const dir = claimsDir(root);
   fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
@@ -76,7 +147,7 @@ function parkFileHasId(f, id) {
 // PAYLOAD rather than the path so the `<seq>[.<id>].json` grammar and
 // parkFileHasId's segment split stay exactly as they are.
 function parkDelivery(root, name, text, seq, id = null, passive = false, born = null, key = null, ride = null, held = null) {
-  const dir = agentDir(root, name);
+  const dir = isHeld(root, name) ? heldDir(root, name) : agentDir(root, name);
       // `.passive.` occupies the id segment slot (4 dot-segments) — safe from
       // parkFileHasId collisions because minted resend ids are 5 or 10 base36
       // chars, never the 7-char literal "passive". Passive parks take no id.
@@ -215,14 +286,11 @@ function hasPending(root, name) {
 }
 
 // Cheap count (not a claim): how many parked deliveries does `name` have right
-// now? Drives the sidebar's parked-message badge. A mid-flight drain has renamed
-// the agent dir out, so agentDir ENOENTs and
-// we report 0 — claimed means committed for delivery, no longer "waiting".
+// now? Drives the sidebar's parked-message badge.
 function countPending(root, name) {
   try {
     rehomeOrphans(root, name);
-    return fs.readdirSync(agentDir(root, name))
-      .filter((f) => f.endsWith('.json') && !f.startsWith('.')).length;
+    return storeFiles(root, name).filter(({ f }) => parkedJson(f)).length;
   } catch {
     return 0;
   }
@@ -231,16 +299,15 @@ function countPending(root, name) {
 function peekPending(root, name, { max = 5, snipLen = 60 } = {}) {
   let files;
   try {
-    files = fs.readdirSync(agentDir(root, name))
-      .filter((f) => f.endsWith('.json') && !f.startsWith('.')).sort();
+    files = storeFiles(root, name).filter(({ f }) => parkedJson(f)).sort((a, b) => (a.f < b.f ? -1 : a.f > b.f ? 1 : 0));
   } catch {
     return [];
   }
   const out = [];
-  for (const f of files.slice(0, max)) {
+  for (const { dir, f } of files.slice(0, max)) {
     let text;
     try {
-      const obj = JSON.parse(fs.readFileSync(path.join(agentDir(root, name), f), 'utf8'));
+      const obj = JSON.parse(fs.readFileSync(path.join(dir, f), 'utf8'));
       if (!obj || typeof obj.text !== 'string') continue;
       text = obj.text;
     } catch { continue; }
@@ -283,18 +350,18 @@ function parkBacklog(root, name) {
   let files;
   try {
     rehomeOrphans(root, name);
-    files = fs.readdirSync(agentDir(root, name));
+    files = storeFiles(root, name);
   } catch { return { count: 0, oldestAt: null, heldAt: null }; }
   let count = 0;
   let oldestAt = null;
   let heldAt = null;
-  for (const f of files) {
+  for (const { dir, f } of files) {
     if (!f.endsWith('.json') || f.startsWith('.')) continue;
     count++;
     if (f.endsWith('.passive.json')) continue;
     let held = null;
     try {
-      const obj = JSON.parse(fs.readFileSync(path.join(agentDir(root, name), f), 'utf8'));
+      const obj = JSON.parse(fs.readFileSync(path.join(dir, f), 'utf8'));
       if (obj && Number.isFinite(obj.held)) held = obj.held;
     } catch {}
     const ts = Number(f.split('.')[0]);
@@ -333,7 +400,7 @@ function oldestDueRide(root, name) {
 }
 
 function parkedTexts(root, name) {
-  return parkedTextsIn(agentDir(root, name));
+  return storeDirs(root, name).flatMap(parkedTextsIn);
 }
 
 function parkedTextsIn(dir) {
@@ -389,9 +456,9 @@ function parkIdInUse(root, id) {
 function claimParkedById(root, id) {
   let names;
   try { names = fs.readdirSync(root); } catch { return null; }
-  for (const name of names) {
-    if (isClaimEntry(name)) continue;
-    const dir = path.join(root, name);
+  const stores = names.filter((n) => !isClaimEntry(n)).map((n) => [n, path.join(root, n)])
+    .concat(heldNames(root).map((n) => [n, heldDir(root, n)]));
+  for (const [name, dir] of stores) {
     let files;
     try { files = fs.readdirSync(dir); } catch { continue; }
     const match = files.find((f) => parkFileHasId(f, id));
@@ -423,11 +490,10 @@ function claimParkedByKey(root, name, key) {
   const ids = [];
   let claimed = 0;
   if (typeof key !== 'string' || !key) return { ids, claimed };
-  let dir;
   let files;
-  try { dir = agentDir(root, name); files = fs.readdirSync(dir); } catch { return { ids, claimed }; }
+  try { files = storeFiles(root, name).sort((a, b) => (a.f < b.f ? -1 : a.f > b.f ? 1 : 0)); } catch { return { ids, claimed }; }
   let n = 0;
-  for (const f of files.sort()) {
+  for (const { dir, f } of files) {
     if (!f.endsWith('.json') || f.startsWith('.')) continue;
     let parked;
     try { parked = JSON.parse(fs.readFileSync(path.join(dir, f), 'utf8')); } catch { continue; }
@@ -454,4 +520,4 @@ function claimParkedByKey(root, name, key) {
   return { ids, claimed };
 }
 
-module.exports = { isClaimEntry, parkDelivery, drainPending, rehomeOrphans, hasPending, hasActivePending, countPending, peekPending, oldestActiveParkTs, parkBacklog, oldestDueRide, parkedTexts, allParkedTexts, parkIdInUse, claimParkedById, claimParkedByKey, agentDir, claimsDir, CLAIM_STALE_MS, RESERVED_SEAT_NAMES, LEGACY_CLAIM_RE, CLAIM_TAG_RE, claimTag, isReservedSeatName, isCliConfigSeatName, reservedSeatError };
+module.exports = { isClaimEntry, parkDelivery, drainPending, hideParked, revealParked, heldNames, heldDir, isHeld, rehomeOrphans, hasPending, hasActivePending, countPending, peekPending, oldestActiveParkTs, parkBacklog, oldestDueRide, parkedTexts, allParkedTexts, parkIdInUse, claimParkedById, claimParkedByKey, agentDir, claimsDir, CLAIM_STALE_MS, RESERVED_SEAT_NAMES, LEGACY_CLAIM_RE, CLAIM_TAG_RE, claimTag, isReservedSeatName, isCliConfigSeatName, reservedSeatError };
