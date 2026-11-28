@@ -6194,7 +6194,7 @@ function createSessionManager(deps) {
         session._compactNoticeRev = (session._compactNoticeRev || 0) + 1;
       }
       this._sendToSession(session.name, 'session-compacting', session.name, null, { outcome, ms });
-      this._ctxHoldRow(session.name);
+      if (this.ctxHoldBadge(session.name)) this._ctxHoldRow(session.name);
       if (outcome === 'exit') return;
       this._sendToSession(session.name, 'transcript-changed', session.name);
       if (outcome === 'done') {
