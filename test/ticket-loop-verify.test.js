@@ -7514,13 +7514,13 @@ const heldNotes = (f) => f.gated.filter((g) => g.target === 'lead' && /^\[ticket
 const HOLD_ROWS = [
   ['runner-unreachable', 'runner unreachable', 'transient', 'runner runner-1 is not a known peer',
     '[ticket t1 HELD] the box did not decide (runner unreachable): runner runner-1 is not a known peer. Not run on the home suite (fallback:hold).\n'
-    + 'It retries by itself when the runner has a free slot, up to 6 times within 60 min, then stays held and tells you; to retry now, [agent:task verify t1].'],
+    + 'It retries by itself, queueing on the runner in turn behind jobs already there, up to 6 times within 60 min, then stays held and tells you; to retry now, [agent:task verify t1].'],
   ['no-share', 'no share', 'deterministic', 'runner has no share assets@v1',
     '[ticket t1 HELD] the box did not decide (no share): runner has no share assets@v1. Not run on the home suite (fallback:hold).\n'
     + 'This will not clear by itself: fix the cause (no share), then [agent:task verify t1].'],
   ['queue-budget', 'queue budget', 'budget', 'the job did not start within the 300000ms queue budget (cancelled)',
     '[ticket t1 HELD] the box did not decide (queue budget): the job did not start within the 300000ms queue budget (cancelled). Not run on the home suite (fallback:hold).\n'
-    + 'It retries by itself when the runner has a free slot, up to 6 times within 60 min, then stays held and tells you; to retry now, [agent:task verify t1].'],
+    + 'It retries by itself, queueing on the runner in turn behind jobs already there, up to 6 times within 60 min, then stays held and tells you; to retry now, [agent:task verify t1].'],
   ['outcome-unknown', 'outcome unknown', 'unknown', 'cancelled on runner',
     '[ticket t1 HELD] the box did not decide (outcome unknown): cancelled on runner. Not run on the home suite (fallback:hold).\n'
     + 'This will not clear by itself: fix the cause (outcome unknown), then [agent:task verify t1].'],
@@ -7562,7 +7562,7 @@ test('t2380: a hold through the real _boxDecide carries the fall why-text into t
   });
   assert.deepStrictEqual(heldNotes(p.b.f), [
     '[ticket t1 HELD] the box did not decide (runner unreachable): runner runner-1 is not a known peer. Not run on the home suite (fallback:hold).\n'
-    + 'It retries by itself when the runner has a free slot, up to 6 times within 60 min, then stays held and tells you; to retry now, [agent:task verify t1].',
+    + 'It retries by itself, queueing on the runner in turn behind jobs already there, up to 6 times within 60 min, then stays held and tells you; to retry now, [agent:task verify t1].',
   ]);
 });
 
@@ -7767,22 +7767,26 @@ test('t2383: a held ticket that is not yet due is not tried', async () => {
 });
 
 const RETRY_NOT_READY_ROWS = [
-  ['the runner is not live', (r) => { r.peer.online = false; }],
-  ['the runner has no info', (r) => { r.reach.r = { ok: false, why: 'down' }; }],
-  ['a required share is missing', (r) => { r.f.team.testRunner = { ...GATE_HOLD, shares: [{ share: 'assets', version: 'v1' }] }; }],
-  ['the box is neither ready nor buildable', (r) => { r.reach.r = { ok: true, info: { box: { state: 'no-image', definitionHash: BOX_HASH }, shares: [] } }; }],
+  ['the runner is not live', (r) => { r.peer.online = false; }, 'runner runner-1 not connected'],
+  ['the runner has no info', (r) => { r.reach.r = { ok: false, why: 'down' }; }, 'runner runner-1 no answer'],
+  ['a required share is missing', (r) => { r.f.team.testRunner = { ...GATE_HOLD, shares: [{ share: 'assets', version: 'v1' }] }; }, 'runner runner-1 no box for this job'],
+  ['the box is neither ready nor buildable', (r) => { r.reach.r = { ok: true, info: { box: { state: 'no-image', definitionHash: BOX_HASH }, shares: [] } }; }, 'runner runner-1 no box for this job'],
 ];
 
-for (const [label, set] of RETRY_NOT_READY_ROWS) {
-  test(`t2383: a due ticket is not tried when ${label}, and keeps its attempts and nextAt`, async () => {
+for (const [label, set, reason] of RETRY_NOT_READY_ROWS) {
+  test(`t2383: a due ticket is not tried when ${label}, keeps its attempts and nextAt, records why and logs it once`, async () => {
     const r = retryLoop();
     await r.hold();
     set(r);
-    r.clock.now = 1_060_000;
-    assert.strictEqual(await r.sweep(), null);
+    for (const at of [1_060_000, 1_120_000]) {
+      r.clock.now = at;
+      assert.strictEqual(await r.sweep(), null);
+    }
     assert.strictEqual(r.loops.length, 1);
-    assert.deepStrictEqual(r.f.one().boxRetry, retryAt(0, 1_060_000, 1_000_000));
+    assert.deepStrictEqual(r.f.one().boxRetry, { ...retryAt(0, 1_060_000, 1_000_000), notAdmitted: { reason, at: 1_060_000 }, told: [reason] });
     assert.strictEqual(r.f.one().verifyHold.step, 'verify: box');
+    assert.deepStrictEqual(r.f.logs.filter((l) => /not admitted/.test(l.msg)).map((l) => l.msg), [`auto box retry 1/6 for t1 not admitted: ${reason}`]);
+    assert.match(r.f.m._taskListText(r.f.team, 'all', 1_120_000), new RegExp(`held: box — runner unreachable \\(auto retry 1/6, due, not admitted: ${reason}\\)`));
   });
 }
 
@@ -7825,22 +7829,27 @@ for (const [attempt, rnd, delay] of RETRY_DELAY_ROWS) {
   });
 }
 
-test('t2383: of two due tickets on one team only the older hold starts, and the second starts only after the first ended', async () => {
+test('t2472: two held tickets due on a busy single-slot runner each get one attempt in flight, older hold first, between the fresh verifies submitted around them', async () => {
   const r = retryLoop();
-  const started = [];
-  r.f.m._runTicketLoop = (team, id) => { started.push(id); };
+  r.reach.r = { ok: true, info: { ...RETRY_READY, slots: { total: 1, inUse: 1 }, pending: 2, queue: { running: 'v0', queued: ['v1'] } } };
+  const submits = [];
+  r.f.m._runTicketLoop = (team, id) => { submits.push(id); };
   const base = { ...r.f.one(), state: 'done', loopStep: 'verify', verifyHold: TRANSIENT_HOLD, boxHoldReason: 'runner unreachable' };
   r.f.tstore.save(r.f.team.root, [
     { ...base, id: 't1', boxRetry: retryAt(0, 1_000_000, 900_000) },
     { ...base, id: 't2', boxRetry: retryAt(0, 1_000_000, 800_000) },
   ]);
+  submits.push('fresh-a');
   assert.strictEqual(await r.sweep(), 't2');
+  submits.push('fresh-b');
   assert.strictEqual(await r.sweep(), null);
-  assert.deepStrictEqual(started, ['t2']);
+  assert.deepStrictEqual(submits, ['fresh-a', 't2', 't1', 'fresh-b']);
+  assert.deepStrictEqual([r.f.one('t1').boxRetry.inFlight, r.f.one('t2').boxRetry.inFlight], [true, true], 'ENTER: both attempts are in flight');
   r.f.m._stampVerifyHold(r.f.team, 't2', TRANSIENT_HOLD);
   r.f.m._boxRetryAfterHold(r.f.team, 't2', fallbackOf('runner-unreachable'));
-  assert.strictEqual(await r.sweep(), 't1');
-  assert.deepStrictEqual(started, ['t2', 't1']);
+  r.clock.now = r.f.one('t2').boxRetry.nextAt;
+  assert.strictEqual(await r.sweep(), 't2');
+  assert.deepStrictEqual(submits, ['fresh-a', 't2', 't1', 'fresh-b', 't2'], 't1 in flight does not hold back t2, and t1 is not submitted twice');
 });
 
 test('t2383: two sweeps in one tick start one run', async () => {
@@ -7962,7 +7971,7 @@ const QB_WHY = 'the job did not start within the 300000ms queue budget (cancelle
 const QB_HOLD = { step: 'verify: box', at: 1, evidence: `queue budget: ${QB_WHY}`, recovery: 'box', code: 'queue-budget', class: 'budget' };
 const FREE = { ...RETRY_READY, slots: { total: 1, inUse: 0 }, pending: 0, queue: { running: null, queued: [] } };
 const QB_NOTICE = `[ticket t1 HELD] the box did not decide (queue budget): ${QB_WHY}. Not run on the home suite (fallback:hold).\n`
-  + 'It retries by itself when the runner has a free slot, up to 6 times within 60 min, then stays held and tells you; to retry now, [agent:task verify t1].';
+  + 'It retries by itself, queueing on the runner in turn behind jobs already there, up to 6 times within 60 min, then stays held and tells you; to retry now, [agent:task verify t1].';
 
 function queueLoop(info) {
   const r = retryLoop();
@@ -7972,36 +7981,33 @@ function queueLoop(info) {
 }
 
 const BUSY_ROWS = [
-  ['every slot is in use', { ...FREE, slots: { total: 1, inUse: 1 } }],
+  ['its one slot is in use', { ...FREE, slots: { total: 1, inUse: 1 } }],
   ['a job is pending', { ...FREE, pending: 1 }],
   ['a job is queued', { ...FREE, slots: { total: 2, inUse: 1 }, queue: { running: 'a', queued: ['b'] } }],
+  ['its one slot is in use with two jobs queued behind it', { ...FREE, slots: { total: 1, inUse: 1 }, queue: { running: 'a', queued: ['b', 'c'] } }],
 ];
 
 for (const [label, busy] of BUSY_ROWS) {
-  test(`t2453: a queue-budget hold is not resubmitted while ${label}, keeps its attempts, and goes once the runner reports a free slot`, async () => {
+  test(`t2472: a queue-budget hold is resubmitted on its first due tick while ${label}, and the ticket decides when the job runs`, async () => {
     const r = queueLoop(busy);
     await r.hold();
     assert.deepStrictEqual(r.f.one().boxRetry, retryAt(0, 1_060_000, 1_000_000), 'ENTER: the first queue-budget hold arms a retry');
-    for (const at of [1_060_000, 1_120_000, 1_800_000]) {
-      r.clock.now = at;
-      assert.strictEqual(await r.sweep(), null, `busy at ${at}`);
-    }
-    assert.strictEqual(r.loops.length, 1);
-    assert.deepStrictEqual(r.f.one().boxRetry, retryAt(0, 1_060_000, 1_000_000));
-    assert.strictEqual(r.f.one().verifyHold.code, 'queue-budget');
-    r.reach.r = { ok: true, info: FREE };
-    r.clock.now = 1_860_000;
-    assert.strictEqual(await r.sweep(), 't1');
+    delete r.f.m._boxDecide;
+    r.clock.now = 1_060_000;
+    assert.strictEqual(await r.sweep(), 't1', `busy runner (${label}) still takes the retry`);
     assert.strictEqual(r.loops.length, 2);
     await r.settle();
-    assert.deepStrictEqual(r.f.one().boxRetry, retryAt(1, 1_980_000, 1_860_000));
-    assert.deepStrictEqual(heldNotes(r.f), [QB_NOTICE], 'one notice at the first hold, silence on the re-hold');
+    const t = r.f.one();
+    assert.deepStrictEqual([t.verifyHold, t.boxRetry, t.suiteProvenance.verify.decidedBy], [undefined, undefined, 'box']);
+    assert.deepStrictEqual(r.f.logs.filter((l) => /^auto box retry/.test(l.msg)).map((l) => l.msg), ['auto box retry 1/6 for t1 on runner runner-1']);
+    assert.deepStrictEqual(heldNotes(r.f), [QB_NOTICE], 'one notice at the first hold');
   });
 }
 
-test('t2453: a queue-budget hold whose runner stays busy for 60 min is given up at the sweep with one notice naming the total wait', async () => {
-  const r = queueLoop({ ...FREE, slots: { total: 1, inUse: 1 } });
+test('t2472: a queue-budget hold whose runner stays detached for 60 min is given up at the sweep with one notice naming the total wait and why it was not admitted', async () => {
+  const r = queueLoop(FREE);
   await r.hold();
+  r.peer.online = false;
   r.clock.now = 1_000_000 + 3_599_999;
   assert.strictEqual(await r.sweep(), null);
   assert.ok(r.f.one().boxRetry, 'ENTER: still retrying one ms before the limit');
@@ -8010,9 +8016,9 @@ test('t2453: a queue-budget hold whose runner stays busy for 60 min is given up 
   const t = r.f.one();
   assert.deepStrictEqual([t.boxRetry, t.verifyHold.code], [undefined, 'queue-budget']);
   assert.deepStrictEqual(heldNotes(r.f).slice(1), [
-    '[ticket t1 HELD] the box did not decide (queue budget) and automatic retries stopped at the 60 min limit (0 of 6 tried); it waited 60 min in total. Try again with [agent:task verify t1].',
+    '[ticket t1 HELD] the box did not decide (queue budget) and automatic retries stopped at the 60 min limit (0 of 6 tried; the retry was not admitted: runner runner-1 not connected); it waited 60 min in total. Try again with [agent:task verify t1].',
   ]);
-  r.reach.r = { ok: true, info: FREE };
+  r.peer.online = true;
   r.clock.now += 600_000;
   assert.strictEqual(await r.sweep(), null);
   assert.strictEqual(r.loops.length, 1);
@@ -8024,7 +8030,7 @@ test('t2453: an attempt that re-holds past the 60 min limit is exhausted with th
   r.p.seed({ verifyHold: QB_HOLD, boxRetry: retryAt(2, 1, 2, true, 1_000_000) });
   r.clock.now = 1_000_000 + 3_660_000;
   const out = r.f.m._boxRetryAfterHold(r.f.team, 't1', fallbackOf('queue-budget'));
-  assert.deepStrictEqual(out, { outcome: 'exhausted', attempts: 3, waitedMs: 3_660_000, cause: 'limit' });
+  assert.deepStrictEqual(out, { outcome: 'exhausted', attempts: 3, waitedMs: 3_660_000, cause: 'limit', last: 'queued' });
   assert.strictEqual(r.f.one().boxRetry, undefined);
 });
 
@@ -8123,6 +8129,203 @@ for (const [label, cancel, want] of CANCEL_ROWS) {
     const out = await b.f.m._boxDecide(b.f.team, b.f.one(), '/w', {});
     assert.strictEqual(out.fallbackCode, 'run-budget', 'ENTER: the job fell back after submit');
     assert.deepStrictEqual(out.unconfirmed, want);
+  });
+}
+
+function retryClient(r, runImpl) {
+  const c = { cancels: [], runs: [], answer: { ok: true } };
+  r.p.b.holder.client = {
+    reachable: async () => r.reach.r,
+    cancel: async (peer, id, wire) => { c.cancels.push([peer, id, wire]); return c.answer; },
+    run: async (o) => { c.runs.push(o); return runImpl(o); },
+  };
+  delete r.f.m._boxDecide;
+  return c;
+}
+const LOST = { unknown: 'runner unreachable', res: null, record: null };
+const deferred = () => { let resolve; const promise = new Promise((res) => { resolve = res; }); return { promise, resolve }; };
+
+async function claimed(r) {
+  await r.hold();
+  const loop = r.f.m._runTicketLoop;
+  r.f.m._runTicketLoop = () => {};
+  r.clock.now = 1_060_000;
+  assert.strictEqual(await r.sweep(), 't1', 'ENTER: the retry was claimed');
+  r.f.m._runTicketLoop = loop;
+  r.f.m._verifyLooped = new Set();
+  r.f.m._boxRetryProbing = new Set();
+}
+
+test('t2472: a restart between submit and result cancels the job the old process left on the runner, resubmits once and counts one attempt', async () => {
+  const r = retryLoop();
+  const c = retryClient(r, (o) => { o.onSubmitted({ jobId: 'job-new' }); return LOST; });
+  r.f.m._boxDecide = undecided('runner-unreachable', 'gone');
+  await claimed(r);
+  delete r.f.m._boxDecide;
+  r.f.m._stampBoxRetryRun(r.f.team, 't1', { state: 'queued', since: 1_060_000, runner: 'runner-1', jobId: 'job-old', peer: 'p1', wire: 'push', cancelAt: 4_600_000 });
+  assert.strictEqual(r.f.one().boxRetry.run.jobId, 'job-old', 'ENTER: the old process left a submitted job on disk');
+  r.clock.now = 1_100_000;
+  assert.strictEqual(await r.sweep(), null, 'no second attempt beside the in-flight one');
+  r.f.m._resumeOrphanedVerify(r.f.team);
+  await r.settle();
+  assert.deepStrictEqual(c.cancels, [['p1', 'job-old', 'push']]);
+  assert.strictEqual(c.runs.length, 1);
+  const t = r.f.one();
+  assert.deepStrictEqual([t.verifyHold.code, t.boxRetry.attempts, t.boxRetry.inFlight, 'run' in t.boxRetry], ['runner-unreachable', 1, false, false]);
+});
+
+test('t2472: after a restart, a left-over job whose cancel does not confirm spends the attempt without a submit and blocks the next one until a cancel confirms', async () => {
+  const r = retryLoop();
+  const c = retryClient(r, () => LOST);
+  r.f.m._boxDecide = undecided('runner-unreachable', 'gone');
+  await claimed(r);
+  delete r.f.m._boxDecide;
+  r.f.m._stampBoxRetryRun(r.f.team, 't1', { state: 'running', since: 1_060_000, runner: 'runner-1', jobId: 'job-old', peer: 'p1', wire: 'push' });
+  c.answer = { ok: false, error: 'status 0' };
+  r.f.m._resumeOrphanedVerify(r.f.team);
+  await r.settle();
+  assert.strictEqual(c.runs.length, 0, 'nothing submitted beside the unresolved job');
+  const t = r.f.one();
+  assert.deepStrictEqual([t.verifyHold.code, t.boxRetry.attempts, t.boxRetry.unconfirmed], ['runner-unreachable', 1, { jobId: 'job-old', peer: 'p1', wire: 'push' }]);
+  r.clock.now = t.boxRetry.nextAt;
+  assert.strictEqual(await r.sweep(), null);
+  assert.strictEqual(c.runs.length, 0);
+});
+
+test('t2472: a submit the runner refuses spends the attempt, records the refusal and backs off on the schedule', async () => {
+  const r = retryLoop();
+  const c = retryClient(r, () => ({ unknown: 'runner refused the job: queue full', res: null, record: null }));
+  r.f.m._boxDecide = undecided('runner-unreachable', 'gone');
+  await r.hold();
+  delete r.f.m._boxDecide;
+  r.clock.now = 1_060_000;
+  assert.strictEqual(await r.sweep(), 't1');
+  await r.settle();
+  const t = r.f.one();
+  assert.strictEqual(c.runs.length, 1, 'ENTER: the attempt was submitted');
+  assert.deepStrictEqual(t.boxRetry, { ...retryAt(1, 1_180_000, 1_060_000), refused: 'runner refused the job: queue full' });
+  assert.deepStrictEqual([t.verifyHold.code, t.verifyHold.evidence], ['outcome-unknown', 'outcome unknown: runner refused the job: queue full']);
+  assert.ok(r.f.logs.some((l) => l.msg === 'auto box retry 1/6 for t1 refused by the runner: runner refused the job: queue full; next attempt at 1970-01-01T00:19:40.000Z'));
+  assert.strictEqual(heldNotes(r.f).length, 1, 'no second HELD notice');
+  r.clock.now = 1_179_999;
+  assert.strictEqual(await r.sweep(), null);
+  r.clock.now = 1_180_000;
+  assert.strictEqual(await r.sweep(), 't1');
+  await r.settle();
+  assert.strictEqual(c.runs.length, 2);
+});
+
+test('t2472: a retry the runner accepted shows queued then running on the board, starts no second attempt, and a lost link re-holds it for the next attempt on schedule', async () => {
+  const r = retryLoop();
+  const gate = deferred();
+  const seen = deferred();
+  let opts = null;
+  const c = retryClient(r, async (o) => { opts = o; o.onJob({ jobId: 'job-1' }); o.onSubmitted({ jobId: 'job-1' }); seen.resolve(); return gate.promise; });
+  r.f.m._boxDecide = undecided('runner-unreachable', 'gone');
+  await r.hold();
+  delete r.f.m._boxDecide;
+  r.clock.now = 1_060_000;
+  assert.strictEqual(await r.sweep(), 't1');
+  await seen.promise;
+  assert.deepStrictEqual(r.f.one().boxRetry.run, { state: 'queued', since: 1_060_000, runner: 'runner-1', jobId: 'job-1', peer: 'p1', wire: 'push', cancelAt: 4_600_000 });
+  r.clock.now = 1_120_000;
+  assert.match(r.f.m._taskListText(r.f.team, 'all', 1_120_000), /\(auto retry 1\/6 queued on runner-1 for 1m\)/);
+  opts.onState('running');
+  assert.match(r.f.m._taskListText(r.f.team, 'all', 1_240_000), /\(auto retry 1\/6 running on runner-1 for 2m\)/);
+  r.clock.now = 1_300_000;
+  assert.strictEqual(await r.sweep(), null, 'no second live attempt');
+  assert.strictEqual(c.runs.length, 1);
+  gate.resolve(LOST);
+  await r.settle();
+  const t = r.f.one();
+  assert.deepStrictEqual([t.verifyHold.code, t.boxRetry], ['runner-unreachable', retryAt(1, 1_420_000, 1_300_000)]);
+  assert.deepStrictEqual(c.cancels, [['p1', 'job-1', 'push']], 'the lost run is cancelled as before');
+  r.clock.now = 1_420_000;
+  assert.strictEqual(await r.sweep(), 't1');
+  await r.settle();
+  assert.strictEqual(c.runs.length, 2);
+});
+
+test('t2472: a retry still queued at the deadline is cancelled and the ticket ends held saying how many attempts ran and that the last was still queued', async () => {
+  const r = queueLoop(FREE);
+  const c = retryClient(r, (o) => { o.onSubmitted({ jobId: 'job-q' }); r.clock.now = 4_600_000; return { unknown: `the job did not start within the ${o.queueBudgetMs}ms queue budget (cancelled)`, res: null, record: null }; });
+  r.f.m._boxDecide = undecided('queue-budget', QB_WHY);
+  await r.hold();
+  delete r.f.m._boxDecide;
+  r.clock.now = 1_060_000;
+  assert.strictEqual(await r.sweep(), 't1');
+  await r.settle();
+  assert.strictEqual(c.runs[0].queueBudgetMs, 3_540_000, 'ENTER: the attempt waits until the deadline');
+  const t = r.f.one();
+  assert.deepStrictEqual([t.verifyHold.code, t.boxRetry], ['queue-budget', undefined]);
+  assert.deepStrictEqual(heldNotes(r.f).slice(1), [
+    '[ticket t1 HELD] the box did not decide (queue budget) and automatic retries stopped at the 60 min limit (1 of 6 tried; the last one was still queued on the runner and was cancelled); it waited 60 min in total. Try again with [agent:task verify t1].',
+  ]);
+});
+
+const RETRY_BUDGET_ROWS = [
+  ['a fresh verify', null, 1_060_000, 300_000],
+  ['a retry with 59 min left', retryAt(0, 1, 2, true, 1_000_000), 1_060_000, 3_540_000],
+  ['a retry with 200 s left', retryAt(0, 1, 2, true, 1_000_000), 4_400_000, 300_000],
+  ['a retry resumed 200 s past the deadline', retryAt(0, 1, 2, true, 1_000_000), 4_800_000, 100_000],
+  ['a retry resumed one gate queue wait past the deadline', retryAt(0, 1, 2, true, 1_000_000), 4_900_000, 0],
+];
+
+for (const [label, boxRetry, at, want] of RETRY_BUDGET_ROWS) {
+  test(`t2472: _boxDecide gives ${label} a queue budget of ${want}ms`, async () => {
+    const r = retryLoop();
+    const c = retryClient(r, () => LOST);
+    r.p.seed(boxRetry ? { boxRetry } : {});
+    r.clock.now = at;
+    await r.f.m._boxDecide(r.f.team, r.f.one(), '/w', {});
+    assert.strictEqual(c.runs.length, 1, 'ENTER: submitted');
+    assert.strictEqual(c.runs[0].queueBudgetMs, want);
+  });
+}
+
+test('t2472: a retry superseded while queued is cancelled on the runner and its state is cleared', async () => {
+  const r = retryLoop();
+  const seen = deferred();
+  const c = retryClient(r, (o) => { o.onJob({ jobId: 'job-s' }); o.onSubmitted({ jobId: 'job-s' }); seen.resolve(); return new Promise(() => {}); });
+  r.f.m._boxDecide = undecided('runner-unreachable', 'gone');
+  await r.hold();
+  delete r.f.m._boxDecide;
+  r.clock.now = 1_060_000;
+  assert.strictEqual(await r.sweep(), 't1');
+  await seen.promise;
+  assert.strictEqual(r.f.one().boxRetry.run.jobId, 'job-s', 'ENTER: the retry is queued on the runner');
+  const rows = r.f.tstore.load(r.f.team.root);
+  const row = rows.find((x) => x.id === 't1');
+  row.state = 'open'; row.reworkRound = 1; delete row.loopStep; delete row.boxRetry;
+  r.f.tstore.save(r.f.team.root, rows);
+  assert.strictEqual(r.f.m._cancelBoxRuns(r.f.team), 1);
+  await r.settle();
+  assert.deepStrictEqual(c.cancels, [['p1', 'job-s', 'push']]);
+  assert.strictEqual(r.f.one().boxRetry, undefined);
+});
+
+const STALL_ROWS = [
+  ['due but not admitted', { verifyHold: QB_HOLD, boxHoldReason: 'queue budget', boxRetry: { ...retryAt(1, 2_000_000, 1_900_000), notAdmitted: { reason: 'runner runner-1 not connected', at: 2_000_000 } } },
+    '[ticket t1] stalled: automatic box retry 2/6 is due but not admitted: runner runner-1 not connected — held 31m. It keeps trying until 1970-01-01T01:16:40.000Z, then stays held and tells you; to retry now, [agent:task verify t1].'
+    + `\n\nEVIDENCE: queue budget: ${QB_WHY}`,
+    'held: box — queue budget (auto retry 2/6, due, not admitted: runner runner-1 not connected)'],
+  ['queued on the runner', { boxRetry: { ...retryAt(1, 1, 2, true), run: { state: 'queued', since: 2_000_000, runner: 'runner-1', jobId: 'j', peer: 'p1', wire: 'push', cancelAt: 4_600_000 } } },
+    '[ticket t1] stalled: automatic box retry 2/6 is queued on runner-1 for 14m, waiting its turn behind jobs already there; if it has not started by 1970-01-01T01:16:40.000Z it is cancelled and the ticket stays held.',
+    '(auto retry 2/6 queued on runner-1 for 14m)'],
+  ['running on the runner', { boxRetry: { ...retryAt(1, 1, 2, true), run: { state: 'running', since: 2_500_000, runner: 'runner-1', jobId: 'j', peer: 'p1', wire: 'push' } } },
+    '[ticket t1] stalled: automatic box retry 2/6 is running on runner-1 for 6m; the ticket decides when the job ends.',
+    '(auto retry 2/6 running on runner-1 for 6m)'],
+];
+
+for (const [label, over, alarm, board] of STALL_ROWS) {
+  test(`t2472: the stall alarm and the board name a retry ${label}`, async () => {
+    const r = retryLoop();
+    r.p.seed({ lastActivityAt: 1_000_000, nudgedAt: null, ...over });
+    await r.f.m._sweepTeamTickets(r.f.team, 2_860_000);
+    const sent = r.f.gated.filter((g) => g.target === 'lead' && /stalled/.test(g.body)).map((g) => g.body);
+    assert.deepStrictEqual(sent, [alarm]);
+    assert.ok(!sent.some((b) => /nothing has moved/.test(b)));
+    assert.ok(r.f.m._taskListText(r.f.team, 'all', 2_860_000).includes(board));
   });
 }
 
