@@ -90,6 +90,20 @@ function removeTree(p) {
   fs.rmSync(p, { recursive: true, force: true });
 }
 
+async function openDirs(p) {
+  try { await fs.promises.chmod(p, 0o700); } catch {}
+  for (const d of await fs.promises.readdir(p, { withFileTypes: true })) {
+    if (d.isDirectory()) await openDirs(path.join(p, d.name));
+  }
+}
+
+async function removeTreeAsync(p) {
+  let st;
+  try { st = await fs.promises.lstat(p); } catch { return; }
+  if (st.isDirectory()) await openDirs(p);
+  await fs.promises.rm(p, { recursive: true, force: true });
+}
+
 function makeReadOnly(p) {
   const st = fs.lstatSync(p);
   if (st.isSymbolicLink()) return;
@@ -427,7 +441,9 @@ function boxIsolation({
     },
     async reap(jobDir, entry, job) {
       await clear(`clodex.suite.job=${job.id}`);
-      removeTree(jobDir);
+      try { await removeTreeAsync(jobDir); } catch (e) {
+        throw Object.assign(new Error(`removing ${jobDir} failed: ${e.message}`), { removal: true });
+      }
     },
   };
 }

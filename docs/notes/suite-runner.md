@@ -103,3 +103,9 @@ An expired entry still answers its last value while one refresh runs in the back
 
 ## queue
 Order: every non-shadow job (`shadow !== true`) before every shadow job, then `KIND_ORDER`, then `seq`. A shadow run decides nothing, so it never starts ahead of a deciding run or another team's hand job; only the sort key carries this, so `startable`, `pump` and the exclusive head rule see the reordered queue unchanged.
+
+## discardStore
+A pruned store is renamed to `.gone~<hex>` (a name no job id can take) before its background removal, so a resubmit of the same id never shares the directory, and a quit mid-removal leaves a dir that `recover` drops through its id-mismatch branch at the next boot.
+
+## forceRemoveAsync
+Job-end tree removal (`reap` in `noneIsolation`, `retain`) runs here off the main thread; measured: a synchronous removal of a ~746 MB box job dir blocked the runner for up to 63 s. `finish` still awaits `reap` before the slot frees, and a done job's work dir left by a quit mid-removal is swept by nothing at boot (it is never reused: `jobPaths` hashes the id). `maintain`'s cache eviction stays synchronous: `reconcile` would keep a half-removed deps entry whose marker survived.

@@ -228,6 +228,20 @@ function forceRemove(p) {
   fs.rmSync(p, { recursive: true, force: true });
 }
 
+async function openDirs(p, io) {
+  try { await io.promises.chmod(p, 0o700); } catch {}
+  for (const d of await io.promises.readdir(p, { withFileTypes: true })) {
+    if (d.isDirectory()) await openDirs(path.join(p, d.name), io);
+  }
+}
+
+async function forceRemoveAsync(p, io = fs) {
+  let st;
+  try { st = await io.promises.lstat(p); } catch { return; }
+  if (st.isDirectory()) await openDirs(p, io);
+  await io.promises.rm(p, { recursive: true, force: true });
+}
+
 function makeReadOnly(p, io = fs) {
   const st = io.lstatSync(p);
   if (st.isSymbolicLink()) return;
@@ -313,7 +327,7 @@ function noneIsolation({ user = os.userInfo().username, kill = process.kill.bind
         io.symlinkSync(to, from);
       }
     },
-    async reap(jobDir) { forceRemove(jobDir); },
+    reap: (jobDir) => forceRemoveAsync(jobDir, io),
   };
 }
 
@@ -477,6 +491,7 @@ function createSuiteRunner({
   root, oldRoot = null, work, isolation = userIsolation(), limits = {}, spawn = childProcess.spawn,
   now = Date.now, log = () => {}, timers = DEFAULT_TIMERS, platform = process.platform, arch = process.arch,
   box = null, boxSweep = null, onActivity = null, activityMs = ACTIVITY_MS, slots = 1, shares = [], buildBoxes = false, exclusive = 'honour',
+  removeTree = forceRemoveAsync,
 }) {
   const held = Array.isArray(shares) ? shares.map(({ name, path: at, version }) => ({ name, path: at, version })) : [];
   const slotTotal = slotCount(slots);
@@ -961,8 +976,8 @@ function createSuiteRunner({
     try {
       await isoOf(job).reap(jobWork(job.id), job.depsEntry || null, ...jobArg(job));
     } catch (e) {
-      log(`suite-runner: reap ${job.id} failed: ${e.message}`);
-      if (isBox(job)) enterHold(e.message, [jobWork(job.id)]);
+      log(`suite-runner: reap ${job.id} (${jobWork(job.id)}) failed: ${e.message}`);
+      if (isBox(job) && !e.removal) enterHold(e.message, [jobWork(job.id)]);
     }
   }
 
@@ -1247,9 +1262,19 @@ function createSuiteRunner({
       if (active.has(job.id)) return;
       if (i >= lim.keepCount || now() - job.endedAt > lim.keepMs) {
         jobs.delete(job.id);
-        forceRemove(jobStore(job.id));
+        discardStore(job.id);
       }
     });
+  }
+
+  function discardStore(id) {
+    const from = jobStore(id);
+    const gone = path.join(storeDir, `.gone~${crypto.randomBytes(6).toString('hex')}`);
+    try { fs.renameSync(from, gone); } catch (e) {
+      if (e.code !== 'ENOENT') log(`suite-runner: could not set aside ${from}: ${e.message}`);
+      return;
+    }
+    Promise.resolve().then(() => removeTree(gone)).catch((e) => log(`suite-runner: removing ${gone} failed: ${e.message}`));
   }
 
   function cacheEntries() {

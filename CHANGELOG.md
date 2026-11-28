@@ -17,6 +17,7 @@ blocks a release.
 - Test runners: a run on the source machine now names the team env variables it did not apply (reserved names such as PATH), in the run's digest and ledger row, instead of dropping them in silence.
 - Preferences: the test runner section has a control for whether a team's exclusive jobs may take the whole runner; before, an owner could change it only through the API.
 - Test runners: when a finished run's output cannot be read from the runner, the run keeps the runner's own verdict and counts (marked as such) instead of ending as unknown and holding the ticket; reading the output now retries for as long as polling does.
+- Test runners: a node no longer freezes for seconds (up to a minute with a large job directory) after a box job ends; the job directory is now removed in the background. The freeze could make a source lose a finished run's output and hold its ticket.
 
 ## 5.213.0 — 2026-11-28
 

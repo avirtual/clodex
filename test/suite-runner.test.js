@@ -1472,7 +1472,11 @@ for (const [phase, extra, firstExec] of [
   assert.strictEqual((await f.runner.submit(f.body('job-b', 'hand', { ...NAMED(HASH_B), ...extra }))).state, 'queued');
   const b = await waitState(f.runner, 'job-b', 'done');
   assert.deepStrictEqual([b.reason, b.exit], [null, { code: 0, signal: null }]);
-  const info = await f.runner.info();
+  let info = await f.runner.info();
+  for (let i = 0; i < 10000 && info.queue.running; i++) {
+    await new Promise((r) => setImmediate(r));
+    info = await f.runner.info();
+  }
   assert.deepStrictEqual([info.box.state, info.queue], ['ready', { running: null, queued: [] }]);
 });
 
@@ -1748,7 +1752,9 @@ test('a draining runner finishes its running job with its result, starts no queu
   await f.upload(f.body('d1'));
   await f.spawned(['d1']);
   let drained = 0;
-  assert.strictEqual(f.runner.drain(() => { drained += 1; }), 1);
+  let onDrained;
+  const drainedOnce = new Promise((r) => { onDrained = r; });
+  assert.strictEqual(f.runner.drain(() => { drained += 1; onDrained(); }), 1);
   assert.strictEqual((await f.upload(f.body('d2'))).state, 'queued');
   assert.strictEqual((await f.runner.submit(f.body('d3'))).state, 'queued');
   await drain();
@@ -1757,6 +1763,7 @@ test('a draining runner finishes its running job with its result, starts no queu
   f.held.get('d1').stdout.write('TOTALS: 2 pass, 1 fail, 3 tests\n');
   f.held.get('d1').finish(1);
   const d1 = await waitState(f.runner, 'd1', 'done');
+  await drainedOnce;
   await drain();
   assert.deepStrictEqual([d1.reason, d1.exit, drained], [null, { code: 1, signal: null }, 1]);
   await f.spawned(['d2', 'd3']);
@@ -2337,4 +2344,96 @@ test('t2439: info counts a job submitted and awaiting its pack as pending, besid
   assert.strictEqual((await f.runner.submit(f.body('j1'))).state, 'awaiting-pack');
   const i = await f.runner.info();
   assert.deepStrictEqual([i.slots, i.queue, i.pending], [{ total: 1, inUse: 0 }, { running: null, queued: [] }, 1]);
+});
+
+function lateRm(realFs, fail = null) {
+  const removals = [];
+  const waits = [];
+  const io = { ...realFs, promises: { ...realFs.promises, rm: (p, o) => new Promise((resolve, reject) => {
+    removals.push({ p, land: () => (fail ? Promise.reject(fail) : realFs.promises.rm(p, o)).then(resolve, reject) });
+    for (const w of waits.filter((x) => removals.length >= x.n)) w.resolve();
+  }) } };
+  const arrived = (n) => (removals.length >= n ? Promise.resolve() : new Promise((resolve) => waits.push({ n, resolve })));
+  return { io, removals, arrived };
+}
+
+test('t2470: while a finished job tree removal is pending, info, poll and the output answer and the next job waits for the slot', async (t) => {
+  const { io, removals, arrived } = lateRm(resolveFs());
+  const f = await fixture(t, { wrap: () => noneIsolation({ user: 'suite-test', kill: () => {}, fs: io }) });
+  await f.upload(f.body('first'));
+  assert.strictEqual((await f.runner.submit(f.body('second'))).state, 'queued');
+  await waitState(f.runner, 'first', 'done');
+  await Promise.race([arrived(1), waitState(f.runner, 'second', 'done')]);
+  const firstDir = jobPaths(f.work, 'first').dir;
+  assert.deepStrictEqual([removals.map((r) => r.p), fs.existsSync(firstDir)], [[firstDir], true], 'ENTER: the first tree removal is pending');
+  const i = await f.runner.info();
+  assert.deepStrictEqual([i.slots, i.queue.queued.length], [{ total: 1, inUse: 1 }, 1]);
+  const polled = (await f.runner.poll(['first', 'second'])).jobs;
+  assert.deepStrictEqual(polled.map((j) => [j.id, j.state]), [['first', 'done'], ['second', 'queued']]);
+  assert.deepStrictEqual([polled[0].record.outcome, polled[0].record.pass], ['pass', 1]);
+  assert.strictEqual((await f.runner.output('first')).text, 'TOTALS: 1 pass, 0 fail, 1 tests\n');
+  const stored = JSON.parse(fs.readFileSync(path.join(f.root, 'suite-runner', 'jobs', 'first', 'job.json'), 'utf8'));
+  assert.deepStrictEqual([stored.state, stored.record.outcome], ['done', 'pass']);
+  assert.deepStrictEqual(f.calls.map((c) => c.job), ['first']);
+  await removals[0].land();
+  await waitState(f.runner, 'second', 'done');
+  assert.deepStrictEqual([f.calls.map((c) => c.job), fs.existsSync(firstDir)], [['first', 'second'], false]);
+  await arrived(2);
+  await removals[1].land();
+});
+
+test('t2470: a failed job tree removal is logged once with its path, keeps the outcome and does not hold the queue', async (t) => {
+  const { io, removals, arrived } = lateRm(resolveFs(), new Error('EACCES: permission denied'));
+  const logs = [];
+  const f = await fixture(t, { wrap: () => noneIsolation({ user: 'suite-test', kill: () => {}, fs: io }), runnerOver: { log: (m) => logs.push(m) } });
+  await f.upload(f.body('first'));
+  assert.strictEqual((await f.runner.submit(f.body('second'))).state, 'queued');
+  await waitState(f.runner, 'first', 'done');
+  await Promise.race([arrived(1), waitState(f.runner, 'second', 'done')]);
+  await removals[0].land().catch(() => {});
+  const second = await waitState(f.runner, 'second', 'done');
+  const firstDir = jobPaths(f.work, 'first').dir;
+  assert.deepStrictEqual(logs.filter((m) => m.includes('reap first')), [`suite-runner: reap first (${firstDir}) failed: EACCES: permission denied`]);
+  assert.deepStrictEqual([(await f.runner.poll(['first'])).jobs[0].record.outcome, second.record.outcome], ['pass', 'pass']);
+});
+
+test('t2470: a box job tree removal that fails does not hold box jobs', async (t) => {
+  const fb = fakeBox({ reap: (job) => { if (job.id === 'b1') throw Object.assign(new Error('removing /w/jobs/b1 failed: EACCES'), { removal: true }); } });
+  const f = await fixture(t, { runnerOver: { box: fb.box } });
+  await f.upload(f.body('b1', 'hand', { isolation: 'container' }));
+  assert.strictEqual((await f.runner.submit(f.body('b2', 'hand', { isolation: 'container' }))).state, 'queued');
+  await waitState(f.runner, 'b1', 'done');
+  await drain();
+  assert.deepStrictEqual((await f.runner.info()).box, { state: 'ready', env: BOX_IDENTITY });
+  const b2 = await waitState(f.runner, 'b2', 'done');
+  assert.deepStrictEqual([b2.reason, b2.exit], [null, { code: 0, signal: null }]);
+});
+
+test('t2470: retention sets a pruned job store aside at once, removes it in the background, and a boot sweeps a store left mid-removal', async (t) => {
+  let clock = 1000;
+  const removals = [];
+  let called;
+  const firstCall = new Promise((r) => { called = r; });
+  const f = await fixture(t, {
+    now: () => (clock += 1),
+    limits: { keepCount: 1 },
+    runnerOver: { removeTree: (p) => new Promise((resolve) => { removals.push({ p, resolve }); called(); }) },
+  });
+  const store = path.join(f.root, 'suite-runner', 'jobs');
+  await f.upload(f.body('old'));
+  await waitState(f.runner, 'old', 'done');
+  await f.upload(f.body('new'));
+  await waitState(f.runner, 'new', 'done');
+  await firstCall;
+  assert.strictEqual(removals.length, 1, 'ENTER: one store removal is pending');
+  const gone = removals[0].p;
+  assert.deepStrictEqual([path.dirname(gone), path.basename(gone).startsWith('.gone~'), fs.existsSync(gone)], [store, true, true]);
+  assert.deepStrictEqual(fs.readdirSync(store).filter((n) => !n.startsWith('.gone~')).sort(), ['new']);
+  f.runner.close();
+  const runner = f.make();
+  t.after(() => runner.close());
+  runner.start();
+  await drain();
+  assert.strictEqual(fs.existsSync(gone), false);
+  removals[0].resolve();
 });
