@@ -206,7 +206,7 @@ test('a write refusal surfaces as {ok:false} WITHOUT spawning', async () => {
   assert.strictEqual(created.length, 0, 'a refused write never spawns the session');
 });
 
-for (const name of ['.claude', 'CLAUDE.md', '.mcp.json', 'claude.md', '.MCP.JSON']) {
+for (const name of ['.claude', 'CLAUDE.md', '.mcp.json', 'claude.md', '.MCP.JSON', 'Claude.Local.md']) {
   test(`team:create refuses the lead name ${name} before createTeam writes anything`, async () => {
     const created = [];
     const writes = [];

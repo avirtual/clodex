@@ -463,7 +463,7 @@ test('begin refuses a legacy-claim name with 400 reserved name, before any stagi
   assert.ok(!fs.existsSync(path.join(w.root, 'import')), 'no staging directory was created');
 });
 
-for (const name of ['.claude', 'CLAUDE.md', '.mcp.json', 'claude.md', '.MCP.JSON']) {
+for (const name of ['.claude', 'CLAUDE.md', '.mcp.json', 'claude.md', '.MCP.JSON', 'Claude.Local.md']) {
   test(`the wired import begin and createSession refuse ${name} and create nothing of that name`, async () => {
     const w = mkWiring();
     await withServer({ seatImport: w.opts.seatImport, importCreate: w.opts.importCreate }, async (s) => {

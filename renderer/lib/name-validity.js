@@ -1,7 +1,7 @@
 'use strict';
 
 const SESSION_NAME_RE = /^(?!\.+$)[a-zA-Z0-9._-]{1,64}$/;
-const RESERVED_SEAT_NAMES = new Set(['.claims', '.claude', 'claude.md', '.mcp.json']);
+const RESERVED_SEAT_NAMES = new Set(['.claims', '.claude', 'claude.md', 'claude.local.md', '.mcp.json']);
 const LEGACY_CLAIM_RE = /^\.resend\.|\.draining\.[a-z]+\.\d+$/i;
 const isReservedSeatName = (name) => RESERVED_SEAT_NAMES.has(String(name).toLowerCase()) || LEGACY_CLAIM_RE.test(String(name));
 const RESERVED_SENDER_NAMES = new Set(['reminder', 'reboot', 'ticket-loop', 'ticket-watchdog', 'monitor', 'memory', 'exec', 'terminal', 'team', 'clodex-team', 'wirescope', 'deploy-fix', 'permission', 'clodex', 'user', 'relay', 'ctl-admin', 'peer', 'ext']);

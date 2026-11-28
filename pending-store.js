@@ -28,7 +28,7 @@ const { isAlive } = require('./stream-seat');
 //     claim with a copy and deliver the same message twice.
 
 const CLAIMS = '.claims';
-const CLI_CONFIG_SEAT_NAMES = new Set(['.claude', 'claude.md', '.mcp.json']);
+const CLI_CONFIG_SEAT_NAMES = new Set(['.claude', 'claude.md', 'claude.local.md', '.mcp.json']);
 const RESERVED_SEAT_NAMES = new Set([CLAIMS, ...CLI_CONFIG_SEAT_NAMES]);
 const LEGACY_CLAIM_RE = /^\.resend\.|\.draining\.[a-z]+\.\d+$/i;
 const CLAIM_TAG_RE = /^[a-z]+\.(\d+)(?:-([0-9a-f]+))?$/;

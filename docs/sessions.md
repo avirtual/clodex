@@ -22,7 +22,7 @@ arg** (which is why restart paths must re-assert it; kill drops the entry).
 
 **Reserved seat names.** `isReservedSeatName` (pending-store.js) refuses
 `.claims`, the legacy claim shapes, and — case-insensitively, since macOS and
-Windows volumes fold case — `.claude`, `CLAUDE.md` and `.mcp.json`: a seat's
+Windows volumes fold case — `.claude`, `CLAUDE.md`, `CLAUDE.local.md` and `.mcp.json`: a seat's
 messages folder is `<messages root>/<name>`, and those names are what the
 Claude CLI reads as configuration inside the trusted messages root. Every
 creation path refuses them with `reservedSeatError`'s text before writing
@@ -31,7 +31,7 @@ anything: `create`, `rename` (to), `[agent:spawn]` (`_validateSeatName`),
 seat-import `begin`/`commit`; `clodexctl create` relays the server's refusal.
 The renderer's `nameFieldState` holds a second copy of the list
 (`test/reserved-cli-config-names.test.js` fails when they differ). A persisted
-seat that already carries one of the three names still restores (`create`
+seat that already carries one of those names still restores (`create`
 lets a persisted record through), renames away, and is served by the
 per-session peer routes; `.claims` stays refused everywhere.
 

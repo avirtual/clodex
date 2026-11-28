@@ -13,8 +13,8 @@ const nameValidity = require('../renderer/lib/name-validity');
 const { mk } = require('./lib/session-fixtures');
 const { mkTmpRoot } = require('./lib/tmp-roots');
 
-const RESERVED = ['.claude', 'CLAUDE.md', '.mcp.json', 'claude.md', '.MCP.JSON'];
-const NEAR_MISS = ['.claudex', 'CLAUDE.mdx'];
+const RESERVED = ['.claude', 'CLAUDE.md', '.mcp.json', 'claude.md', '.MCP.JSON', 'Claude.Local.md'];
+const NEAR_MISS = ['.claudex', 'CLAUDE.mdx', 'CLAUDE.local.mdx'];
 const AGENT_NAME_RE_T = /^[a-zA-Z0-9._-]{1,64}$/;
 const SID = '11111111-2222-3333-4444-555555555555';
 
@@ -69,7 +69,7 @@ const CWD = path.join(mkTmpRoot('clodex-rsv-proj-'), 'app');
 
 test('the main and renderer reserved lists are the same literal set', () => {
   const { RESERVED_SEAT_NAMES } = require('../pending-store');
-  assert.deepStrictEqual([...RESERVED_SEAT_NAMES].sort(), ['.claims', '.claude', '.mcp.json', 'claude.md']);
+  assert.deepStrictEqual([...RESERVED_SEAT_NAMES].sort(), ['.claims', '.claude', '.mcp.json', 'claude.local.md', 'claude.md']);
   assert.deepStrictEqual([...nameValidity.RESERVED_SEAT_NAMES].sort(), [...RESERVED_SEAT_NAMES].sort());
 });
 
