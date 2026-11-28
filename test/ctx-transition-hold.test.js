@@ -19,7 +19,8 @@ function rig({ root = mkTmpRoot('clx-ctxhold-'), session = {} } = {}) {
     fs, path,
     pathFor: require('../clodex-paths').pathFor, runDirFor: require('../clodex-paths').runDirFor,
     parkDelivery: pend.parkDelivery, drainPending: pend.drainPending,
-    hasActivePending: pend.hasActivePending, countPending: pend.countPending,
+    hasActivePending: pend.hasActivePending, countPending: pend.countPending, parkIdInUse: pend.parkIdInUse, parkedTexts: pend.parkedTexts,
+    randBase36: (n) => Math.random().toString(36).slice(2, 2 + n).padEnd(n, '0'),
     isDraftOpen: require('../proxy-util').isDraftOpen,
     shouldHoldDm: require('../proxy-util').shouldHoldDm,
     peerStatusLabel: require('../proxy-util').peerStatusLabel,
@@ -452,5 +453,299 @@ test('a second reload while one is in flight keeps today\'s drop', () => {
     h.m._handleContextIntent(h.s, 'reload', 'second');
     assert.strictEqual(h.m._ctxHoldMap().get('a').gen, gen);
     assert.strictEqual(h.s._reloadInFlight, true);
+  } finally { mock.timers.reset(); }
+});
+
+function hookRun(h, ev = 'PostToolUse') {
+  const { createCliHooks } = require('../cli-hooks');
+  const { pathFor } = require('../clodex-paths');
+  const hooks = createCliHooks({
+    REGISTRY_DIR: h.root,
+    memoryStore: { list: () => [] },
+    getUiSettings: () => ({ get: () => ({ statusline: { claude: [], claudeCommand: '' } }) }),
+    nodeInterp: process.execPath,
+  });
+  if (!h.hookReady) { hooks.setupClaudeHook('a'); h.hookReady = true; }
+  const out = require('node:child_process').execFileSync('bash', [pathFor(h.root, 'a', 'pendingScript')],
+    { timeout: 30000, killSignal: 'SIGKILL', input: JSON.stringify({ hook_event_name: ev }) }).toString();
+  const delivered = pathFor(h.root, 'a', 'delivered');
+  return { out, delivered: fs.existsSync(delivered) ? fs.readFileSync(delivered, 'utf8') : '' };
+}
+
+function storeSnapshot(dir) {
+  return fs.readdirSync(dir).filter((f) => f.endsWith('.json')).sort().map((f) => [f, fs.readFileSync(path.join(dir, f), 'utf8')]);
+}
+
+test('the CLI hook drain claims nothing while a hold is set; release delivers the three in order with their names and bytes', () => {
+  mock.timers.enable({ apis: ['setTimeout'] });
+  try {
+    const h = rig();
+    for (const b of ['HM-1', 'HM-2', 'HM-3']) parkWhileBusy(h, b);
+    h.s.activityState = 'idle';
+    const before = storeSnapshot(pend.agentDir(h.PENDING_DIR, 'a'));
+    assert.strictEqual(before.length, 3, 'ENTER: three parked');
+    h.m._handleContextIntent(h.s, 'clear', '');
+    const gen = h.m._ctxHoldMap().get('a').gen;
+    for (const ev of ['PostToolUse', 'UserPromptSubmit']) {
+      const r = hookRun(h, ev);
+      assert.strictEqual(r.out, '', `${ev}: the hook hands nothing over`);
+      assert.strictEqual(r.delivered, '', `${ev}: no delivered.jsonl row`);
+    }
+    assert.strictEqual(h.onDisk(), 3, 'the badge still counts them');
+    assert.deepStrictEqual(storeSnapshot(pend.heldDir(h.PENDING_DIR, 'a')), before);
+    h.s.activityState = 'thinking';
+    h.m._releaseCtxHold('a', gen, 'test');
+    assert.deepStrictEqual(storeSnapshot(pend.agentDir(h.PENDING_DIR, 'a')), before, 'back under their names, bytes unchanged');
+    assert.strictEqual(pend.isHeld(h.PENDING_DIR, 'a'), false);
+    h.s.activityState = 'idle';
+    h.m._drainPendingAtIdle(h.s);
+    const all = h.written.join('\n');
+    assert.deepStrictEqual(['HM-1', 'HM-2', 'HM-3'].map((b) => all.split(b).length - 1), [1, 1, 1]);
+    assert.ok(all.indexOf('HM-1') < all.indexOf('HM-2') && all.indexOf('HM-2') < all.indexOf('HM-3'), 'in order');
+  } finally { mock.timers.reset(); }
+});
+
+test('mail arriving during the hold is hidden too; a failed hold keeps it hidden and counted until the badge click', () => {
+  mock.timers.enable({ apis: ['setTimeout', 'Date'] });
+  try {
+    const h = rig();
+    h.m._handleContextIntent(h.s, 'clear', 'cont');
+    h.m._gatedDeliver('a', 'bob', 'LATE-BODY', false);
+    assert.strictEqual(hookRun(h).out, '');
+    for (let i = 0; i < 60; i++) mock.timers.tick(60_000);
+    assert.strictEqual(h.m.ctxHoldState('a'), 'clear did not complete', 'ENTER: the hold failed');
+    assert.strictEqual(hookRun(h).out, '', 'a failed hold still hides the mail from the hook');
+    assert.strictEqual(h.m.pendingCountFor('a'), 1);
+    assert.strictEqual(h.onDisk(), 1);
+    h.m.flushPending('a');
+    assert.ok(h.written.some((w) => /LATE-BODY/.test(w)), 'the click delivered it');
+    assert.strictEqual(pend.isHeld(h.PENDING_DIR, 'a'), false);
+  } finally { mock.timers.reset(); }
+});
+
+test('restart mid-hold: hidden mail stays hidden and is restored with the hold at boot-ready', () => {
+  mock.timers.enable({ apis: ['setTimeout'] });
+  try {
+    const root = mkTmpRoot('clx-ctxhold-hidden-restart-');
+    const a = rig({ root });
+    a.m._handleContextIntent(a.s, 'clear', 'cont');
+    a.m._gatedDeliver('a', 'bob', 'RS-BODY', false);
+    const b = rig({ root });
+    b.m._ctxHoldMap();
+    assert.strictEqual(pend.isHeld(b.PENDING_DIR, 'a'), true, 'the hidden store survives the restart');
+    assert.strictEqual(hookRun(b).out, '');
+    b.s._bootReadySeen = true;
+    b.m._ctxHoldOnBootReady(b.s);
+    assert.strictEqual(pend.isHeld(b.PENDING_DIR, 'a'), false);
+    assert.ok(b.written.some((w) => /RS-BODY/.test(w)));
+  } finally { mock.timers.reset(); }
+});
+
+test('boot: a hidden store with no hold record is moved back, never orphaned', () => {
+  const h = rig();
+  pend.parkDelivery(h.PENDING_DIR, 'a', 'ORPHAN', '100.000000001', null, false, 1);
+  pend.hideParked(h.PENDING_DIR, 'a');
+  assert.strictEqual(pend.hasActivePending(h.PENDING_DIR, 'a'), false, 'ENTER: hidden');
+  const b = rig({ root: h.root });
+  b.m.startPendingPoll(3_600_000);
+  clearInterval(b.m._pendingPollTimer);
+  assert.strictEqual(pend.isHeld(b.PENDING_DIR, 'a'), false);
+  assert.deepStrictEqual(pend.parkedTexts(b.PENDING_DIR, 'a'), ['ORPHAN']);
+  assert.strictEqual(pend.hasActivePending(b.PENDING_DIR, 'a'), true);
+});
+
+test('deleting the seat removes its hidden mail with its other pending files', () => {
+  mock.timers.enable({ apis: ['setTimeout'] });
+  try {
+    const h = rig();
+    h.m._handleContextIntent(h.s, 'clear', '');
+    h.m._gatedDeliver('a', 'bob', 'DEL-BODY', false);
+    assert.strictEqual(pend.isHeld(h.PENDING_DIR, 'a'), true, 'ENTER: hidden');
+    h.m._dropPendingDir('a');
+    h.m._dropCtxHold('a');
+    assert.strictEqual(pend.isHeld(h.PENDING_DIR, 'a'), false);
+    assert.strictEqual(h.onDisk(), 0);
+  } finally { mock.timers.reset(); }
+});
+
+function gapRig() {
+  const h = rig();
+  const old = h.s;
+  let open;
+  const gate = new Promise((r) => { open = r; });
+  let fail = null;
+  h.m.kill = async (name) => { old._dead = true; h.m.sessions.delete(name); };
+  h.m.create = async (name) => {
+    await gate;
+    if (fail) throw new Error(fail);
+    h.fresh = { name, type: 'claude', agentType: 'claude', io: 'pty', activityState: 'idle', activityTs: Date.now(), createdAt: 1 };
+    h.m.sessions.set(name, h.fresh);
+  };
+  h.m._injectReloadHandoff = () => {};
+  for (const k of ['_dropRosterSent', '_reattachAction', '_preserveAcrossRestart']) h.m[k] = () => null;
+  h.m.resumeCwdOf = () => '/tmp';
+  h.errs = [];
+  h.m._sendRespawnFailed = (_n, _e, err) => h.errs.push(err);
+  h.bob = { name: 'bob', type: 'claude', agentType: 'claude', io: 'pty', activityState: 'idle', activityTs: Date.now(), createdAt: 2 };
+  h.m.sessions.set('bob', h.bob);
+  h.open = (why) => { fail = why || null; open(); };
+  h.old = old;
+  return h;
+}
+
+async function deliverInGap(h) {
+  h.m._handleContextIntent(h.old, 'reload', 'next');
+  await new Promise((r) => setImmediate(r));
+  await ticks();
+  assert.strictEqual(h.m.sessions.has('a'), false, 'ENTER: in the gap');
+  await h.m._handleIntent('bob', { type: 'dm', target: 'a', body: 'GAP-DM' });
+  assert.strictEqual(h.m._deliverReminder('a', 'GAP-REM'), 'parked');
+  const r = h.m._gatedDeliver('a', 'ticket-loop', 'GAP-NOTE', false, '[ticket t9 MERGED]');
+  assert.ok(r.parked && !r.queued, 'a parked notice, not a typed one');
+  assert.strictEqual(r.reason, 'reloading');
+  assert.ok(h.written.some((w) => w.startsWith('[agent:dm] parked for a (reloading) as ')), 'the sender is told the seat is reloading');
+  assert.strictEqual(h.onDisk(), 3);
+  assert.strictEqual(hookRun(h).out, '', 'hidden from the hook like any held mail');
+}
+
+test('reload gap: a dm, a reminder and a ticket-loop notice are each delivered once to the respawned seat', async () => {
+  mock.timers.enable({ apis: ['setTimeout'] });
+  try {
+    const h = gapRig();
+    await deliverInGap(h);
+    h.open();
+    await ticks();
+    assert.deepStrictEqual(h.errs, []);
+    assert.ok(h.fresh, 'ENTER: respawned');
+    h.fresh._bootReadySeen = true;
+    h.m._ctxHoldOnBootReady(h.fresh);
+    h.m._drainPendingAtBootReady(h.fresh);
+    assert.strictEqual(h.written.join('\n').includes('GAP-DM'), false, 'held while the handoff is pending');
+    h.m._ctxHoldTyped('a', h.m._ctxHoldMap().get('a').gen);
+    h.m._emitActivity('a', 'thinking');
+    h.m._emitActivity('a', 'idle', true);
+    const all = h.written.join('\n');
+    assert.deepStrictEqual(['GAP-DM', 'GAP-REM', 'GAP-NOTE'].map((b) => all.split(b).length - 1), [1, 1, 1]);
+    assert.strictEqual(h.onDisk(), 0);
+  } finally { mock.timers.reset(); }
+});
+
+test('reload gap: a failed respawn keeps all three on disk and counted; the name is no longer reserved', async () => {
+  mock.timers.enable({ apis: ['setTimeout'] });
+  try {
+    const h = gapRig();
+    await deliverInGap(h);
+    h.open('boom');
+    await ticks();
+    assert.strictEqual(h.errs.length, 1, 'ENTER: respawn failed');
+    assert.strictEqual(h.m.ctxHoldState('a'), 'reload did not complete');
+    assert.strictEqual(h.onDisk(), 3);
+    assert.strictEqual(hookRun(h).out, '');
+    assert.deepStrictEqual(h.m._gatedDeliver('a', 'bob', 'AFTER', false), { error: 'no such agent "a"' });
+    h.m.sessions.set('a', { name: 'a', type: 'claude', agentType: 'claude', io: 'pty', activityState: 'idle', activityTs: Date.now(), createdAt: 1 });
+    h.m.flushPending('a');
+    const all = h.written.join('\n');
+    assert.deepStrictEqual(['GAP-DM', 'GAP-REM', 'GAP-NOTE'].map((b) => all.split(b).length - 1), [1, 1, 1]);
+  } finally { mock.timers.reset(); }
+});
+
+test('reload gap: reservation is by hold record — an unknown name and a seat deleted in the gap still fail', async () => {
+  mock.timers.enable({ apis: ['setTimeout'] });
+  try {
+    const h = gapRig();
+    assert.deepStrictEqual(h.m._gatedDeliver('nobody', 'bob', 'X', false), { error: 'no such agent "nobody"' });
+    h.m._handleContextIntent(h.old, 'reload', 'next');
+    await new Promise((r) => setImmediate(r));
+    await ticks();
+    assert.strictEqual(h.m.sessions.has('a'), false, 'ENTER: in the gap');
+    h.m._dropCtxHold('a');
+    assert.deepStrictEqual(h.m._gatedDeliver('a', 'bob', 'X', false), { error: 'no such agent "a"' });
+    h.open();
+    await ticks();
+  } finally { mock.timers.reset(); }
+});
+
+function escRig(h) {
+  const tstore = require('../tickets-store').createTicketsStore({ fs, path, clodexHome: h.root });
+  const team = { name: 'team', root: mkTmpRoot('clx-ctxhold-team-'), lead: 'a', roles: {} };
+  tstore.save(team.root, [{ id: 't9', title: 'x', state: 'done', loopStep: 'verify', assignee: 'hand', openedAt: 1, lastActivityAt: 1 }]);
+  return {
+    escalate: () => h.m._escalateTicket(team, 't9', 'verify: diff', 'EVID', 'TRIED'),
+    told: () => h.written.join('\n').split('[ticket t9 ESCALATED]').length - 1,
+    state: (watches) => {
+      const rec = tstore.load(team.root).find((t) => t.id === 't9');
+      return { ...rec, lastActivityAt: typeof rec.lastActivityAt, watched: [...(watches || new Map()).keys()] };
+    },
+  };
+}
+
+function parkedForLiveLead() {
+  const live = rig();
+  const e = escRig(live);
+  live.s.lastUserInputTs = Date.now();
+  e.escalate();
+  assert.strictEqual(e.told(), 0, 'ENTER: parked for the live idle lead');
+  return { live, e };
+}
+
+async function escalateInGap(h, e) {
+  h.m._handleContextIntent(h.old, 'reload', 'next');
+  await new Promise((r) => setImmediate(r));
+  await ticks();
+  assert.strictEqual(h.m.sessions.has('a'), false, 'ENTER: in the gap');
+  e.escalate();
+  assert.strictEqual(h.onDisk(), 1);
+  assert.strictEqual(e.state().loopStep, 'verify', 'an escalation parked in the gap has not been seen');
+}
+
+test('reload gap: an ESCALATED notice is delivered once to the respawned lead and leaves the loop state a live idle lead leaves', async () => {
+  mock.timers.enable({ apis: ['setTimeout'] });
+  try {
+    const { live, e: le } = parkedForLiveLead();
+    live.s.lastUserInputTs = 0;
+    live.m._drainPendingAtIdle(live.s);
+    live.m._emitActivity('a', 'thinking');
+    assert.strictEqual(le.told(), 1);
+    const want = le.state(live.s._parkedEscalations);
+    assert.strictEqual(want.loopStep, undefined, 'ENTER: the drained escalation released the hold');
+    const h = gapRig();
+    const e = escRig(h);
+    await escalateInGap(h, e);
+    h.open();
+    await ticks();
+    assert.ok(h.fresh, 'ENTER: respawned');
+    h.fresh._bootReadySeen = true;
+    h.m._ctxHoldOnBootReady(h.fresh);
+    h.m._drainPendingAtBootReady(h.fresh);
+    h.m._ctxHoldTyped('a', h.m._ctxHoldMap().get('a').gen);
+    h.m._emitActivity('a', 'thinking');
+    assert.strictEqual(e.state().loopStep, 'verify', 'a turn that started before the escalation was typed keeps the hold');
+    h.m._emitActivity('a', 'idle', true);
+    h.m._emitActivity('a', 'thinking');
+    assert.strictEqual(e.told(), 1);
+    assert.deepStrictEqual(e.state(h.fresh._parkedEscalations), want);
+  } finally { mock.timers.reset(); }
+});
+
+test('reload gap: a failed respawn leaves the escalation counted, watched and held as a parked undelivered one; the badge click delivers it', async () => {
+  mock.timers.enable({ apis: ['setTimeout'] });
+  try {
+    const { live, e: le } = parkedForLiveLead();
+    const want = le.state(live.s._parkedEscalations);
+    assert.deepStrictEqual([want.loopStep, want.watched], ['verify', ['t9']], 'ENTER: the reference is held and watched');
+    const h = gapRig();
+    const e = escRig(h);
+    await escalateInGap(h, e);
+    h.open('boom');
+    await ticks();
+    assert.strictEqual(h.errs.length, 1, 'ENTER: respawn failed');
+    assert.deepStrictEqual(e.state(h.m._gapEscalations.get('a')), want);
+    assert.strictEqual(h.onDisk(), 1);
+    const back = { name: 'a', type: 'claude', agentType: 'claude', io: 'pty', activityState: 'idle', activityTs: Date.now(), createdAt: 1 };
+    h.m.sessions.set('a', back);
+    h.m.flushPending('a');
+    assert.strictEqual(e.told(), 1);
+    h.m._emitActivity('a', 'thinking');
+    assert.strictEqual(e.state(back._parkedEscalations).loopStep, undefined, 'the delivered escalation releases the hold');
   } finally { mock.timers.reset(); }
 });

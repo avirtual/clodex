@@ -20,7 +20,7 @@ const { withoutExecGrants, withoutLocalOnly } = require('./session-args');
 // knows only core's verbs, so it passes plugin verbs — which are forced
 // privileged — straight through to a remote caller's grant.
 const { withoutPrivilegedIntentsFor } = require('./intent-registry');
-const { isClaimEntry, isReservedSeatName, reservedSeatError } = require('./pending-store');
+const { isClaimEntry, isReservedSeatName, reservedSeatError, heldDir: pendingHeldDir } = require('./pending-store');
 // Env scopes cross the wire on a create body — never trust the client: sanitize
 // server-side (drops invalid/denied/newline keys) before it reaches create().
 const { sanitizeFlat } = require('./env-scopes');
@@ -248,9 +248,16 @@ function createRemoteWiring(deps) {
   }
 
   function countParked(name) {
-    let entries;
-    try { entries = fs.readdirSync(path.join(REGISTRY_DIR, 'pending', name), { withFileTypes: true }); } catch { return 0; }
-    return entries.filter((e) => e.isFile() && e.name.endsWith('.json') && !e.name.startsWith('.') && !isClaimEntry(e.name)).length;
+    const root = path.join(REGISTRY_DIR, 'pending');
+    let dirs;
+    try { dirs = [path.join(root, name), pendingHeldDir(root, name)]; } catch { return 0; }
+    let n = 0;
+    for (const dir of dirs) {
+      let entries;
+      try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { continue; }
+      n += entries.filter((e) => e.isFile() && e.name.endsWith('.json') && !e.name.startsWith('.') && !isClaimEntry(e.name)).length;
+    }
+    return n;
   }
 
   function describeSession(name) {

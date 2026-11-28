@@ -138,7 +138,7 @@ const voiceEngineSpec = require('./voice-engine');
 const { effectiveWindowSize, ctxWindowSource } = require('./argv-merge');
 const { contextStatusOf } = require('./ctx-reminder');
 const { CTRLU_SETTLE_MS } = require('./inject-queue');
-const { agentDir: pendingAgentDir, claimsDir: pendingClaimsDir, isReservedSeatName, isCliConfigSeatName, reservedSeatError, claimTag, rehomeOrphans, parkBacklog, CLAIM_TAG_RE, LEGACY_CLAIM_RE } = require('./pending-store');
+const { agentDir: pendingAgentDir, claimsDir: pendingClaimsDir, isReservedSeatName, isCliConfigSeatName, reservedSeatError, claimTag, rehomeOrphans, parkBacklog, CLAIM_TAG_RE, LEGACY_CLAIM_RE, hideParked, revealParked, heldNames, heldDir: pendingHeldDir } = require('./pending-store');
 const { VOICE_MODES, voiceModeOf } = require('./voice-settings');
 const { fmtAge, parseProfileValue, PROFILE_KEY_RE } = require('./memory-store');
 const { mcpArgvPlan, claudeMcpServers, codexMcpArgs, museExpressible, secretRefs, discoverMcpSources } = require('./mcp-plan');
@@ -5567,6 +5567,7 @@ function createSessionManager(deps) {
       if (!PENDING_DIR || typeof name !== 'string' || !/^(?!\.+$)[a-zA-Z0-9._-]{1,64}$/.test(name)) return;
       try {
         fs.rmSync(pendingAgentDir(PENDING_DIR, name), { recursive: true, force: true });
+        fs.rmSync(pendingHeldDir(PENDING_DIR, name), { recursive: true, force: true });
         for (const claim of this._claimEntries(PENDING_DIR, name)) fs.rmSync(claim, { recursive: true, force: true });
       } catch (e) {
         log.warn('inject', `pending mail for ${name} not removed: ${e.message}`);
@@ -5727,6 +5728,7 @@ function createSessionManager(deps) {
     // dir-rename Node never observes.
     startPendingPoll(intervalMs = 1000) {
       if (this._pendingPollTimer) return;
+      this._ctxHoldMap();
       const tick = () => {
         const live = new Set();
         for (const s of this.sessions.values()) {
@@ -6049,6 +6051,7 @@ function createSessionManager(deps) {
       if (s && state !== 'idle') s.lastMainStop = null;
       if (s && state !== 'idle') s._awaitingTurnSince = null;
       if (s && state !== 'idle' && s._bootScreenWatch) { s._bootScreenWatch = false; s._bootDialog = null; s._bootScreenText = null; this._bootTrustRespawned.delete(name); }
+      if (s && state !== 'idle') this._adoptGapEscalations(s);
       if (s && state !== 'idle' && s._parkedEscalations && s._parkedEscalations.size) this._releaseDrainedEscalations(s);
       // A turn confirms the spec write only if it is attributed to this ticket in the transcript;
       // otherwise the latch stays armed and its deadline redelivers.
@@ -6356,7 +6359,30 @@ function createSessionManager(deps) {
       }
       this._ctxHolds = map;
       this._ctxGenSeq = seq;
+      if (PENDING_DIR) {
+        for (const name of heldNames(PENDING_DIR)) if (!map.has(name)) this._revealHeldMail(name, 'no hold record at boot');
+      }
       return map;
+    }
+
+    _hideHeldMail(name) {
+      if (!PENDING_DIR) return;
+      try {
+        const n = hideParked(PENDING_DIR, name);
+        log.info('inject', `context hold for ${name}: mail kept out of the CLI's hook drain (${n} parked entr${n === 1 ? 'y' : 'ies'} moved)`);
+      } catch (e) {
+        log.error('inject', `context hold for ${name}: parked mail not hidden (${e.message})`);
+      }
+    }
+
+    _revealHeldMail(name, why) {
+      if (!PENDING_DIR) return;
+      try {
+        const n = revealParked(PENDING_DIR, name);
+        if (n) log.info('inject', `context hold for ${name} ended (${why}): ${n} held entr${n === 1 ? 'y' : 'ies'} back in the parked store`);
+      } catch (e) {
+        log.error('inject', `context hold for ${name}: held mail not restored (${e.message})`);
+      }
     }
 
     _saveCtxHolds() {
@@ -6392,6 +6418,16 @@ function createSessionManager(deps) {
       map.delete(name);
       this._clearCtxHoldFailTimer(name);
       this._saveCtxHolds();
+      this._revealHeldMail(name, 'hold dropped');
+      if (this._gapEscalations && !this.sessions.has(name)) this._gapEscalations.delete(name);
+    }
+
+    _adoptGapEscalations(s) {
+      const held = this._gapEscalations && this._gapEscalations.get(s.name);
+      if (!held) return;
+      this._gapEscalations.delete(s.name);
+      const watches = s._parkedEscalations || (s._parkedEscalations = new Map());
+      for (const [ticketId, w] of held) watches.set(ticketId, w);
     }
 
     _preArmCtxHold(session, text) {
@@ -6425,6 +6461,7 @@ function createSessionManager(deps) {
       };
       map.set(name, rec);
       this._saveCtxHolds();
+      this._hideHeldMail(name);
       if (prev && prev.state === 'failed' && session.needsAttention && session.needsAttention.kind === 'context-stuck') {
         session.needsAttention = null;
         this._sendToSession(name, 'session-attention', name, null);
@@ -6499,6 +6536,7 @@ function createSessionManager(deps) {
       this._clearCtxHoldFailTimer(name);
       this._saveCtxHolds();
       this._shadowLog({ type: 'ctx-hold-released', agent: name, kind: rec.kind, gen: rec.gen, why });
+      this._revealHeldMail(name, why);
       const s = this.sessions.get(name);
       if (!s || s._dead) return true;
       this._ctxHoldRow(name);
@@ -7366,7 +7404,7 @@ function createSessionManager(deps) {
             break;
           }
           let sup = null;
-          if (localTarget && localTarget.agentType) {
+          if ((localTarget && localTarget.agentType) || (!localTarget && this._ctxGapHold(intent.target))) {
             // Armed here, not in _gatedDeliver: this is the one site with a live sender to tell.
             let armed = null;
             const r = this._gatedDeliver(intent.target, fromTag, intent.body, intent.urgent === true, '',
@@ -9448,6 +9486,10 @@ function createSessionManager(deps) {
       }
       if (this._assistantPolicy(targetName) && !this._isSystemSender(senderTag)) return { error: `${targetName} takes messages only from its operator client` };
       const target = this.sessions.get(targetName);
+      if (!target) {
+        const gap = this._parkInCtxGap(targetName, senderTag, body, 'dm', tag, onWrite, dmContentKey(senderTag, body));
+        if (gap) return gap;
+      }
       if (!target || !target.agentType) return { error: `no such agent "${targetName}"` };
       if (target.clone) return { error: `${targetName} is a scratch clone — not addressable` };
       const key = dmContentKey(senderTag, body);
@@ -10050,7 +10092,11 @@ function createSessionManager(deps) {
 
     _deliverMessage(targetName, senderName, body, mtype, tag = '', onWrite = null, parkKey = null, images = null, rebody = null, ref = null) {
       const target = this.sessions.get(targetName);
-      if (!target || target.clone) return;
+      if (!target) {
+        this._parkInCtxGap(targetName, senderName, body, mtype, tag, onWrite, parkKey);
+        return;
+      }
+      if (target.clone) return;
       if (this._refuseStreamInject(target, body, `${mtype || 'message'} from ${senderName}`)) return;
       if (senderName === 'user' && this._isSystemSender(senderName)) this._rearmParkWake(target.name, 'operator message');
       const pics = Array.isArray(images) ? images : [];
@@ -10208,6 +10254,24 @@ function createSessionManager(deps) {
       }
       log.info('inject', `park-on-hold for ${target.name} as ${id}: ${countPending(PENDING_DIR, target.name)} waiting`);
       return id;
+    }
+
+    _ctxGapHold(name) {
+      if (typeof name !== 'string' || this.sessions.has(name)) return null;
+      const rec = this._ctxHoldMap().get(name);
+      return rec && rec.respawn && rec.state !== 'failed' ? rec : null;
+    }
+
+    _parkInCtxGap(name, senderTag, body, mtype, tag, onWrite, key) {
+      if (!this._ctxGapHold(name)) return null;
+      let entry = null;
+      try { entry = getPersistence().get(name); } catch {}
+      if (!entry) return null;
+      const text = this._buildDeliveryText({ name, agentType: entry.type, io: entry.io }, senderTag, body, mtype || 'dm', tag);
+      const parkId = this._parkHeldDelivery({ name }, text, key || null);
+      if (!parkId) return null;
+      if (typeof onWrite === 'function') { try { onWrite('parked'); } catch {} }
+      return { parked: parkId, reason: this.ctxHoldState(name), waiting: this._parkWaiting(name) };
     }
 
     _parkWaiting(name, now = Date.now()) {

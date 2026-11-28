@@ -439,11 +439,31 @@ every non-operator outbox item, and `_onStreamToolBoundary` drains nothing
 while it is queued, so mail waiting at acceptance reaches the new conversation.
 Mail there is not ordered behind the clear's continuation.
 
-Not covered: the CLI's own `pending.sh` hook drain, which hands every parked
-`*.json` to the continuation's UserPromptSubmit, so in production held mail can
-ride the continuation's turn instead of the turn after it. Covering it needs
-held entries kept out of `*.json` (a follow-up ticket; the hook bytes are
-pinned).
+The CLI's own `pending.sh` hook drain claims the whole `pending/<name>/` dir
+by rename and deletes the claim, so held mail cannot sit beside it under
+another name. While a hold record exists the seat's mail lives in
+`pending/.claims/<name>.held/` instead: `_armCtxHold` moves what is parked
+there (`hideParked`), `parkDelivery` writes there while that dir exists, and
+`_releaseCtxHold` / `_dropCtxHold` move it back under the original names
+(`revealParked`) before the ordinary drain. Neither drainer's orphan rehome
+matches the name. `countPending`, `peekPending`, `parkBacklog`, `parkedTexts`
+and both resend claims read it, so the badge, "N waiting" and the click see
+held mail. Boot (`_ctxHoldMap`'s first load, from `startPendingPoll`) moves a
+held dir with no hold record back; `_dropPendingDir` removes it.
+
+Respawn gap: between the old process leaving the sessions map and the new one
+joining it, a name with a respawn hold record that has not failed is
+reserved (`_ctxGapHold`). `_gatedDeliver`, `_deliverMessage` and the dm
+intent park to the held store instead of failing "no such agent";
+`_gatedDeliver` returns `{ parked, reason: 'reloading' | 'clearing' }` (the
+`ctxHoldState` words), so the ticket loop counts the notice as parked, not
+typed. A reminder in the gap takes its existing offline park, which lands in
+the held store. A name with no record, a failed hold or a seat deleted in the
+gap still fails "no such agent". The MERGED notice has no retry or replay.
+An ESCALATED notice parked in the gap keeps `loopStep`, and its watch is
+kept under the lead's name (`_gapEscalations`) until the seat's next turn
+start adopts it (`_adoptGapEscalations`); without that the delivered
+escalation would leave `loopStep` set and the stall sweep would alarm on it.
 
 ### Draft and busy protections by seat type
 
