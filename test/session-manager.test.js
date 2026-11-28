@@ -1712,6 +1712,14 @@ test('t2492: reboot: _rebootProgress parks the 10-minute progress line passively
     text: '[agent:reboot] restart still waiting after 10m, dropped in 20m if the host stays busy; waiting on: avh-ride-hand-265 (team avh-ride, busy 4m)' }]);
 });
 
+
+test('t2492: reboot: _rebootProgress sends nothing to a seat that cannot take a passive park', async () => {
+  const { m, relaunches, injected, parks } = mkReboot({ intents: ['reboot'] });
+  await m._handleIntent('a', { type: 'reboot', body: 'nightly' });
+  m.sessions.get('a').agentType = 'codex';
+  relaunches[0].onProgress({ at: 1_600_000, armedAt: 1_000_000, leftMs: 1_200_000, blockers: [] });
+  assert.deepStrictEqual([injected.length, parks.length], [1, 0], 'a codex seat would be woken by the fallback inject, so it gets no progress line');
+});
 function mkWaitWho(state) {
   const injected = [];
   const m = mk({

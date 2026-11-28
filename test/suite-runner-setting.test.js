@@ -825,3 +825,33 @@ test('t2483: setSuiteRunnerBoxArgs stores a list and label, keeps one it is not 
   assert.strictEqual('boxArgs' in f.settings.suiteRunner, false);
   assert.strictEqual(f.wiring.getSuiteEngine().opts.boxArgs, undefined);
 });
+
+test('t2492: suiteRestartJobs carries ticket and kind, so the drop notice names a local job as "test job t2147 verify", sanitised', async (t) => {
+  const { createIdleWaiter, giveUpBody } = require('../restart-waiter');
+  const f = liveFixture(t, THREE);
+  f.runners[0].active = 1;
+  f.runners[0].activity = async () => ({
+    running: [{ id: 'j7', team: 'avh-ride', ticket: 't2147', kind: 'verify' }],
+    waiting: [{ id: 'j8', team: 'avh-ride', ticket: 't21\u001b[2J48', kind: 'merge' }],
+  });
+  assert.deepStrictEqual(f.wiring.suiteRestartJobs(), [{ id: null, team: null }], 'ENTER: no snapshot yet, the refresh is in flight');
+  await new Promise((r) => setImmediate(r));
+  assert.deepStrictEqual(f.wiring.suiteRestartJobs(), [
+    { id: 'j7', team: 'avh-ride', ticket: 't2147', kind: 'verify' },
+    { id: 'j8', team: 'avh-ride', ticket: 't21\u001b[2J48', kind: 'merge' },
+  ]);
+  let cur = 1_000_000;
+  const timers = [];
+  const seen = [];
+  const waiter = createIdleWaiter({
+    getSessions: () => [], now: () => cur, lastInputAt: () => 0,
+    setTimer: (fn, ms) => { timers.push({ fn, at: cur + ms }); return timers.length; }, clearTimer: () => {},
+    restart: () => seen.push('restart'), suiteJobs: () => f.wiring.suiteRestartJobs(),
+    notify: (asked, why, wait) => seen.push(giveUpBody(asked, why, wait)),
+  });
+  waiter.arm({ requester: 'avh-ride-lead' });
+  while (timers.length) { const next = timers.shift(); cur = next.at; next.fn(); }
+  assert.deepStrictEqual(seen, [
+    '2 suite jobs this machine is running for other teams did not finish — the pending restart was dropped after 30m. Still busy: test job t2147 verify (29m), test job t21 [2J48 merge (29m). Try again when work settles. Requested by: avh-ride-lead.',
+  ]);
+});

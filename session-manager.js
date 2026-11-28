@@ -8005,7 +8005,7 @@ function createSessionManager(deps) {
 
     _rebootProgress(who, born, p) {
       const live = this.sessions.get(who);
-      if (!live || !p || (born != null && live.createdAt !== born)) return;
+      if (!live || !p || !drainsParkedMail(live.agentType) || (born != null && live.createdAt !== born)) return;
       const ran = ageText(p.at - p.armedAt);
       const named = Array.isArray(p.blockers) && p.blockers.length ? blockersPhrase(p.blockers, p.at) : 'nothing right now (waiting out the quiet window)';
       this._injectTextPassive(live, `[agent:reboot] restart still waiting after ${ran}, dropped in ${ageText(p.leftMs)} if the host stays busy; waiting on: ${named}`);

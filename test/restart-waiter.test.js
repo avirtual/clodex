@@ -856,3 +856,38 @@ test('t2492: the pending-restart dialog leads with the waiting line', () => {
   assert.strictEqual(pendingDetail([], { armedAt, at: armedAt, requesters: [], blockers: [{ type: 'test job', name: 't9 verify', team: null, since: armedAt }] }),
     `Restart waiting since 14:20Z, asked by the operator; waiting on: test job t9 verify (0s).\n${pendingDetail([])}`);
 });
+
+test('t2492: a one-sample idle flicker keeps a seat\'s busy age, and a merge moving to the head of the queue keeps its own', () => {
+  const evs = [];
+  let runs = ['ticket t5 auto-merge queued behind it (team clodex)'];
+  const { waiter, clock, seen, setSessions } = blockerWaiter({ inFlightRuns: () => runs, runCapMs: 60 * 60_000, onEvent: (ev) => evs.push(ev) });
+  const a = { name: 'a', team: 'clodex', agentType: 'claude', activityState: 'thinking' };
+  setSessions([a]);
+  waiter.arm();
+  clock.advance(20 * 60_000);
+  a.activityState = 'idle';
+  runs = ['ticket t5 auto-merge and its post-merge suite (team clodex)'];
+  clock.advance(2000);
+  a.activityState = 'thinking';
+  clock.advance(11 * 60_000);
+  assert.deepStrictEqual(seen, [
+    'Sessions stayed busy — the pending restart was dropped after 30m. Still busy: a (team clodex, busy 29m), merge t5 (29m). Try again when work settles.',
+  ]);
+});
+
+test('t2492: operator typing is shown to every viewer, not counted as another team\'s', () => {
+  const armedAt = Date.UTC(2026, 10, 28, 14, 20);
+  const st = { armedAt, at: armedAt + 20_000, requesters: ['lead-1'], blockers: [{ type: 'operator typing', name: 'operator', team: null, since: armedAt + 15_000 }] };
+  assert.strictEqual(restartWaitLine(st, { viewer: 'other-hand', team: 'other' }),
+    'restart waiting since 14:20Z, asked by lead-1; waiting on: operator typing (5s)');
+});
+
+test('t2492: a second requester joining an armed wait broadcasts the new requester list at once', () => {
+  const evs = [];
+  const { waiter, setSessions } = blockerWaiter({ onEvent: (ev) => evs.push([ev.phase, ev.requesters]) });
+  setSessions(BUSY);
+  waiter.arm({ requester: 'lead-1' });
+  waiter.arm({ requester: 'lead-2' });
+  waiter.arm({ requester: 'lead-2' });
+  assert.deepStrictEqual(evs, [['armed', ['lead-1']], ['waiting', ['lead-1', 'lead-2']]]);
+});

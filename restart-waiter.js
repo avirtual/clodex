@@ -38,8 +38,7 @@ function classifyRestart(sessions) {
 // wait armed from the menu can be JOINED by an agent 25 minutes later, and "the
 // pending restart requested by X was dropped" then tells the operator that their
 // own restart was someone else's. The appended form is true in all three cases —
-// menu-only, agent-only, mixed. No duration for the same reason: a seat that
-// joined a wait in progress did not wait the full cap.
+// menu-only, agent-only, mixed.
 function giveUpBody(names, { suiteJobs = 0, sessionsBusy = true } = {}, wait = null) {
   const asked = (Array.isArray(names) ? names : []).filter(Boolean);
   const { text, total: n } = suiteJobsPhrase(suiteJobs);
@@ -52,7 +51,6 @@ function giveUpBody(names, { suiteJobs = 0, sessionsBusy = true } = {}, wait = n
 }
 
 const BLOCKER_LIST_MAX = 10;
-const BLOCKER_RECORD_MAX = 100;
 
 function ageText(ms) {
   const v = Math.max(0, Number(ms) || 0);
@@ -91,7 +89,7 @@ function restartWaitLine(state, { viewer = null, team = null } = {}) {
   const head = `restart waiting since ${clockText(state.armedAt)}, asked by ${asked}`;
   const all = Array.isArray(state.blockers) ? state.blockers : [];
   const full = viewer == null || (state.requesters || []).includes(viewer);
-  const own = full ? all : all.filter((b) => team && b.team === team);
+  const own = full ? all : all.filter((b) => b.type === 'operator typing' || (team && b.team === team));
   const rest = all.length - own.length;
   const allSeats = all.filter((b) => !own.includes(b)).every((b) => b.type === 'seat');
   const noun = allSeats ? (rest === 1 ? 'seat' : 'seats') : (rest === 1 ? 'blocker' : 'blockers');
@@ -110,6 +108,7 @@ function restartWaitLogLine(ev) {
 function currentBlockers({ sessions, teamOf, runs, jobs, typing }) {
   const out = [];
   const team = (s) => { if (!teamOf) return null; try { return teamOf(s) || null; } catch { return null; } };
+  const label = (x) => (x != null && x !== '' ? plainLabel(x, TEAM_LABEL_MAX) : '');
   const byName = new Map();
   for (const s of sessions) {
     if (!s || s._dead) continue;
@@ -118,16 +117,20 @@ function currentBlockers({ sessions, teamOf, runs, jobs, typing }) {
   }
   for (const r of runs) {
     const text = String(r);
-    const merge = /auto-merge/.test(text);
-    const m = merge ? /\(team ([^)]+)\)$/.exec(text) : null;
-    const owner = merge ? null : byName.get(text.split(' run #')[0]);
-    out.push({ key: `run:${text}`, type: merge ? 'merge' : 'exec run', name: text, team: m ? m[1] : owner ? team(owner) : null });
+    const merge = /auto-merge/.test(text) ? /^ticket (\S+)[\s\S]*?(?:\(team ([^)]+)\))?$/.exec(text) : null;
+    if (merge) {
+      out.push({ key: `merge:${merge[1]}`, type: 'merge', name: label(merge[1]), team: label(merge[2]) || null });
+      continue;
+    }
+    const name = plainLabel(text.split(' (')[0], 80);
+    const owner = byName.get(text.split(' run #')[0]);
+    out.push({ key: `run:${name}`, type: 'exec run', name, team: owner ? team(owner) : null });
   }
   for (const j of jobs) {
     if (!j) continue;
-    const label = [j.ticket, j.kind].filter((x) => x != null && x !== '').join(' ') || (j.id != null ? String(j.id) : 'unnamed');
-    const name = j.runner != null ? `${label} on ${j.runner}` : label;
-    out.push({ key: `job:${j.id != null ? j.id : name}`, type: 'test job', name, team: j.team || null });
+    const what = [label(j.ticket), label(j.kind)].filter(Boolean).join(' ') || (j.id != null ? label(j.id) : 'unnamed');
+    const name = j.runner != null ? `${what} on ${label(j.runner)}` : what;
+    out.push({ key: `job:${j.id != null ? j.id : name}`, type: 'test job', name, team: j.team ? label(j.team) : null });
   }
   if (typing) out.push({ key: 'typing', type: 'operator typing', name: 'operator', team: null });
   return out;
@@ -244,14 +247,18 @@ function createIdleWaiter({
   let progressSent = false;
   let emittedKeys = '';
   let emittedAt = 0;
+  let recent = new Map();
 
   function isArmed() { return timer !== null; }
 
   function track(t, cur) {
+    const curKeys = new Set(cur.map((b) => b.key));
+    for (const b of blockers) if (!curKeys.has(b.key)) recent.set(b.key, { since: b.since, goneAt: t });
+    for (const [k, r] of recent) if (t - r.goneAt > sustainMs) recent.delete(k);
     const prev = new Map(blockers.map((b) => [b.key, b.since]));
-    blockers = cur.slice(0, BLOCKER_RECORD_MAX)
-      .map((b) => ({ ...b, since: prev.has(b.key) ? prev.get(b.key) : t }))
-      .sort((a, b) => a.since - b.since);
+    const sinceOf = (k) => (prev.has(k) ? prev.get(k) : recent.has(k) ? recent.get(k).since : t);
+    blockers = cur.map((b) => ({ ...b, since: sinceOf(b.key) })).sort((a, b) => a.since - b.since);
+    for (const b of blockers) recent.delete(b.key);
     blockersAt = t;
   }
 
@@ -396,6 +403,7 @@ function createIdleWaiter({
   // but every requester still has to learn how it ended.
   function arm({ onAbandon, onProgress, requester } = {}) {
     const name = typeof requester === 'string' && requester ? requester : null;
+    const joins = timer !== null && name && !requesterNames().includes(name);
     if (typeof onAbandon === 'function' || typeof onProgress === 'function' || name) {
       requests.push({
         name,
@@ -403,11 +411,13 @@ function createIdleWaiter({
         onProgress: typeof onProgress === 'function' ? onProgress : null,
       });
     }
+    if (joins) emit('waiting');
     if (timer !== null) return false; // already waiting — one waiter
     armedAt = now();
     quietSince = null;
     heldOnRuns = '';
     blockers = [];
+    recent = new Map();
     blockersAt = armedAt;
     progressSent = false;
     emittedKeys = '';

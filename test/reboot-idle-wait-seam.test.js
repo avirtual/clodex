@@ -232,3 +232,18 @@ test('t2407: the peer wiring gets the deferred seam for POST /api/restart wait, 
   operatorPath();
   assert.deepStrictEqual(calls, ['deferred', 'immediate']);
 });
+
+test('t2492: both hosts wire the restart-wait progress, state, team and event seams', () => {
+  const read = (f) => fs.readFileSync(path.join(__dirname, '..', f), 'utf8');
+  const main = read('main.js');
+  assert.match(seamBody(main, 'restartHostWhenIdle'), /onProgress:\s*opts && opts\.onProgress/);
+  assert.match(main, /restartWaitState:\s*\(\)\s*=>\s*idleWaiter\.state\(\),/);
+  assert.match(main, /teamOf:\s*\(s\)\s*=>\s*manager\.teamNameOf\(s\.name, s\.cwd\),/);
+  assert.match(main, /if \(manager\) \{ try \{ manager\.restartWaitEvent\(ev\); \} catch \{\} \}/);
+  const headless = read('headless-main.js');
+  assert.match(headless, /restartWaitState:\s*headlessRestart\.restartWaitState,/);
+  assert.match(headless, /teamOf:\s*\(s\)\s*=>\s*engine\.manager\.teamNameOf\(s\.name, s\.cwd\),/);
+  assert.match(headless, /onEvent:\s*\(ev\)\s*=>\s*engine\.manager\.restartWaitEvent\(ev\),/);
+  assert.match(read('headless-restart.js'), /onProgress:\s*opts && opts\.onProgress/);
+  assert.match(read('engine.js'), /restartWaitState:\s*\(\)\s*=>\s*\(seams\.restartWaitState \? seams\.restartWaitState\(\) : null\),/);
+});
