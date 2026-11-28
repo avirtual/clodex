@@ -900,11 +900,9 @@ test('cache eviction never runs while a job is live', async (t) => {
 test('t2480: eviction sets a cache entry aside as a .gone~ sibling before removing it, and a boot after a quit mid-removal unindexes it and sweeps the sibling', async (t) => {
   const clock = 30 * 24 * 3600 * 1000;
   const removals = [];
-  let called;
-  const firstCall = new Promise((r) => { called = r; });
   const f = await fixture(t, {
     now: () => clock,
-    runnerOver: { removeTree: (p) => new Promise((resolve) => { removals.push({ p, resolve }); called(); }) },
+    runnerOver: { removeTree: (p) => new Promise((resolve) => { removals.push({ p, resolve }); }) },
   });
   await drain();
   const repoDir = path.join(f.work, 'deps', f.snap.repoKey);
@@ -914,21 +912,51 @@ test('t2480: eviction sets a cache entry aside as a .gone~ sibling before removi
   fs.writeFileSync(path.join(f.work, `${rel}.json`), '{}');
   const cacheFile = path.join(f.root, 'suite-runner', 'cache.json');
   fs.writeFileSync(cacheFile, JSON.stringify({ [rel]: 0 }));
-  const ticking = f.runner.tick();
-  await Promise.race([firstCall, ticking]);
-  assert.strictEqual(removals.length, 1, 'the eviction is removed through removeTree');
-  const gone = removals[0].p;
-  assert.deepStrictEqual([path.dirname(gone), path.basename(gone).startsWith('.gone~'), fs.existsSync(path.join(gone, 'node_modules', 'x.js')), fs.existsSync(path.join(f.work, rel))],
+  const result = await f.runner.tick();
+  await drain();
+  assert.deepStrictEqual([result.ran, result.removed, removals.length], [true, [rel], 2], 'the tick ends while both removals are still pending');
+  const [goneDir, goneMarker] = removals.map((r) => r.p);
+  assert.deepStrictEqual([path.dirname(goneDir), path.basename(goneDir).startsWith('.gone~'), fs.existsSync(path.join(goneDir, 'node_modules', 'x.js')), fs.existsSync(path.join(f.work, rel))],
     [repoDir, true, true, false]);
+  assert.deepStrictEqual([path.dirname(goneMarker), fs.existsSync(path.join(f.work, `${rel}.json`)), JSON.parse(fs.readFileSync(cacheFile, 'utf8'))], [repoDir, false, {}]);
   f.runner.close();
   const goneMirror = path.join(f.work, 'mirrors', '.gone~0123456789ab');
   fs.mkdirSync(goneMirror);
   const runner = f.make({ removeTree: (p) => { removals.push({ p }); return Promise.resolve(); } });
   t.after(() => runner.close());
   await drain();
-  assert.deepStrictEqual([JSON.parse(fs.readFileSync(cacheFile, 'utf8')), removals.slice(1).map((r) => r.p)], [{}, [goneMirror, gone]]);
-  removals[0].resolve();
-  await ticking;
+  assert.deepStrictEqual(removals.slice(2).map((r) => r.p).sort(), [goneMirror, goneDir, goneMarker].sort());
+  for (const r of removals.slice(0, 2)) r.resolve();
+});
+
+test('t2480: a job submitted while the cache size walk is in flight stops eviction before any entry goes', async (t) => {
+  const clock = 30 * 24 * 3600 * 1000;
+  const f = await fixture(t, { now: () => clock });
+  await drain();
+  await f.runner.submit(f.body('warm'));
+  await f.runner.cancel('warm');
+  assert.strictEqual((await f.runner.poll(['warm'])).jobs[0].state, 'done', 'ENTER: nothing is live before the tick');
+  const cacheFile = path.join(f.root, 'suite-runner', 'cache.json');
+  const rels = ['a', 'b'].map((c) => path.join('deps', f.snap.repoKey, c.repeat(64)));
+  for (const rel of rels) {
+    fs.mkdirSync(path.join(f.work, rel), { recursive: true });
+    fs.writeFileSync(path.join(f.work, `${rel}.json`), '{}');
+  }
+  fs.writeFileSync(cacheFile, JSON.stringify({ [rels[0]]: 0, [rels[1]]: 1 }));
+  const ticking = f.runner.tick();
+  const submitted = f.runner.submit(f.body('mid-walk'));
+  assert.deepStrictEqual(await ticking, { ran: false });
+  assert.strictEqual((await submitted).state, 'awaiting-pack', 'ENTER: the job went live during the walk');
+  assert.deepStrictEqual([rels.map((rel) => fs.existsSync(path.join(f.work, rel))), Object.keys(JSON.parse(fs.readFileSync(cacheFile, 'utf8')))], [[true, true], rels]);
+});
+
+test('t2480: the cache size walk does no synchronous filesystem call', () => {
+  const src = fs.readFileSync(SOURCE, 'utf8');
+  const start = src.indexOf('async function bytesOf(');
+  assert.ok(start >= 0, 'ENTER: bytesOf is found and async');
+  const body = src.slice(start, src.indexOf('\n}\n', start));
+  assert.ok(body.includes('fs.promises.readdir'), `ENTER: the body is the walk; got ${body}`);
+  assert.doesNotMatch(body, /Sync\(/);
 });
 
 test('runJob makes no git call after isolation.prepare', () => {

@@ -933,7 +933,7 @@ function createSuiteRunner({
 
   async function reapOrphans(dirs) {
     if (boxHold) { enterHold(boxHold.why, dirs); return; }
-    for (const dir of dirs) {
+    for (const dir of dirs.filter((d) => fs.existsSync(d))) {
       try { await isolation.reap(dir); } catch (e) { log(`suite-runner: reap of orphan ${dir} failed: ${e.message}`); }
     }
   }
@@ -1349,13 +1349,13 @@ function createSuiteRunner({
     return gone.map((im) => im.tags[0] || im.id);
   }
 
-  async function evict(p) {
+  function evict(p) {
     const gone = goneSibling(p);
     try { fs.renameSync(p, gone); } catch (e) {
       if (e.code === 'ENOENT') return;
       throw e;
     }
-    try { await removeTree(gone); } catch (e) { log(`suite-runner: removing ${gone} failed: ${e.message}`); }
+    sweepGone(gone);
   }
 
   function sweepGone(p) {
@@ -1378,11 +1378,12 @@ function createSuiteRunner({
         for (const p of e.paths) bytes += await bytesOf(p);
         entries.push({ ...e, usedAt: cache[e.rel] || 0, bytes });
       }
+      if (anyLive() || active.size) return { ran: false };
       let total = entries.reduce((n, e) => n + e.bytes, 0);
       const removed = [];
       for (const e of entries.sort((a, b) => a.usedAt - b.usedAt)) {
         if (now() - e.usedAt > lim.cacheIdleMs || total > lim.cacheMaxBytes) {
-          for (const p of e.paths) await evict(p);
+          for (const p of e.paths) evict(p);
           delete cache[e.rel];
           total -= e.bytes;
           removed.push(e.rel);
