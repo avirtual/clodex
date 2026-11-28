@@ -25,8 +25,17 @@ function ledgerEnv(base, keepRoute = false) {
   if (!keepRoute) {
     delete env.CLODEX_SUITE_ROUTE;
     delete env.CLODEX_SUITE_OVERRIDE;
+    delete env.CLODEX_SUITE_ENV_DROPPED;
   }
   return env;
+}
+
+function envDroppedLine(raw) {
+  let d = null;
+  try { d = JSON.parse(String(raw || '')); } catch { return ''; }
+  if (!d || !Array.isArray(d.envDropped) || !d.envDropped.length) return '';
+  const shown = d.envDropped.filter((x) => x && typeof x.name === 'string' && typeof x.why === 'string').map((x) => `${x.name} (${x.why})`);
+  return shown.length ? `team env not applied here: ${shown.join(', ')}${d.envDroppedCut === true ? ', …' : ''}` : '';
 }
 const KEEP = path.join(KEEP_DIR, 'last.txt');
 const KEEP_RED = path.join(KEEP_DIR, 'last-red.txt');
@@ -141,9 +150,10 @@ function retireKeep() {
 }
 
 let headSuffix = '';
+let tailLine = '';
 
 function emit(msg, code, cap) {
-  process.stderr.write((cap ? String(msg).slice(0, cap) : String(msg)) + headSuffix + '\n');
+  process.stderr.write((cap ? String(msg).slice(0, cap) : String(msg)) + headSuffix + '\n' + (tailLine ? `${tailLine}\n` : ''));
   process.exit(code);
 }
 
@@ -538,6 +548,7 @@ function runLocal(routeEnv, teamEnv = {}) {
   if (selected && !selected.locked) childEnv.CLODEX_TEST_SLOW_ADVISORY = '1';
   else delete childEnv.CLODEX_TEST_SLOW_ADVISORY;
   if (named) childEnv.CLODEX_SUITE_NAMED = String(named.files.length);
+  tailLine = envDroppedLine(childEnv.CLODEX_SUITE_ENV_DROPPED);
   const res = spawnSync(process.execPath, [runner, '--reporter=dot', ...(selected ? selected.files : [])], {
     cwd: measure,
     env: childEnv,
@@ -568,6 +579,9 @@ function askHost() {
     if (m.run === 'local') {
       const routeEnv = { CLODEX_SUITE_ROUTE: String(m.why || '') };
       if (m.override) routeEnv.CLODEX_SUITE_OVERRIDE = String(m.override);
+      if (Array.isArray(m.envDropped) && m.envDropped.length) {
+        routeEnv.CLODEX_SUITE_ENV_DROPPED = JSON.stringify({ envDropped: m.envDropped, ...(m.envDroppedCut === true ? { envDroppedCut: true } : {}) });
+      }
       const teamEnv = teamEnvOf(m.env);
       reexecInMeasured(measure, rawStdin, routeEnv, teamEnv);
       runLocal(routeEnv, teamEnv);

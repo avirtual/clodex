@@ -28,9 +28,11 @@ const path = require('path');
 const { parseEscapes, formatEscapes } = require('./test-escapes.js');
 
 const ROOT = path.join(__dirname, '..');
+const LEDGER_FILES_MAX = 20;
+const LEDGER_PATH_MAX = 300;
 
 if (require.main !== module) {
-  module.exports = { parseJunit, durationRows, renderDurations };
+  module.exports = { parseJunit, durationRows, renderDurations, ledgerFiles, ledgerEnvDropped, LEDGER_FILES_MAX, LEDGER_PATH_MAX };
   return;
 }
 
@@ -378,9 +380,6 @@ const LEDGER = process.env.CLODEX_SUITE_LEDGER || '';
 const LEDGER_ROTATE_BYTES = 5 * 1024 * 1024;
 let ledgerTotals = null;
 
-const LEDGER_FILES_MAX = 20;
-const LEDGER_PATH_MAX = 300;
-
 function ledgerPathBytes(s) {
   return Buffer.byteLength(JSON.stringify(s)) - 2;
 }
@@ -398,6 +397,15 @@ function ledgerFiles(list) {
     return out;
   });
   return cut ? { files, filesCut: true } : { files };
+}
+
+function ledgerEnvDropped(raw) {
+  let d = null;
+  try { d = JSON.parse(String(raw || '')); } catch { return {}; }
+  if (!d || !Array.isArray(d.envDropped) || !d.envDropped.length || d.envDropped.length > LEDGER_FILES_MAX) return {};
+  const ok = d.envDropped.every((x) => x && typeof x.name === 'string' && typeof x.why === 'string' && Buffer.byteLength(x.name) <= 64 && x.why.length <= 32);
+  if (!ok) return {};
+  return { envDropped: d.envDropped.map((x) => ({ name: x.name, why: x.why })), ...(d.envDroppedCut === true ? { envDroppedCut: true } : {}) };
 }
 
 function ledgerAppend(rec) {
@@ -438,6 +446,7 @@ if (LEDGER) {
     where: 'local',
     route: process.env.CLODEX_SUITE_ROUTE || null,
     override: process.env.CLODEX_SUITE_OVERRIDE || null,
+    ...ledgerEnvDropped(process.env.CLODEX_SUITE_ENV_DROPPED),
     queuedAt: new Date(ledgerQueuedAt).toISOString(),
     startedAt: new Date(ledgerStart).toISOString(),
   });

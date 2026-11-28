@@ -22,7 +22,7 @@ const { hostNotice } = require('./host-stamp');
 const { idleClearAfterMs, IDLE_CLEAR_MIN_MS } = require('./assistant-sleep');
 const { localHalf, failingNames } = require('./suite-client');
 const { RUNNER_ENV_TOKENS } = require('./intent-registry');
-const { phaseEnv, localPhaseEnv, boxVerdict, fallbackOf, FALLBACK_CODES, pickRunner, runnerLoad, pickRecord, consideredOf, pickLine, aloneNote, BUILD_BUDGET_MS, HUNG_RE, HAND_QUEUE_MS } = require('./suite-client');
+const { phaseEnv, localPhaseEnv, localPhaseDropped, envDroppedLine, envDroppedRow, boxVerdict, fallbackOf, FALLBACK_CODES, pickRunner, runnerLoad, pickRecord, consideredOf, pickLine, aloneNote, BUILD_BUDGET_MS, HUNG_RE, HAND_QUEUE_MS } = require('./suite-client');
 const {
   matchSeatRole, nameRole, defaultLeadSeat, ROLE_RE, RESERVED_ROLE_KEYS, STOCK_ROLE_DEFS,
   DEFAULT_ROLE_DISPATCH, TRUNK_HEAD, normalizeTestRoots, TEST_ROOTS_MAX, effectiveHandCap, DONE_VALUES, normalizeDone, NAME_RE: NODE_NAME_RE, TEST_RUNNER_HANDS, TEST_RUNNER_GATE, TEST_RUNNER_FALLBACK, TEST_RUNNER_WIRE_PUSH: WIRE_PUSH, TEST_RUNNER_POOL_MAX,
@@ -2254,9 +2254,10 @@ function createTicketMethods(deps, shared) {
           : [];
         const slowPass = suite.ran && suite.slowOnly;
         if ((!suite.ran || !suite.green) && !slowPass) {
-          const why = suite.ran
+          const why = (suite.ran
             ? `the suite FAILS on ${target} after the merge — ${suite.summary}${this._suiteWhere(suite)}\nFAILING: ${suite.failing || '(the runner reported no test names)'}`
-            : `the suite could not be RUN on ${target} after the merge${this._suiteWhere(suite)}: ${suite.error}`;
+            : `the suite could not be RUN on ${target} after the merge${this._suiteWhere(suite)}: ${suite.error}`)
+            + (envDroppedLine(suite.envDropped) ? `\n${envDroppedLine(suite.envDropped)}` : '');
 
           let kept;
           try {
@@ -2348,7 +2349,7 @@ function createTicketMethods(deps, shared) {
         this._notifyMergeLanded(team, ticketId, {
           branch, target, sha: merged.sha, rounds, summary: `${suite.summary}${this._suiteWhere(suite)}`, changelog, unioned: merged.unioned, rehomed: merged.rehomed, rehomeFailed: merged.rehomeFailed, closeOut, mergedTip, branchTip,
           slow: slowPass ? suite.slow.filter((n) => !mergeSlowOwned.includes(n)) : null,
-          slowOwned: slowPass ? mergeSlowOwned : null, late: this._suiteLateRed(suite),
+          slowOwned: slowPass ? mergeSlowOwned : null, late: this._suiteLateRed(suite), envLine: envDroppedLine(suite.envDropped),
         });
       } catch (e) {
         fail('unexpected', `the auto-merge threw: ${e && e.message ? e.message : String(e)}`,
@@ -2387,7 +2388,7 @@ function createTicketMethods(deps, shared) {
       }
     },
 
-    _notifyMergeLanded(team, ticketId, { branch, target = null, sha, rounds, summary, changelog, unioned, rehomed = null, rehomeFailed = null, closeOut = null, slow = null, slowOwned = null, mergedTip = null, branchTip = null, late = null }) {
+    _notifyMergeLanded(team, ticketId, { branch, target = null, sha, rounds, summary, changelog, unioned, rehomed = null, rehomeFailed = null, closeOut = null, slow = null, slowOwned = null, mergedTip = null, branchTip = null, late = null, envLine = null }) {
       try {
         const into = target || gitWorktree.mergeTargetForSync(team, this._loadTicket(team, ticketId));
         const collapse = (v, max) => String(v == null ? '' : v).replace(/\s+/g, ' ').trim().slice(0, max);
@@ -2421,7 +2422,7 @@ function createTicketMethods(deps, shared) {
               + `The loop could not close it out: ${wideLine(closeOutDetail(ticketId, (closeOut && closeOut.text) || 'it did not run'))}`;
         const quiet = closedOutOk && !closeOut.already
           && !(mergedTip && branchTip && mergedTip !== branchTip)
-          && !(slow && slow.length) && !(slowOwned && slowOwned.length) && !unioned && !rehomed && !rehomeFailed && !stamp && !bypassed && !late
+          && !(slow && slow.length) && !(slowOwned && slowOwned.length) && !unioned && !rehomed && !rehomeFailed && !stamp && !bypassed && !late && !envLine
           && measured && (changelog.touched === true || changelog.present === false);
         const body = quiet
           ? `[ticket ${ticketId} MERGED] ${branch} → ${into} as ${sha} — closed out (${closeOut.remote ? 'standing remote seat not retired' : 'seat retired'}, tree removed, branch deleted); ${rounds} review round(s); suite ${defuseSenderLines(oneLine(summary))}.`
@@ -2436,6 +2437,7 @@ function createTicketMethods(deps, shared) {
           `Review rounds: ${rounds}. Suite on ${into} after the merge: ${defuseSenderLines(summary)}.`,
           ...(bypassed ? [`Verify passed${this._suiteWhere(bypassed)}.`] : []),
           ...(late ? [defuseSenderLines(late)] : []),
+          ...(envLine ? [defuseSenderLines(envLine)] : []),
           ...(slowOwned && slowOwned.length ? [`slow gate tripped by tests this diff touched (load-only, 0 failing; merge kept): ${defuseSenderLines(wideLine(slowOwned.join('; ')))}`] : []),
           ...(slow && slow.length ? [`slow gate tripped by tests outside this diff: ${defuseSenderLines(wideLine(slow.join('; ')))}`] : []),
           ...(unioned ? [`${unioned} conflicted with a bullet another ticket merged first; the loop kept BOTH (the earlier one above this ticket's). Read ## Unreleased once before the next release.`] : []),
@@ -6869,7 +6871,7 @@ function createTicketMethods(deps, shared) {
           return;
         }
 
-        this._broadcast('ipc-message', { type: 'task', from: 'ticket-loop', to: team.lead, body: [`ticket ${ticketId} verify: suite green (${suite.summary})${this._suiteWhere(suite)} — spawning reviewer`, this._suiteLateRed(suite)].filter(Boolean).join('\n') });
+        this._broadcast('ipc-message', { type: 'task', from: 'ticket-loop', to: team.lead, body: [`ticket ${ticketId} verify: suite green (${suite.summary})${this._suiteWhere(suite)} — spawning reviewer`, this._suiteLateRed(suite), envDroppedLine(suite.envDropped)].filter(Boolean).join('\n') });
         this._stampVerifyPhase(team, ticketId, { phase: 'reviewer', since: Date.now() });
         this._setLoopStep(team, ticketId, 'review');
         atStep = 'review';
@@ -7279,6 +7281,8 @@ function createTicketMethods(deps, shared) {
       const ledgerFile = typeof REGISTRY_DIR === 'string' && REGISTRY_DIR ? path.join(REGISTRY_DIR, 'logs', 'suite-runs.jsonl') : '';
       const ledgerId = require('crypto').randomUUID();
       const ledgerStart = Date.now();
+      const envDropped = boxed ? null : localPhaseDropped(team.testRunner, opts && opts.merge ? 'post-merge' : 'verify');
+      if (envDropped) out.envDropped = envDropped;
 
       const res = boxed ? { code: boxed.status, stdout: boxed.stdout, stderr: boxed.stderr } : await new Promise((resolve) => {
         let child;
@@ -7299,6 +7303,7 @@ function createTicketMethods(deps, shared) {
               CLODEX_SUITE_KIND: opts && opts.merge ? 'post-merge' : 'verify',
               CLODEX_SUITE_TICKET: String(ticket.id),
               CLODEX_SUITE_RUN_ID: ledgerId,
+              ...(envDropped ? { CLODEX_SUITE_ENV_DROPPED: JSON.stringify(envDroppedRow(envDropped)) } : {}),
             },
             stdio: ['ignore', 'pipe', 'pipe'],
             // Own process group so the timeout can kill the grandchildren: an orphaned sweep keeps binding the test ports
