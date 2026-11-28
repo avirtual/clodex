@@ -1130,6 +1130,7 @@ function createSuiteRunner({
 
   function boxNeverStarted(job, r) {
     if (!customised(job) || !BOX_START_CODES.includes(r.code)) return false;
+    if (r.code === 125) return true;
     let head = '';
     try {
       const fd = fs.openSync(outFile(job.id, 'stderr'), 'r');

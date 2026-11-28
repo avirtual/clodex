@@ -2649,6 +2649,8 @@ const SUITE_127 = 'sh: 1: node: not found\n';
 const SUITE_126 = 'sh: 1: ./run: Permission denied\n';
 const START_ROWS = [
   ['list, daemon 125 before start', LIST_A, DAEMON_125, 125, 'box-args-failed'],
+  ['list, client unknown flag 125', LIST_A, 'unknown flag: --devices\n\nUsage:  docker run [OPTIONS] IMAGE [COMMAND] [ARG...]\n', 125, 'box-args-failed'],
+  ['list, client invalid value 125', LIST_A, 'invalid argument "x" for "--add-host" flag: bad format\n', 125, 'box-args-failed'],
   ['list, daemon 126 before start', LIST_A, DAEMON_126, 126, 'box-args-failed'],
   ['list, daemon 127 before start', LIST_A, DAEMON_127, 127, 'box-args-failed'],
   ['list, suite started then 126', LIST_A, SUITE_126, 126, null],
