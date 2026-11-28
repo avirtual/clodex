@@ -398,6 +398,47 @@ test('createWorktree: an EXISTING branch reports no fork point', { skip: !gitAva
   fs.rmSync(repo, { recursive: true, force: true });
 });
 
+function withRacingGit(repo, fn) {
+  const realGit = execFileSync('sh', ['-c', 'command -v git'], { encoding: 'utf8' }).trim();
+  const bin = mkTmpRoot('clodex-wt-shim-');
+  const shim = path.join(bin, 'git');
+  fs.writeFileSync(shim, [
+    '#!/bin/sh',
+    `"${realGit}" "$@"; rc=$?`,
+    'if [ $rc -eq 0 ]; then case " $* " in *" worktree add "*)',
+    `  "${realGit}" -C "${repo}" commit -q --allow-empty -m racing-merge ;; esac; fi`,
+    'exit $rc',
+    '',
+  ].join('\n'));
+  fs.chmodSync(shim, 0o755);
+  const savedPath = process.env.PATH;
+  process.env.PATH = `${bin}${path.delimiter}${savedPath}`;
+  return Promise.resolve().then(fn).finally(() => { process.env.PATH = savedPath; });
+}
+
+for (const race of [false, true]) {
+  for (const row of [{ kind: 'branch', base: 'master' }, { kind: 'HEAD', base: 'HEAD' }, { kind: 'sha', base: null }]) {
+    test(`createWorktree: baseSha is the new branch's fork point, base as ${row.kind}, ${race ? 'with' : 'without'} a commit landing during worktree add`, { skip: !gitAvailable() }, async () => {
+      const repo = makeRepo();
+      const rev = (ref) => execFileSync('git', ['-C', repo, 'rev-parse', ref], { encoding: 'utf8' }).trim();
+      const startTip = rev('refs/heads/master');
+      const base = row.base || startTip;
+      const mint = () => wt.createWorktree(repo, `t-race-${row.kind}`, { base });
+      const made = race ? await withRacingGit(repo, mint) : await mint();
+      assert.equal(made.ok, true, made.error);
+      const masterNow = rev('refs/heads/master');
+      assert.strictEqual(masterNow !== startTip, race, 'ENTER: master moved during the add exactly when the race is on');
+      assert.strictEqual(made.baseSha, rev(`refs/heads/t-race-${row.kind}`));
+      assert.strictEqual(made.baseSha, startTip);
+      assert.strictEqual(made.base, base);
+      const anc = await wt.isMerged(repo, made.baseSha, `t-race-${row.kind}`);
+      assert.deepStrictEqual([anc.ok, anc.merged], [true, true]);
+      await wt.removeWorktree(made.path);
+      fs.rmSync(repo, { recursive: true, force: true });
+    });
+  }
+}
+
 test('commitsOnBranch degrades to a null count, never a false zero', { skip: !gitAvailable() }, async () => {
   const repo = makeRepo();
   // "git failed" must not read as "produced nothing" — that would score a

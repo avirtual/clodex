@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+- Team tickets: a ticket no longer escalates at verify with "the branch was rebased or reset" when it was not. The recorded base could be a merge that landed on the trunk in the instant the ticket's branch was being created; it is now always the commit the branch was created from.
+
 ## 5.214.0 — 2026-11-28
 
 - Test runners: `clodexctl get offers` shows a SLOTS column, the number of test jobs a node runs at once, next to BOXES; the two were unrelated and only BOXES was shown.
