@@ -307,6 +307,17 @@ const BOX_RETRY_MAX = BOX_RETRY_DELAY_MIN.length;
 const BOX_RETRY_WINDOW_MS = 60 * 60 * 1000;
 const boxRetryable = (code) => !!(FALLBACK_CODES[code] && FALLBACK_CODES[code].retry === true);
 const boxRetrySince = (r) => (Number.isFinite(r.since) ? r.since : r.lastEndedAt);
+function boxRetryState(t, now) {
+  const r = t && t.boxRetry;
+  if (!r || t.state !== 'done' || t.loopStep !== 'verify') return null;
+  const base = { n: r.attempts + 1, deadline: boxRetrySince(r) + BOX_RETRY_WINDOW_MS };
+  if (r.inFlight) {
+    const run = r.run && (r.run.state === 'queued' || r.run.state === 'running') ? r.run : null;
+    return run ? { ...base, kind: run.state, since: run.since, runner: run.runner, cancelAt: run.cancelAt } : null;
+  }
+  if (!t.verifyHold || r.unconfirmed || now < r.nextAt) return { ...base, kind: 'armed' };
+  return { ...base, kind: 'due', reason: (r.notAdmitted && r.notAdmitted.reason) || null };
+}
 const HOME_BYPASS_REASON_MAX = 500;
 const holdRecoveryText = (cls, id) => (HOLD_RECOVERY[cls] || HOLD_RECOVERY.hand)(id);
 // Not shared with `_notifyHandOfHold` (second person, and the person is the message) or `_notifyMergeLanded`,
@@ -6786,7 +6797,7 @@ function createTicketMethods(deps, shared) {
           log.info('ticket', `ticket ${ticketId}: verify suite red (${suite.summary}) — re-measuring once`);
           this._broadcast('ipc-message', { type: 'task', from: 'ticket-loop', to: team.lead, body: [`ticket ${ticketId} verify: suite red (${suite.summary})${this._suiteWhere(suite)} — re-measuring`, envDroppedLine(suite.envDropped)].filter(Boolean).join('\n') });
           this._stampVerifyPhase(team, ticketId, { phase: 'suite', since: Date.now(), run: 2 });
-          const again = await this._runTicketSuite(team, ticket, null, runOpts);
+          const again = await this._runTicketSuite(team, ticket, null, { ...runOpts, remeasure: true });
           still = this._loadTicket(team, ticketId);
           if (again.cancelled) { superseded = true; return; }
           if (!current(still)) { this._reapRunner(ticketId, again.runnerPid); return; }
@@ -7001,6 +7012,18 @@ function createTicketMethods(deps, shared) {
         if (!peer) return fall('runner-unreachable', `runner ${member.peer} is not a known peer`);
         via = { peer: peer.id };
       }
+      const rec = kind === 'verify' ? this._loadTicket(team, ticket.id) : null;
+      const retry = rec && rec.boxRetry && rec.boxRetry.inFlight ? rec.boxRetry : null;
+      const left = retry && retry.run && retry.run.jobId ? retry.run : null;
+      if (left) {
+        const c = typeof client.cancel === 'function'
+          ? await Promise.resolve().then(() => client.cancel(left.peer, left.jobId, left.wire)).catch(() => null) : null;
+        if (!c || !c.ok) {
+          ret.unconfirmed = { jobId: left.jobId, peer: left.peer, wire: left.wire };
+          return fall('runner-unreachable', `box job ${left.jobId} of this retry, submitted before a restart, is not confirmed cancelled — ${(c && c.error) || 'no answer'}`);
+        }
+        this._stampBoxRetryRun(team, ticket.id, null);
+      }
       let jobId = null;
       let phase = null;
       let stopCause = null;
@@ -7019,8 +7042,19 @@ function createTicketMethods(deps, shared) {
           log.warn('ticket', `ticket ${ticket.id}: cancel of box job ${id} (${stopCause}) failed — ${e && e.message ? e.message : e}`);
         }
       };
-      const gateQueueMs = this._gateQueueMs(tr);
+      const teamQueueMs = this._gateQueueMs(tr);
+      const budgetRetry = opts && opts.remeasure ? null : retry;
+      const deadline = budgetRetry ? boxRetrySince(budgetRetry) + BOX_RETRY_WINDOW_MS : null;
+      const startedAt = this._boxRetryNow();
+      const gateQueueMs = budgetRetry
+        ? Math.min(Math.max(teamQueueMs, deadline - startedAt), Math.max(0, deadline + teamQueueMs - startedAt)) : teamQueueMs;
       const gateQueueExtra = gateQueueMs - BOX_DECIDE_QUEUE_MS;
+      let runStamped = null;
+      const stampRun = (state, extra = {}) => {
+        if (!retry || (runStamped === state && !extra.jobId)) return;
+        runStamped = state;
+        this._stampBoxRetryRun(team, ticket.id, { state, since: this._boxRetryNow(), runner: ret.runner || member.peer, ...extra });
+      };
       const flightKey = kind === 'verify' ? `${team.root}\0${ticket.id}` : null;
       const flight = flightKey ? {
         root: team.root, team: team.name, id: ticket.id, round: Number(ticket.reworkRound) || 0, runnerOf: () => ret.runner || member.peer,
@@ -7039,9 +7073,15 @@ function createTicketMethods(deps, shared) {
           queueBudgetMs: gateQueueMs, budgetMs: TICKET_SUITE_TIMEOUT + this._runnerRunExtra(tr) + gateQueueExtra, ...this._runnerTimeout(tr),
           ...(picked && picked.runId ? { runId: picked.runId } : {}), ...(picked ? { pick: picked.pick } : {}),
           onJob: (j) => { if (j && j.jobId) jobId = j.jobId; },
-          onSubmitted: (j) => { if (j && j.jobId) submittedId = j.jobId; if (stopCause) sendCancel(); },
+          onSubmitted: (j) => {
+            if (j && j.jobId) {
+              submittedId = j.jobId;
+              stampRun('queued', { jobId: j.jobId, peer: via.peer, wire: ret.wire, cancelAt: this._boxRetryNow() + gateQueueMs });
+            }
+            if (stopCause) sendCancel();
+          },
           shouldStop: () => !!stopCause,
-          onState: (s) => { phase = s; },
+          onState: (s) => { phase = s; if (s === 'build' || s === 'setup' || s === 'running') stampRun('running'); },
           ...(chosen ? {
             repick: this._runnerRepick(tr, def),
             onRepick: (next) => {
@@ -7082,6 +7122,7 @@ function createTicketMethods(deps, shared) {
       const guard = new Promise((resolve) => { timer = timers.setTimeout(() => resolve(LATE), guardMs); });
       let out = await Promise.race([job, guard, stopped.then(() => STOPPED)]);
       timers.clearTimeout(timer);
+      if (runStamped) this._stampBoxRetryRun(team, ticket.id, null);
       if (flight && this._boxFlights.get(flightKey) === flight) this._boxFlights.delete(flightKey);
       if (out === STOPPED) {
         log.info('ticket', `ticket ${ticket.id}: verify box job ${submittedId || jobId || '(not submitted)'} cancelled — ${stopCause}`);
@@ -7715,7 +7756,7 @@ function createTicketMethods(deps, shared) {
       try {
         const tag = `[ticket ${ticketId} HELD]`;
         const next = retrying
-          ? `It retries by itself when the runner has a free slot, up to ${BOX_RETRY_MAX} times within ${BOX_RETRY_WINDOW_MS / 60000} min, then stays held and tells you; to retry now, [agent:task verify ${ticketId}].`
+          ? `It retries by itself, queueing on the runner in turn behind jobs already there, up to ${BOX_RETRY_MAX} times within ${BOX_RETRY_WINDOW_MS / 60000} min, then stays held and tells you; to retry now, [agent:task verify ${ticketId}].`
           : boxHoldNext(suite.fallbackClass, ticketId, suite.fallback);
         const body = `${tag} the box did not decide (${suite.fallback}): ${defuseSenderLines(suite.fallbackWhy || 'no reason given')}. Not run on the home suite (fallback:hold).\n`
           + next;
@@ -7860,18 +7901,26 @@ function createTicketMethods(deps, shared) {
         if (!rec) return out;
         const prior = rec.boxRetry && rec.boxRetry.inFlight ? rec.boxRetry : null;
         const attempts = prior ? prior.attempts + 1 : 0;
-        const retry = boxRetryable(suite.fallbackCode);
+        const refused = !!prior && /^runner refused the job: /.test(String(suite.fallbackWhy || ''));
+        const retry = boxRetryable(suite.fallbackCode) || refused;
         const since = prior ? boxRetrySince(prior) : now;
         const inWindow = now - since < BOX_RETRY_WINDOW_MS;
         if (retry && attempts < BOX_RETRY_MAX && inWindow) {
+          const nextAt = now + this._boxRetryDelayMs(attempts + 1);
           rec.boxRetry = {
-            attempts, nextAt: now + this._boxRetryDelayMs(attempts + 1), lastEndedAt: now, inFlight: false, since,
+            attempts, nextAt, lastEndedAt: now, inFlight: false, since,
             ...(suite.boxUnconfirmed ? { unconfirmed: suite.boxUnconfirmed } : {}),
+            ...(prior && Array.isArray(prior.told) && prior.told.length ? { told: prior.told } : {}),
+            ...(refused ? { refused: String(suite.fallbackWhy).slice(0, 400) } : {}),
           };
+          if (refused) log.info('ticket', `auto box retry ${attempts}/${BOX_RETRY_MAX} for ${ticketId} refused by the runner: ${suite.fallbackWhy}; next attempt at ${new Date(nextAt).toISOString()}`);
           out.outcome = prior ? 'quiet' : 'scheduled';
         } else {
           delete rec.boxRetry;
-          if (prior && retry) Object.assign(out, { outcome: 'exhausted', attempts, waitedMs: now - since, cause: inWindow ? 'attempts' : 'limit' });
+          if (prior && retry) {
+            Object.assign(out, { outcome: 'exhausted', attempts, waitedMs: now - since, cause: inWindow ? 'attempts' : 'limit' });
+            if (!inWindow && suite.fallbackCode === 'queue-budget') out.last = 'queued';
+          }
         }
         ticketsStore.save(team.root, tickets);
       } catch (e) {
@@ -7880,12 +7929,14 @@ function createTicketMethods(deps, shared) {
       return out;
     },
 
-    _notifyBoxRetryExhausted(team, ticketId, { fallback, attempts, waitedMs, cause }) {
+    _notifyBoxRetryExhausted(team, ticketId, { fallback, attempts, waitedMs, cause, last = null, notAdmitted = null }) {
       try {
         const tag = `[ticket ${ticketId} HELD]`;
         const tries = `${attempts} automatic box ${attempts === 1 ? 'retry' : 'retries'}`;
+        const tail = last === 'queued' ? '; the last one was still queued on the runner and was cancelled'
+          : notAdmitted ? `; the retry was not admitted: ${notAdmitted}` : '';
         const why = cause === 'limit'
-          ? `the box did not decide (${fallback}) and automatic retries stopped at the ${BOX_RETRY_WINDOW_MS / 60000} min limit (${attempts} of ${BOX_RETRY_MAX} tried)`
+          ? `the box did not decide (${fallback}) and automatic retries stopped at the ${BOX_RETRY_WINDOW_MS / 60000} min limit (${attempts} of ${BOX_RETRY_MAX} tried${tail})`
           : `${tries} did not decide (${fallback})`;
         const waited = `${Math.round(waitedMs / 60000)} min`;
         const body = `${tag} ${why}; it waited ${waited} in total. Try again with [agent:task verify ${ticketId}].`;
@@ -7896,15 +7947,10 @@ function createTicketMethods(deps, shared) {
       }
     },
 
-    _boxRetryPick(tickets, own, now) {
-      let best = null;
-      for (const t of tickets) {
-        if (!own(t) || !t.boxRetry) continue;
-        if (t.boxRetry.inFlight && t.state === 'done' && t.loopStep === 'verify') return null;
-        if (!this._boxHeld(t) || t.boxRetry.inFlight || now < t.boxRetry.nextAt) continue;
-        if (!best || t.boxRetry.lastEndedAt < best.boxRetry.lastEndedAt) best = t;
-      }
-      return best;
+    _boxRetryDue(tickets, own, now) {
+      return tickets
+        .filter((t) => own(t) && t.boxRetry && this._boxHeld(t) && !t.boxRetry.inFlight && now >= t.boxRetry.nextAt)
+        .sort((a, b) => a.boxRetry.lastEndedAt - b.boxRetry.lastEndedAt);
     },
 
     _boxRetryExpire(team, tickets, own, now) {
@@ -7913,7 +7959,11 @@ function createTicketMethods(deps, shared) {
         if (!own(t) || !t.boxRetry || t.boxRetry.inFlight || !this._boxHeld(t)) continue;
         const waitedMs = now - boxRetrySince(t.boxRetry);
         if (waitedMs < BOX_RETRY_WINDOW_MS) continue;
-        expired.push([t.id, { fallback: t.boxHoldReason || 'no box result', attempts: t.boxRetry.attempts, waitedMs, cause: 'limit' }]);
+        const na = t.boxRetry.notAdmitted;
+        expired.push([t.id, {
+          fallback: t.boxHoldReason || 'no box result', attempts: t.boxRetry.attempts, waitedMs, cause: 'limit',
+          ...(na && na.reason ? { notAdmitted: na.reason } : {}),
+        }]);
         delete t.boxRetry;
       }
       if (!expired.length) return true;
@@ -7925,6 +7975,38 @@ function createTicketMethods(deps, shared) {
       return true;
     },
 
+    _boxRetryNotReady(p) {
+      if (!p) return 'no suite client or runner on this node';
+      const skipped = (p.pick && p.pick.skipped) || [];
+      return skipped.length ? skipped.map((s) => `runner ${s.member} ${s.reason}`).join(', ') : 'no runner could take the job';
+    },
+
+    _boxRetryNotAdmitted(team, ids, reasons, now) {
+      let tickets;
+      try { tickets = ticketsStore.load(team.root); } catch { return; }
+      const said = [];
+      let changed = false;
+      for (const t of tickets) {
+        if (!ids.includes(t.id) || !t.boxRetry || t.boxRetry.inFlight || !this._boxHeld(t)) continue;
+        const { key, text } = reasons(t);
+        const told = Array.isArray(t.boxRetry.told) ? t.boxRetry.told : [];
+        const na = t.boxRetry.notAdmitted;
+        if (na && na.reason === text && told.includes(key)) continue;
+        t.boxRetry = { ...t.boxRetry, notAdmitted: { reason: text, at: na && na.reason === text ? na.at : now } };
+        if (!told.includes(key)) {
+          t.boxRetry.told = [...told, key];
+          said.push(`auto box retry ${t.boxRetry.attempts + 1}/${BOX_RETRY_MAX} for ${t.id} not admitted: ${text}`);
+        }
+        changed = true;
+      }
+      if (!changed) return;
+      try { ticketsStore.save(team.root, tickets); } catch (e) {
+        log.error('ticket', `box retry admission stamp for ${team.name} failed: ${e.message}`);
+        return;
+      }
+      for (const line of said) log.info('ticket', line);
+    },
+
     async _boxRetrySweep(team, now = this._boxRetryNow()) {
       if (!team || team.solo) return null;
       const tr = team.testRunner;
@@ -7933,49 +8015,78 @@ function createTicketMethods(deps, shared) {
       let tickets;
       try { tickets = ticketsStore.load(team.root); } catch { return null; }
       if (!this._boxRetryExpire(team, tickets, own, now)) return null;
-      const first = this._boxRetryPick(tickets, own, now);
-      if (!first) return null;
+      const due = this._boxRetryDue(tickets, own, now);
+      if (!due.length) return null;
       if (!this._boxRetryProbing) this._boxRetryProbing = new Set();
       const key = `${team.root}\0${team.name}`;
       if (this._boxRetryProbing.has(key)) return null;
       this._boxRetryProbing.add(key);
       let runner = null;
-      let confirmedJob = null;
+      let notReady = null;
+      const confirmed = new Set();
+      const pending = new Map();
       try {
         const def = this._shadowBox(team);
         const p = def === true ? null : await this._pickPool(tr, def, [], { claim: false, record: false });
-        const load = p && p.chosen && p.fit ? p.fit.load : null;
-        if (load && load.free > 0 && load.pending === 0 && load.queue === 0) runner = p.chosen;
-        const u = runner && first.boxRetry.unconfirmed;
-        if (u) {
-          const client = typeof deps.getSuiteClient === 'function' ? deps.getSuiteClient() : null;
+        if (p && p.chosen) runner = p.chosen;
+        else notReady = def === true ? 'the team has no box definition' : this._boxRetryNotReady(p);
+        const client = runner && typeof deps.getSuiteClient === 'function' ? deps.getSuiteClient() : null;
+        for (const t of runner ? due : []) {
+          const u = t.boxRetry.unconfirmed;
+          if (!u) continue;
           const c = client && typeof client.cancel === 'function'
             ? await Promise.resolve().then(() => client.cancel(u.peer, u.jobId, u.wire)).catch(() => null) : null;
-          if (c && c.ok) confirmedJob = u.jobId;
-          else {
-            log.info('ticket', `auto box retry for ${first.id} not submitted: box job ${u.jobId} is not confirmed cancelled — ${(c && c.error) || 'no answer'}`);
-            runner = null;
-          }
+          if (c && c.ok) confirmed.add(u.jobId);
+          else pending.set(t.id, { jobId: u.jobId, error: (c && c.error) || 'no answer' });
         }
       } catch (e) {
         log.warn('ticket', `box retry readiness for ${team.name} failed: ${e && e.message ? e.message : e}`);
         runner = null;
+        notReady = `the readiness check failed: ${e && e.message ? e.message : e}`;
       } finally {
         this._boxRetryProbing.delete(key);
       }
-      if (!runner) return null;
+      const ids = due.map((t) => t.id);
+      if (!runner) {
+        this._boxRetryNotAdmitted(team, ids, () => ({ key: notReady, text: notReady }), now);
+        return null;
+      }
+      if (pending.size) {
+        this._boxRetryNotAdmitted(team, [...pending.keys()], (t) => {
+          const u = pending.get(t.id);
+          return { key: `unconfirmed ${u.jobId}`, text: `box job ${u.jobId} is not confirmed cancelled — ${u.error}` };
+        }, now);
+      }
       try { tickets = ticketsStore.load(team.root); } catch { return null; }
-      const t = this._boxRetryPick(tickets, own, now);
-      if (!t) return null;
-      if (t.boxRetry.unconfirmed && t.boxRetry.unconfirmed.jobId !== confirmedJob) return null;
-      const n = t.boxRetry.attempts + 1;
-      this._releaseBoxHold(t, 'ticket-loop', 'auto-retry');
-      t.boxRetry = { ...t.boxRetry, inFlight: true };
-      delete t.boxRetry.unconfirmed;
+      const claimed = [];
+      for (const t of this._boxRetryDue(tickets, own, now)) {
+        if (!ids.includes(t.id) || pending.has(t.id)) continue;
+        if (t.boxRetry.unconfirmed && !confirmed.has(t.boxRetry.unconfirmed.jobId)) continue;
+        this._releaseBoxHold(t, 'ticket-loop', 'auto-retry');
+        const { unconfirmed: _u, notAdmitted: _n, refused: _r, run: _run, ...rest } = t.boxRetry;
+        t.boxRetry = { ...rest, inFlight: true };
+        claimed.push(t);
+      }
+      if (!claimed.length) return null;
       ticketsStore.save(team.root, tickets);
-      log.info('ticket', `auto box retry ${n}/${BOX_RETRY_MAX} for ${t.id} on runner ${runner.peer}`);
-      this._runTicketLoop(team, t.id);
-      return t.id;
+      for (const t of claimed) {
+        log.info('ticket', `auto box retry ${t.boxRetry.attempts + 1}/${BOX_RETRY_MAX} for ${t.id} on runner ${runner.peer}`);
+        this._runTicketLoop(team, t.id);
+      }
+      return claimed[0].id;
+    },
+
+    _stampBoxRetryRun(team, ticketId, run) {
+      try {
+        const tickets = ticketsStore.load(team.root);
+        const rec = tickets.find((t) => t.id === ticketId);
+        if (!rec || !rec.boxRetry || !rec.boxRetry.inFlight) return;
+        if (!run) { if (!('run' in rec.boxRetry)) return; const { run: _run, ...rest } = rec.boxRetry; rec.boxRetry = rest; }
+        else rec.boxRetry = { ...rec.boxRetry, run: { ...(rec.boxRetry.run || {}), ...run } };
+        ticketsStore.save(team.root, tickets);
+      } catch (e) {
+        log.error('ticket', `box retry run stamp for ${ticketId} failed: ${e.message}`);
+      }
     },
 
     _stampVerifyHold(team, ticketId, hold) {
@@ -9544,7 +9655,13 @@ function createTicketMethods(deps, shared) {
       // The stored step renders verbatim, on both row shapes.
       const mergeErrorMark = (t) => (t.mergeError ? ` !! MERGE FAILED: ${t.mergeError}` : '');
       const capMark = (t) => (t.parked && t.parkedBy === 'cap' ? ` (parked: cap ${t.parkedCap || '?'})` : '');
-      const boxHoldMark = (t) => (t.boxHoldReason ? ` held: box — ${t.boxHoldReason}${t.boxRetry ? ` (auto retry ${t.boxRetry.attempts + 1}/${BOX_RETRY_MAX}${t.boxRetry.unconfirmed ? `, waiting: box job ${t.boxRetry.unconfirmed.jobId} not confirmed cancelled` : ''})` : ''}` : '');
+      const retryMark = (t) => {
+        const s = boxRetryState(t, now);
+        if (!s || s.kind === 'armed' || (s.kind === 'due' && !s.reason)) return '';
+        if (s.kind === 'due') return `, due, not admitted: ${s.reason}`;
+        return ` (auto retry ${s.n}/${BOX_RETRY_MAX} ${s.kind} on ${s.runner} for ${humanizeAge(now - s.since)})`;
+      };
+      const boxHoldMark = (t) => (t.boxHoldReason ? ` held: box — ${t.boxHoldReason}${t.boxRetry ? ` (auto retry ${t.boxRetry.attempts + 1}/${BOX_RETRY_MAX}${t.boxRetry.unconfirmed ? `, waiting: box job ${t.boxRetry.unconfirmed.jobId} not confirmed cancelled` : retryMark(t)})` : ''}` : retryMark(t));
       const row = (t) =>
         `${t.id} [${t.state}${t.parked ? ' parked' : ''}]${reportMark(t)}${boxHoldMark(t)} ${shownFor(t)} ${humanizeAge(now - (t.openedAt || now))} — ${t.title || '(untitled)'}${capMark(t)}${respecMark(t)}${mergeWaitingMark(t)}${mergeErrorMark(t)}`;
       const reportMark = (t) => (t.done === 'report' ? ' [report]' : '');
@@ -10063,9 +10180,21 @@ function createTicketMethods(deps, shared) {
             if (seatInfo && (seatInfo.verdict === 'moving' || seatInfo.verdict === 'unknown')) continue;
           }
           const head = repeat > 0 ? `[ticket ${tid}] STILL stalled (repeat ${repeat}): ` : `[ticket ${tid}] stalled: `;
+          const rs = boxRetryState(t, now);
+          const until = rs ? new Date(rs.deadline).toISOString() : null;
           // Name a held ticket off the verifyHold stamp, not loopStep, which reads verify for a
           // running and a held check alike; the loop is waiting on a human, not stuck.
-          if (t.verifyHold) {
+          if (rs && rs.kind === 'due') {
+            body = `${head}automatic box retry ${rs.n}/${BOX_RETRY_MAX} is due but not admitted: ${rs.reason || 'the runner has not been checked yet'} — held ${humanizeAge(now - last)}. `
+              + `It keeps trying until ${until}, then stops and tells you.`
+              + `\n\nEVIDENCE: ${t.verifyHold.evidence}`
+              + `\n\nRECOVERY: ${holdRecoveryText(t.verifyHold.recovery, tid)}`;
+          } else if (rs && rs.kind === 'queued') {
+            body = `${head}automatic box retry ${rs.n}/${BOX_RETRY_MAX} is queued on ${rs.runner} for ${humanizeAge(now - rs.since)}, waiting its turn behind jobs already there; `
+              + `if it has not started by ${new Date(Number.isFinite(rs.cancelAt) ? rs.cancelAt : rs.deadline).toISOString()} it is cancelled, which ends the automatic retries.`;
+          } else if (rs && rs.kind === 'running') {
+            body = `${head}automatic box retry ${rs.n}/${BOX_RETRY_MAX} is running on ${rs.runner} for ${humanizeAge(now - rs.since)}; the ticket decides when the job ends.`;
+          } else if (t.verifyHold) {
             // Recovery text comes from the stamp's renderer: one inline sentence was wrong for arms
             // like task-dir, where re-closing re-reads the same taskDir and fails identically.
             body = `${head}the loop ESCALATED at "${t.verifyHold.step}" and is waiting for someone to act — ${humanizeAge(now - last)} ago, and nothing has moved since.`
