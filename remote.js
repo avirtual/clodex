@@ -89,9 +89,10 @@ const RESOURCES = [
   { name: 'testjobs', singular: 'testjobs', scope: 'node', verbs: ['list'], subresources: { output: ['get'] } },
   { name: 'testjobs/slots', singular: 'testjobs/slots', scope: 'node', verbs: ['post'] },
   { name: 'testjobs/exclusive', singular: 'testjobs/exclusive', scope: 'node', verbs: ['post'] },
+  { name: 'testjobs/box-args', singular: 'testjobs/box-args', scope: 'node', verbs: ['post'] },
 ];
 
-const RESOURCES_VERSION = 8;
+const RESOURCES_VERSION = 9;
 
 const RESOURCE_CALLBACK = {
   'node/logs': '_nodeLogFile',
@@ -108,6 +109,7 @@ const RESOURCE_CALLBACK = {
   testjobs: '_listTestjobs',
   'testjobs/slots': '_setTestjobSlots',
   'testjobs/exclusive': '_setTestjobExclusive',
+  'testjobs/box-args': '_setTestjobBoxArgs',
 };
 
 const SUBRESOURCE_CALLBACK = {
@@ -191,7 +193,7 @@ class RemoteServer {
                 getSkillCatalog, setSessionSkills,
                 listSleepers, getSleeper, sleepSession, wakeSession, exportMemory,
                 getProfile, setProfile, deleteProfile,
-                deliverDm, claimDms, listDmOrigins, receiveRoster, offerFor, receiveOffers, listOffers, listTestjobs, readTestjobOutput, setTestjobSlots, setTestjobExclusive, noteDialer,
+                deliverDm, claimDms, listDmOrigins, receiveRoster, offerFor, receiveOffers, listOffers, listTestjobs, readTestjobOutput, setTestjobSlots, setTestjobExclusive, setTestjobBoxArgs, noteDialer,
                 notifications, openRequests, replyNote,
                 wtermOpen, wtermInput, wtermResize, wtermClose, onWtermStreams,
                 suiteRunner, suiteRunnerError, suiteDesk, suiteToken, token, insecure }) {
@@ -270,6 +272,7 @@ class RemoteServer {
     this._readTestjobOutput = readTestjobOutput || null;
     this._setTestjobSlots = setTestjobSlots || null;
     this._setTestjobExclusive = setTestjobExclusive || null;
+    this._setTestjobBoxArgs = setTestjobBoxArgs || null;
     this._noteDialer = noteDialer || null;
     this._notifications = notifications || null;
     this._openRequests = openRequests || null;
@@ -1686,6 +1689,18 @@ class RemoteServer {
         if (!msg) return this._json(res, 400, { ok: false, error: 'bad JSON' });
         let got;
         try { got = setter(msg[field]); } catch (e) { return this._json(res, 500, { ok: false, error: e.message }); }
+        if (!got || !got.ok) return this._json(res, (got && got.status) || 500, { ok: false, error: (got && got.error) || 'no answer' });
+        return this._json(res, 200, got);
+      });
+    }
+    if (req.method === 'POST' && p === '/api/testjobs/box-args') {
+      if (!this._setTestjobBoxArgs) return this._json(res, 501, { ok: false, error: 'testjobs not available' });
+      if (!this._jsonBody(req, res)) return;
+      return this._readBody(req, res, (body) => {
+        const msg = parseJsonObject(body);
+        if (!msg) return this._json(res, 400, { ok: false, error: 'bad JSON' });
+        let got;
+        try { got = this._setTestjobBoxArgs({ boxArgs: msg.boxArgs, boxArgsLabel: msg.boxArgsLabel }); } catch (e) { return this._json(res, 500, { ok: false, error: e.message }); }
         if (!got || !got.ok) return this._json(res, (got && got.status) || 500, { ok: false, error: (got && got.error) || 'no answer' });
         return this._json(res, 200, got);
       });

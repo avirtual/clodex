@@ -7113,7 +7113,8 @@ const BOX_SHA = 'b'.repeat(40);
 const BOX_ENV = (definitionHash = BOX_HASH) => ({
   isolation: 'container', envKey: 'bk', platform: 'linux', arch: 'arm64', box: { imageId: `sha256:${'e'.repeat(64)}`, definitionHash },
 });
-const BOX_OUT = { green: 'TOTALS: 5 pass, 0 fail, 5 tests\n', red: ' ✖ box only (2ms)\nTOTALS: 4 pass, 1 fail, 5 tests\n', 'no totals': 'partial\n' };
+const BOX_CUSTOM_ENV = () => ({ ...BOX_ENV(), box: { ...BOX_ENV().box, custom: { fingerprint: '64c1563c2aa1', label: 'card-a' } } });
+const BOX_OUT = { green: 'TOTALS: 5 pass, 0 fail, 5 tests\n', 'custom green': 'TOTALS: 5 pass, 0 fail, 5 tests\n', red: ' ✖ box only (2ms)\nTOTALS: 4 pass, 1 fail, 5 tests\n', 'no totals': 'partial\n' };
 
 function boxRemote(mode, events) {
   const doneJob = (id, over = {}) => ({
@@ -7128,6 +7129,8 @@ function boxRemote(mode, events) {
     if (mode === 'runner restart') return { id, state: 'gone' };
     if (mode === 'tree mismatch') return doneJob(id, { treeHash: 'c'.repeat(40) });
     if (mode === 'definition mismatch') return doneJob(id, { env: BOX_ENV('f'.repeat(64)) });
+    if (mode === 'custom green') return doneJob(id, { env: BOX_CUSTOM_ENV(), exit: { code: 0, signal: null } });
+    if (mode === 'box options failed') return doneJob(id, { env: BOX_CUSTOM_ENV(), reason: 'box-args-failed', exit: { code: 125, signal: null } });
     if (mode === 'runner killed') return doneJob(id, { reason: 'timeout' });
     if (mode === 'cancelled') return doneJob(id, { reason: 'cancelled' });
     if (mode === 'no totals') return doneJob(id, { exit: { code: 0, signal: null } });
@@ -7277,6 +7280,7 @@ const BOX_FALLBACKS = [
   ['runner restart', 'runner restart', 'runner-restart', 'transient', 'unknown', 'runner restarted'],
   ['build budget', 'box build', 'box-build-budget', 'budget', 'timeout', 'the box build did not finish within the 1500000ms build budget (cancelled)'],
   ['build failed', 'box build', 'box-build-failed', 'deterministic', 'unknown', 'box build on runner: docker build exited 1: ERROR: boom'],
+  ['box options failed', 'box options', 'box-args-failed', 'deterministic', 'unknown', 'the runner owner\'s box options failed to start the box (card-a)'],
 ];
 
 for (const [local, script] of [['green', SHADOW_LOCAL.green], ['red', SHADOW_LOCAL.red]]) {
@@ -8965,4 +8969,14 @@ test('t2439: runner rm of the member a verify box job runs on stops it as supers
   await Promise.all(l.loops);
   assert.deepStrictEqual(other, []);
   assert.strictEqual(l.loops.length, 2, 'verify re-entered once');
+});
+
+test('t2483: a verify decided on an owner-customised box says so with the label in the notice; an uncustomised one does not', async () => {
+  const b = boxLoop(SHADOW_LOCAL.red);
+  const out = await b.run(GATE_ON, boxRemote('custom green', b.events).client);
+  assert.deepStrictEqual([out.decidedBy, out.green, out.box.custom], ['box', true, { fingerprint: '64c1563c2aa1', label: 'card-a' }]);
+  assert.strictEqual(b.f.m._suiteWhere(out), ' (box) on an owner-customised box (card-a)');
+  assert.strictEqual(b.f.m._suiteWhere({ ...out, box: { ...out.box, custom: { fingerprint: '64c1563c2aa1', label: null } } }), ' (box) on an owner-customised box (64c1563c2aa1)');
+  const plain = await b.run(GATE_ON, boxRemote('green', b.events).client);
+  assert.deepStrictEqual(['custom' in plain.box, b.f.m._suiteWhere(plain)], [false, ' (box)']);
 });

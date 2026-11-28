@@ -809,3 +809,19 @@ test('t2483: startSuiteRunner hands the setting list and label to the box adapte
   assert.deepStrictEqual([typeof log, rest], ['function', { root: '/home/c', work: '/srv/w', isolation: 'none-iso', limits: {}, box: { image: null } }]);
   assert.deepStrictEqual(built, [{ image: null, work: '/srv/w', stateDir: '/home/c/suite-runner', boxArgs: GPU_ARGS, boxArgsLabel: 'gpu' }]);
 });
+
+test('t2483: setSuiteRunnerBoxArgs stores a list and label, keeps one it is not given, clears on an empty list, and refuses a bad one by index', (t) => {
+  const f = slotsFixture(t, { ...FULL });
+  assert.strictEqual(f.wiring.getSuiteEngine(), f.runners[0], 'ENTER: a live runner');
+  assert.deepStrictEqual(f.wiring.setSuiteRunnerBoxArgs({ boxArgs: ['--device=/dev/dri', 'ubuntu'] }), { ok: false, status: 400, error: 'box option 2 must be an option starting with - (a bare word would end Docker\'s options and replace the image)' });
+  assert.deepStrictEqual(f.wiring.setSuiteRunnerBoxArgs({}), { ok: false, status: 400, error: 'name boxArgs (a list) or boxArgsLabel' });
+  assert.deepStrictEqual(f.settings.suiteRunner, FULL);
+  assert.deepStrictEqual(f.wiring.setSuiteRunnerBoxArgs({ boxArgs: GPU_ARGS, boxArgsLabel: 'gpu' }), { ok: true, count: 2, custom: { fingerprint: '0b334ad4c4a0', label: 'gpu' }, applied: 'now', running: 0 });
+  assert.deepStrictEqual(f.settings.suiteRunner, { ...FULL, boxArgs: GPU_ARGS, boxArgsLabel: 'gpu' });
+  assert.deepStrictEqual([f.wiring.getSuiteEngine().opts.boxArgs, f.wiring.getSuiteEngine().opts.boxArgsLabel], [GPU_ARGS, 'gpu']);
+  assert.deepStrictEqual(f.wiring.setSuiteRunnerBoxArgs({ boxArgsLabel: 'card' }).custom, { fingerprint: '0b334ad4c4a0', label: 'card' });
+  assert.deepStrictEqual(f.settings.suiteRunner.boxArgs, GPU_ARGS, 'a label change keeps the list');
+  assert.deepStrictEqual(f.wiring.setSuiteRunnerBoxArgs({ boxArgs: [] }), { ok: true, count: 0, custom: null, applied: 'now', running: 0 });
+  assert.strictEqual('boxArgs' in f.settings.suiteRunner, false);
+  assert.strictEqual(f.wiring.getSuiteEngine().opts.boxArgs, undefined);
+});

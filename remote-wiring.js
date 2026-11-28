@@ -12,6 +12,7 @@ const { planRemoteRestart } = require('./restart-waiter');
 const { createTicketsStore } = require('./tickets-store');
 const { ledgerPicks } = require('./suite-client');
 const { sanitizeSuiteRunner } = require('./stores');
+const { boxArgsRefusal, boxArgsLabelRefusal, boxCustom, customName } = require('./box-args');
 // Exec grants are LOCAL-ONLY — this pure leaf sanitizes them off the wire in both
 // directions (require-const, like pathFor above; no injected-seam needed).
 const { withoutExecGrants, withoutLocalOnly } = require('./session-args');
@@ -848,6 +849,7 @@ function createRemoteWiring(deps) {
         listTestjobs: suiteActivity,
         setTestjobSlots: setSuiteRunnerSlots,
         setTestjobExclusive: setSuiteRunnerExclusive,
+        setTestjobBoxArgs: setSuiteRunnerBoxArgs,
         readTestjobOutput: suiteOutput,
         suiteDesk: suiteDesk || null,
         suiteToken: process.env.CLODEX_SUITE_TOKEN || null,
@@ -1611,6 +1613,31 @@ function createRemoteWiring(deps) {
     return { ok: true, exclusive, applied: applied.pending ? 'after-drain' : 'now', running: applied.running };
   }
 
+  function setSuiteRunnerBoxArgs(body) {
+    const b = body && typeof body === 'object' && !Array.isArray(body) ? body : {};
+    if (b.boxArgs === undefined && b.boxArgsLabel === undefined) return { ok: false, status: 400, error: 'name boxArgs (a list) or boxArgsLabel' };
+    const why = (b.boxArgs !== undefined && boxArgsRefusal(b.boxArgs)) || (b.boxArgsLabel !== undefined && boxArgsLabelRefusal(b.boxArgsLabel));
+    if (why) return { ok: false, status: 400, error: why };
+    const store = getUiSettings();
+    const cur = store.get().suiteRunner;
+    if (!cur) return { ok: false, status: 409, error: 'this node has no test runner setting' };
+    if (!suiteRunnerOptions(process.env, REGISTRY_DIR, { setting: cur })) return { ok: false, status: 409, error: 'the test runner is off on this node' };
+    const next = sanitizeSuiteRunner({
+      ...cur, ...(b.boxArgs !== undefined ? { boxArgs: b.boxArgs } : {}), ...(b.boxArgsLabel !== undefined ? { boxArgsLabel: b.boxArgsLabel } : {}),
+    });
+    const custom = boxCustom(next.boxArgs || [], next.boxArgsLabel || null);
+    const answer = { ok: true, count: (next.boxArgs || []).length, custom };
+    if (JSON.stringify(next) === JSON.stringify(cur)) {
+      const running = drainPending && suiteRunner && typeof suiteRunner.activeCount === 'function' ? suiteRunner.activeCount() : 0;
+      return { ...answer, applied: drainPending ? 'after-drain' : 'now', running };
+    }
+    store.set({ suiteRunner: next });
+    const applied = applySuiteRunner();
+    const what = custom ? `${answer.count} box option(s) (${customName(custom)})` : 'no box options';
+    log.info('remote', applied.pending ? `test runner set to ${what}, applies when ${applied.running} running job(s) finish` : `test runner set to ${what}`);
+    return { ...answer, applied: applied.pending ? 'after-drain' : 'now', running: applied.running };
+  }
+
   function shutdownRemoteServer() {
     closed = true;
     if (suiteRunner) suiteRunner.close();
@@ -1621,7 +1648,7 @@ function createRemoteWiring(deps) {
   }
 
   return {
-    syncRemoteServer, refreshRemoteToken, shutdownRemoteServer, suiteRunnerState, suiteRunnerBusy, reloadSuiteRunner, applySuiteRunner, setSuiteRunnerSlots, setSuiteRunnerExclusive,
+    syncRemoteServer, refreshRemoteToken, shutdownRemoteServer, suiteRunnerState, suiteRunnerBusy, reloadSuiteRunner, applySuiteRunner, setSuiteRunnerSlots, setSuiteRunnerExclusive, setSuiteRunnerBoxArgs,
     suiteActivity, suiteActivityNow, refreshSuiteActivity: refreshActivity, suiteOutput, fenceSuiteRunner, suiteRestartJobs,
     getSuiteEngine:() => (closed ? null : getSuiteRunner()),
   };
