@@ -161,6 +161,7 @@ function suiteRunnerRecordFromForm(shown, form) {
     ...(Number.isInteger(slots) && slots > 1 ? { slots } : {}),
     ...(Array.isArray(shares) && shares.length ? { shares } : {}),
     ...(buildBoxes ? { buildBoxes: true } : {}),
+    ...(form.exclusive == null ? {} : { exclusive: form.exclusive === 'ignore' ? 'ignore' : 'honour' }),
   };
 }
 

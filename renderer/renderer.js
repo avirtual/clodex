@@ -6579,6 +6579,7 @@ const prefsSuiteRunnerWork = document.getElementById('prefs-suite-runner-work');
 const prefsSuiteRunnerBoxImage = document.getElementById('prefs-suite-runner-boxImage');
 const prefsSuiteRunnerSlots = document.getElementById('prefs-suite-runner-slots');
 const prefsSuiteRunnerBuildBoxes = document.getElementById('prefs-suite-runner-buildBoxes');
+const prefsSuiteRunnerExclusive = document.getElementById('prefs-suite-runner-exclusive');
 const prefsSuiteRunnerShares = document.getElementById('prefs-suite-runner-shares');
 let prefsSuiteRunnerShareRows = null;
 const prefsSuiteRunnerStatus = document.getElementById('prefs-suite-runner-status');
@@ -9940,6 +9941,7 @@ function renderSuiteRunnerPrefs(st) {
   prefsSuiteRunnerBoxImage.disabled = forced.has('boxImage');
   prefsSuiteRunnerSlots.value = String(rec.slots || 1);
   if (prefsSuiteRunnerBuildBoxes) prefsSuiteRunnerBuildBoxes.checked = rec.buildBoxes === true;
+  if (prefsSuiteRunnerExclusive) prefsSuiteRunnerExclusive.checked = rec.exclusive !== 'ignore';
   prefsSuiteRunnerShareRows = prefsSuiteRunnerShares ? suiteShareEditor(document, prefsSuiteRunnerShares, rec.shares || []) : null;
   for (const k of ['enabled', 'isolation', 'work', 'boxImage']) {
     document.getElementById(`prefs-suite-runner-${k}-env`).classList.toggle('hidden', !forced.has(k));
@@ -9969,6 +9971,7 @@ function suiteRunnerRecordToSave() {
     boxImage: prefsSuiteRunnerBoxImage.value,
     slots: prefsSuiteRunnerSlots.value,
     ...(prefsSuiteRunnerBuildBoxes ? { buildBoxes: prefsSuiteRunnerBuildBoxes.checked } : {}),
+    ...(prefsSuiteRunnerExclusive ? { exclusive: prefsSuiteRunnerExclusive.checked ? 'honour' : 'ignore' } : {}),
     ...(prefsSuiteRunnerShareRows ? { shares: prefsSuiteRunnerShareRows.read() } : {}),
   });
 }
