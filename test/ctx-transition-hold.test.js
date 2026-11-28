@@ -317,3 +317,20 @@ test('a second clear while one is in flight keeps today\'s drop', () => {
     assert.ok(h.casts.some((c) => c.p && c.p.body === 'context clear → dropped (already in flight)'));
   } finally { mock.timers.reset(); }
 });
+
+test('the continuation passes only its own window: a busy seat still holds it until idle', () => {
+  mock.timers.enable({ apis: ['setTimeout'] });
+  try {
+    const h = rig();
+    h.m._handleContextIntent(h.s, 'clear', 'go on');
+    h.s._leftSessionIds = ['sid-A'];
+    assert.strictEqual(h.m._ctxHoldSessionEdge(h.s, 'sid-A', 'sid-B'), 'continuation');
+    h.m._firePostClearContinuation(h.s);
+    h.s.activityState = 'thinking';
+    mock.timers.tick(1500);
+    assert.deepStrictEqual(h.written, ['/clear'], 'held while busy');
+    h.m._emitActivity('a', 'idle', true);
+    assert.deepStrictEqual(h.written, ['/clear', 'HANDOFF go on']);
+    assert.strictEqual(h.m._ctxHoldReason(h.s), 'clear-window', 'typed but its turn has not started');
+  } finally { mock.timers.reset(); }
+});
