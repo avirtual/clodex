@@ -6784,7 +6784,7 @@ function createTicketMethods(deps, shared) {
         let slowOwned = [];
         if (suite.ran && !suite.slowOnly && !suite.green && !suite.bypass) {
           log.info('ticket', `ticket ${ticketId}: verify suite red (${suite.summary}) — re-measuring once`);
-          this._broadcast('ipc-message', { type: 'task', from: 'ticket-loop', to: team.lead, body: `ticket ${ticketId} verify: suite red (${suite.summary})${this._suiteWhere(suite)} — re-measuring` });
+          this._broadcast('ipc-message', { type: 'task', from: 'ticket-loop', to: team.lead, body: [`ticket ${ticketId} verify: suite red (${suite.summary})${this._suiteWhere(suite)} — re-measuring`, envDroppedLine(suite.envDropped)].filter(Boolean).join('\n') });
           this._stampVerifyPhase(team, ticketId, { phase: 'suite', since: Date.now(), run: 2 });
           const again = await this._runTicketSuite(team, ticket, null, runOpts);
           still = this._loadTicket(team, ticketId);
@@ -6816,7 +6816,8 @@ function createTicketMethods(deps, shared) {
         if (!suite.ran) {
           this._reapRunner(ticketId, suite.runnerPid);
           fail('verify: suite', `the test suite could not be run on ${branch}: ${suite.error}`,
-            `ran the suite in ${suite.cwd || 'the ticket worktree'}; no reviewer spawned`, 'infra');
+            `ran the suite in ${suite.cwd || 'the ticket worktree'}; no reviewer spawned`
+            + (envDroppedLine(suite.envDropped) ? `\n${envDroppedLine(suite.envDropped)}` : ''), 'infra');
           return;
         }
         const slowPass = suite.slowOnly && !slowOwned.length;
@@ -6866,7 +6867,8 @@ function createTicketMethods(deps, shared) {
               ? `the suite's slow gate tripped on ${branch} (${suite.summary}, 0 failing) over ${slowOwned.join('; ')} and the rework could not be sent back: ${rejected.error}`
               : `the suite fails on ${branch} (${suite.summary}) and the rework could not be sent back: ${rejected.error}`,
               `ran the suite (exit ${suite.code}); no reviewer spawned; failing: ${suite.failing || 'unnamed'}`
-              + `${kept.ok ? ` Full output preserved at ${kept.path}.` : ` The failing output could not be preserved (${kept.error}).`}`, rejected.reopened ? 'reopened' : 'hand');
+              + `${kept.ok ? ` Full output preserved at ${kept.path}.` : ` The failing output could not be preserved (${kept.error}).`}`
+              + (envDroppedLine(suite.envDropped) ? `\n${envDroppedLine(suite.envDropped)}` : ''), rejected.reopened ? 'reopened' : 'hand');
           }
           return;
         }

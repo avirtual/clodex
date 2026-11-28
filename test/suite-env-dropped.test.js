@@ -38,6 +38,16 @@ test('t2462: the dropped line and row, and nothing for nothing dropped', () => {
   assert.deepStrictEqual(envDroppedRow(null), {});
 });
 
+test('t2462: the digest script formats the same line the client does from the row it is handed', () => {
+  const { envDroppedLine: scriptLine } = require('../scripts/clodex-run-tests.js');
+  const d = { dropped: [{ name: 'PATH', why: 'reserved' }, { name: 'N', why: 'bad value' }], cut: true };
+  const line = 'team env not applied here: PATH (reserved), N (bad value), …';
+  assert.strictEqual(envDroppedLine(d), line);
+  assert.strictEqual(scriptLine(JSON.stringify(envDroppedRow(d))), line);
+  assert.strictEqual(scriptLine(JSON.stringify(envDroppedRow({ dropped: d.dropped }))), envDroppedLine({ dropped: d.dropped }));
+  assert.strictEqual(scriptLine(undefined), '');
+});
+
 test('t2462: the runner script reads back the row the client builds, and refuses a malformed one', () => {
   const row = { envDropped: [{ name: 'PATH', why: 'reserved' }], envDroppedCut: true };
   assert.deepStrictEqual(script.ledgerEnvDropped(JSON.stringify(row)), row);

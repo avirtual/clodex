@@ -6861,6 +6861,22 @@ test('t2462: a green verify that dropped team env names them on one line of the 
   assert.match(green.body, / — spawning reviewer\nteam env not applied here: PATH \(reserved\)$/);
 });
 
+test('t2462: a red verify that dropped team env names them on one line of the lead\'s re-measuring notice', async () => {
+  const repo = mkRepo();
+  commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
+  const f = mkLoop({ repo, suite: 'red' });
+  f.team.testRunner = { peer: 'runner-1', hands: 'off', gate: 'off', env: { PATH: '/x', T_A: '1' } };
+  f.tstore.save(f.team.root, [{ ...f.one(), state: 'done', loopStep: 'verify', report: 'r', reportedBy: 'team-hand' }]);
+  const events = traceLoopRows(f);
+
+  await f.m._runTicketLoop(f.team, 't1');
+  await new Promise((r) => setImmediate(r));
+
+  const red = events.find((e) => e !== 'SPAWN' && e.body.includes('suite red'));
+  assert.ok(red, 'ENTER: the re-measuring notice was sent');
+  assert.match(red.body, / — re-measuring\nteam env not applied here: PATH \(reserved\)$/);
+});
+
 test('t2254: a run killed by the suite timeout gets its end record from the loop, under the id it handed the runner', async () => {
   const repo = mkRepo();
   const f = mkLoop({ repo, suite: 'green', suiteTimeoutMs: 3000 });

@@ -1072,7 +1072,7 @@ alike (a verify or post-merge that falls back home, a hand's local run); a
 runner refuses a job whose env names `PATH`, `HOME`, `TMPDIR`, `LANG`, `TZ`,
 `USER`, `LOGNAME`, `SHELL`, `ELECTRON_RUN_AS_NODE`, `GIT_CEILING_DIRECTORIES`
 or any `CLODEX_*` key, and a local run leaves the same names out and never lets
-a team value replace a `CLODEX_*` key it sets; it names each name it left out, with
+a team value replace a `CLODEX_*` key it sets; it lists each name it left out, with
 its reason, on its ledger start row (`envDropped`) and on one `team env not
 applied here: PATH (reserved), …` line in the hand's digest or the lead's
 verify or merge notice. The env tokens may share one head
