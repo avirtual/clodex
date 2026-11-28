@@ -353,7 +353,7 @@ test('t2401: supervised headless: disarm and the give-up both lift the fence', (
   assert.deepStrictEqual({ exits: b.st.exits, fence: b.st.fence, warns: b.st.warns }, {
     exits: [],
     fence: [true, false],
-    warns: ['1 suite job this machine is running for other teams did not finish — the pending restart was dropped. Try again when work settles.'],
+    warns: ['1 suite job this machine is running for other teams did not finish — the pending restart was dropped after 30m. Still busy: test job j1 (29m). Try again when work settles.'],
   });
 });
 
