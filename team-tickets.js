@@ -8696,11 +8696,18 @@ function createTicketMethods(deps, shared) {
 
     _watchParkedEscalation(team, ticketId) {
       const lead = this.sessions.get(team.lead);
-      if (!lead) return;
+      if (!lead && !(typeof this._ctxGapHold === 'function' && this._ctxGapHold(team.lead))) return;
       let rec = null;
       try { rec = ticketsStore.read(team.root).find((t) => t.id === ticketId) || null; } catch {}
       if (!rec || !rec.loopStep) return;
-      (lead._parkedEscalations || (lead._parkedEscalations = new Map())).set(ticketId, { team, step: rec.loopStep });
+      let watches;
+      if (lead) watches = lead._parkedEscalations || (lead._parkedEscalations = new Map());
+      else {
+        const gap = this._gapEscalations || (this._gapEscalations = new Map());
+        if (!gap.has(team.lead)) gap.set(team.lead, new Map());
+        watches = gap.get(team.lead);
+      }
+      watches.set(ticketId, { team, step: rec.loopStep });
     },
 
     _releaseDrainedEscalations(s) {

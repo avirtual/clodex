@@ -1837,6 +1837,21 @@ test('GET .../describe: pendingMail counts parked deliveries and ignores claim e
   });
 });
 
+test('GET .../describe: pendingMail counts mail held for a context transition with the ordinarily parked', async () => {
+  await withDescribeNode({ args: { stream1: DESCRIBE_ARGS } }, async (port, { deps }) => {
+    const root = path.join(deps.REGISTRY_DIR, 'pending');
+    const pend = require('../pending-store');
+    fs.mkdirSync(path.join(root, 'stream1'), { recursive: true });
+    fs.mkdirSync(pend.heldDir(root, 'stream1'), { recursive: true });
+    fs.writeFileSync(path.join(pend.heldDir(root, 'stream1'), '1700000000000.1.json'), '{}');
+    fs.writeFileSync(path.join(pend.heldDir(root, 'stream1'), '1700000000001.2.json'), '{}');
+    fs.writeFileSync(path.join(root, 'stream1', '1700000000002.3.json'), '{}');
+    const body = JSON.parse((await req(port, '/api/sessions/stream1/describe')).body);
+    assert.strictEqual(body.activity.pendingMail, 3);
+    assert.strictEqual(pend.parkBacklog(root, 'stream1').count, 3, 'the sender\'s bounce reads the same three');
+  });
+});
+
 async function withProfileNode(fn) {
   const { createMemoryStore } = require('../memory-store');
   const made = makeDeps();

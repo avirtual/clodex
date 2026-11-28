@@ -19,7 +19,7 @@ function rig({ root = mkTmpRoot('clx-ctxhold-'), session = {} } = {}) {
     fs, path,
     pathFor: require('../clodex-paths').pathFor, runDirFor: require('../clodex-paths').runDirFor,
     parkDelivery: pend.parkDelivery, drainPending: pend.drainPending,
-    hasActivePending: pend.hasActivePending, countPending: pend.countPending, parkIdInUse: pend.parkIdInUse,
+    hasActivePending: pend.hasActivePending, countPending: pend.countPending, parkIdInUse: pend.parkIdInUse, parkedTexts: pend.parkedTexts,
     randBase36: (n) => Math.random().toString(36).slice(2, 2 + n).padEnd(n, '0'),
     isDraftOpen: require('../proxy-util').isDraftOpen,
     shouldHoldDm: require('../proxy-util').shouldHoldDm,
@@ -662,5 +662,90 @@ test('reload gap: reservation is by hold record — an unknown name and a seat d
     assert.deepStrictEqual(h.m._gatedDeliver('a', 'bob', 'X', false), { error: 'no such agent "a"' });
     h.open();
     await ticks();
+  } finally { mock.timers.reset(); }
+});
+
+function escRig(h) {
+  const tstore = require('../tickets-store').createTicketsStore({ fs, path, clodexHome: h.root });
+  const team = { name: 'team', root: mkTmpRoot('clx-ctxhold-team-'), lead: 'a', roles: {} };
+  tstore.save(team.root, [{ id: 't9', title: 'x', state: 'done', loopStep: 'verify', assignee: 'hand', openedAt: 1, lastActivityAt: 1 }]);
+  return {
+    escalate: () => h.m._escalateTicket(team, 't9', 'verify: diff', 'EVID', 'TRIED'),
+    told: () => h.written.join('\n').split('[ticket t9 ESCALATED]').length - 1,
+    state: (watches) => {
+      const rec = tstore.load(team.root).find((t) => t.id === 't9');
+      return { ...rec, lastActivityAt: typeof rec.lastActivityAt, watched: [...(watches || new Map()).keys()] };
+    },
+  };
+}
+
+function parkedForLiveLead() {
+  const live = rig();
+  const e = escRig(live);
+  live.s.lastUserInputTs = Date.now();
+  e.escalate();
+  assert.strictEqual(e.told(), 0, 'ENTER: parked for the live idle lead');
+  return { live, e };
+}
+
+async function escalateInGap(h, e) {
+  h.m._handleContextIntent(h.old, 'reload', 'next');
+  await new Promise((r) => setImmediate(r));
+  await ticks();
+  assert.strictEqual(h.m.sessions.has('a'), false, 'ENTER: in the gap');
+  e.escalate();
+  assert.strictEqual(h.onDisk(), 1);
+  assert.strictEqual(e.state().loopStep, 'verify', 'an escalation parked in the gap has not been seen');
+}
+
+test('reload gap: an ESCALATED notice is delivered once to the respawned lead and leaves the loop state a live idle lead leaves', async () => {
+  const { live, e: le } = parkedForLiveLead();
+  live.s.lastUserInputTs = 0;
+  live.m._drainPendingAtIdle(live.s);
+  live.m._emitActivity('a', 'thinking');
+  assert.strictEqual(le.told(), 1);
+  const want = le.state(live.s._parkedEscalations);
+  assert.strictEqual(want.loopStep, undefined, 'ENTER: the drained escalation released the hold');
+  mock.timers.enable({ apis: ['setTimeout'] });
+  try {
+    const h = gapRig();
+    const e = escRig(h);
+    await escalateInGap(h, e);
+    h.open();
+    await ticks();
+    assert.ok(h.fresh, 'ENTER: respawned');
+    h.fresh._bootReadySeen = true;
+    h.m._ctxHoldOnBootReady(h.fresh);
+    h.m._drainPendingAtBootReady(h.fresh);
+    h.m._ctxHoldTyped('a', h.m._ctxHoldMap().get('a').gen);
+    h.m._emitActivity('a', 'thinking');
+    assert.strictEqual(e.state().loopStep, 'verify', 'a turn that started before the escalation was typed keeps the hold');
+    h.m._emitActivity('a', 'idle', true);
+    h.m._emitActivity('a', 'thinking');
+    assert.strictEqual(e.told(), 1);
+    assert.deepStrictEqual(e.state(h.fresh._parkedEscalations), want);
+  } finally { mock.timers.reset(); }
+});
+
+test('reload gap: a failed respawn leaves the escalation counted, watched and held as a parked undelivered one; the badge click delivers it', async () => {
+  const { live, e: le } = parkedForLiveLead();
+  const want = le.state(live.s._parkedEscalations);
+  assert.deepStrictEqual([want.loopStep, want.watched], ['verify', ['t9']], 'ENTER: the reference is held and watched');
+  mock.timers.enable({ apis: ['setTimeout'] });
+  try {
+    const h = gapRig();
+    const e = escRig(h);
+    await escalateInGap(h, e);
+    h.open('boom');
+    await ticks();
+    assert.strictEqual(h.errs.length, 1, 'ENTER: respawn failed');
+    assert.deepStrictEqual(e.state(h.m._gapEscalations.get('a')), want);
+    assert.strictEqual(h.onDisk(), 1);
+    const back = { name: 'a', type: 'claude', agentType: 'claude', io: 'pty', activityState: 'idle', activityTs: Date.now(), createdAt: 1 };
+    h.m.sessions.set('a', back);
+    h.m.flushPending('a');
+    assert.strictEqual(e.told(), 1);
+    h.m._emitActivity('a', 'thinking');
+    assert.strictEqual(e.state(back._parkedEscalations).loopStep, undefined, 'the delivered escalation releases the hold');
   } finally { mock.timers.reset(); }
 });

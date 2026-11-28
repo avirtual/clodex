@@ -6051,6 +6051,7 @@ function createSessionManager(deps) {
       if (s && state !== 'idle') s.lastMainStop = null;
       if (s && state !== 'idle') s._awaitingTurnSince = null;
       if (s && state !== 'idle' && s._bootScreenWatch) { s._bootScreenWatch = false; s._bootDialog = null; s._bootScreenText = null; this._bootTrustRespawned.delete(name); }
+      if (s && state !== 'idle') this._adoptGapEscalations(s);
       if (s && state !== 'idle' && s._parkedEscalations && s._parkedEscalations.size) this._releaseDrainedEscalations(s);
       // A turn confirms the spec write only if it is attributed to this ticket in the transcript;
       // otherwise the latch stays armed and its deadline redelivers.
@@ -6418,6 +6419,15 @@ function createSessionManager(deps) {
       this._clearCtxHoldFailTimer(name);
       this._saveCtxHolds();
       this._revealHeldMail(name, 'hold dropped');
+      if (this._gapEscalations && !this.sessions.has(name)) this._gapEscalations.delete(name);
+    }
+
+    _adoptGapEscalations(s) {
+      const held = this._gapEscalations && this._gapEscalations.get(s.name);
+      if (!held) return;
+      this._gapEscalations.delete(s.name);
+      const watches = s._parkedEscalations || (s._parkedEscalations = new Map());
+      for (const [ticketId, w] of held) watches.set(ticketId, w);
     }
 
     _preArmCtxHold(session, text) {
