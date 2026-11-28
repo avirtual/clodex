@@ -1676,6 +1676,103 @@ test('reboot: an operator CANCEL and a 30m give-up reach the seat with different
   assert.strictEqual(cancelled.state.pendingRebootNotice, null);
 });
 
+const T2492_WAIT = {
+  at: 3_000_000, waitedMs: 1_800_000,
+  blockers: [
+    { type: 'seat', name: 'avh-ride-hand-265', team: 'avh-ride', since: 1_320_000 },
+    { type: 'seat', name: 'clodex-hand-12', team: 'clodex', since: 1_320_000 },
+    { type: 'test job', name: 't2147 verify', team: 'clodex', since: 2_640_000 },
+  ],
+};
+
+test('t2492: reboot: a 30m drop names the blockers in the seat line and the broadcast; a cancel keeps its own copy', async () => {
+  const gaveUp = mkReboot({ intents: ['reboot'] });
+  await gaveUp.m._handleIntent('a', { type: 'reboot', body: 'nightly' });
+  gaveUp.relaunches[0].onAbandon('gave-up', T2492_WAIT);
+  assert.strictEqual(gaveUp.injected[1],
+    '[agent:reboot] reboot DROPPED — sessions stayed busy for 30m: avh-ride-hand-265 (team avh-ride, busy 28m), clodex-hand-12 (team clodex, busy 28m), test job t2147 verify (6m), so the restart was never taken. Nothing was restarted; ask again when work settles.');
+  assert.strictEqual(gaveUp.broadcasts.filter((b) => b.type === 'reboot').pop().body,
+    'reboot DROPPED (sessions stayed busy for 30m: avh-ride-hand-265 (team avh-ride, busy 28m), clodex-hand-12 (team clodex, busy 28m), test job t2147 verify (6m))');
+
+  const cancelled = mkReboot({ intents: ['reboot'] });
+  await cancelled.m._handleIntent('a', { type: 'reboot', body: 'nightly' });
+  cancelled.relaunches[0].onAbandon('cancelled', T2492_WAIT);
+  assert.strictEqual(cancelled.injected[1],
+    '[agent:reboot] reboot CANCELLED — the operator cancelled the pending restart. Nothing was restarted, and this is a decision, not a timeout: do not re-request it, ask them first.');
+  assert.strictEqual(cancelled.broadcasts.filter((b) => b.type === 'reboot').pop().body, 'reboot CANCELLED (operator)');
+});
+
+test('t2492: reboot: _rebootProgress parks the 10-minute progress line passively, never a waking inject', async () => {
+  const { m, relaunches, injected, parks } = mkReboot({ intents: ['reboot'] });
+  await m._handleIntent('a', { type: 'reboot', body: 'nightly' });
+  assert.strictEqual(typeof relaunches[0].onProgress, 'function', 'ENTER: the host is handed a progress callback');
+  relaunches[0].onProgress({ at: 1_600_000, armedAt: 1_000_000, leftMs: 1_200_000, blockers: T2492_WAIT.blockers.slice(0, 1) });
+  assert.strictEqual(injected.length, 1, 'only the queued confirmation was injected');
+  assert.deepStrictEqual(parks, [{ name: 'a',
+    text: '[agent:reboot] restart still waiting after 10m, dropped in 20m if the host stays busy; waiting on: avh-ride-hand-265 (team avh-ride, busy 4m)' }]);
+});
+
+
+test('t2492: reboot: _rebootProgress sends nothing to a seat that cannot take a passive park', async () => {
+  const { m, relaunches, injected, parks } = mkReboot({ intents: ['reboot'] });
+  await m._handleIntent('a', { type: 'reboot', body: 'nightly' });
+  m.sessions.get('a').agentType = 'codex';
+  relaunches[0].onProgress({ at: 1_600_000, armedAt: 1_000_000, leftMs: 1_200_000, blockers: [] });
+  assert.deepStrictEqual([injected.length, parks.length], [1, 0], 'a codex seat would be woken by the fallback inject, so it gets no progress line');
+});
+function mkWaitWho(state) {
+  const injected = [];
+  const m = mk({
+    registry: { listPeers: () => [] },
+    getPeerManager: () => null,
+    peerStatusLabel: () => 'busy',
+    restartWaitState: () => state,
+  });
+  m._injectText = (s, text) => injected.push(text);
+  m._teamOfOrNull = (s) => ({ 'avh-ride-lead': { name: 'avh-ride' }, 'clodex-hand-3': { name: 'clodex' } }[s.name] || null);
+  for (const n of ['avh-ride-lead', 'clodex-hand-3']) m.sessions.set(n, { name: n, agentType: 'claude', workspaceId: 'ws1' });
+  return { m, injected };
+}
+
+test('t2492: who (_restartWaitWhoLine): the requester sees every blocker, a seat on another team its own team plus a count', async () => {
+  const armedAt = Date.UTC(2026, 10, 28, 14, 20);
+  const st = {
+    armedAt, at: armedAt + 5 * 60_000, requesters: ['avh-ride-lead'],
+    blockers: [
+      { type: 'seat', name: 'avh-ride-hand-265', team: 'avh-ride', since: armedAt },
+      { type: 'seat', name: 'avh-ride-hand-266', team: 'avh-ride', since: armedAt },
+      { type: 'seat', name: 'clodex-hand-12', team: 'clodex', since: armedAt + 60_000 },
+    ],
+  };
+  const { m, injected } = mkWaitWho(st);
+  await m._handleIntent('avh-ride-lead', { type: 'who' });
+  await m._handleIntent('clodex-hand-3', { type: 'who' });
+  assert.deepStrictEqual(injected, [
+    '[agent:peers] restart waiting since 14:20Z, asked by avh-ride-lead; waiting on: avh-ride-hand-265 (team avh-ride, busy 5m), avh-ride-hand-266 (team avh-ride, busy 5m), clodex-hand-12 (team clodex, busy 4m)\nclodex-hand-3 (busy)',
+    '[agent:peers] restart waiting since 14:20Z, asked by avh-ride-lead; waiting on: clodex-hand-12 (team clodex, busy 4m) and 2 seats on other teams\navh-ride-lead (busy)',
+  ]);
+});
+
+test('t2492: who: no armed wait, no head line', async () => {
+  const { m, injected } = mkWaitWho(null);
+  await m._handleIntent('clodex-hand-3', { type: 'who' });
+  assert.deepStrictEqual(injected, ['[agent:peers] avh-ride-lead (busy)']);
+});
+
+test('t2492: restartWaitEvent broadcasts the wait to the operator surfaces with its blockers', () => {
+  const { m, broadcasts } = mkReboot({ intents: ['reboot'] });
+  const armedAt = Date.UTC(2026, 10, 28, 14, 20);
+  const blockers = [{ type: 'seat', name: 'avh-ride-hand-265', team: 'avh-ride', since: armedAt }];
+  m.restartWaitEvent({ phase: 'waiting', armedAt, at: armedAt + 60_000, requesters: ['a'], blockers });
+  m.restartWaitEvent({ phase: 'fired', armedAt, at: armedAt + 90_000, requesters: ['a'], blockers: [] });
+  assert.deepStrictEqual(broadcasts.map(({ ts, ...b }) => b), [
+    { type: 'restart-wait', from: 'clodex', to: 'user', phase: 'waiting', requesters: ['a'], armedAt, blockers,
+      body: 'restart waiting since 14:20Z, asked by a; waiting on: avh-ride-hand-265 (team avh-ride, busy 1m)' },
+    { type: 'restart-wait', from: 'clodex', to: 'user', phase: 'fired', requesters: ['a'], armedAt, blockers: [],
+      body: 'restart wait ended: fired' },
+  ]);
+});
+
 test('reboot: DEFAULT-OFF — an all-enabled seat cannot reboot (generic gate bounce, no seam)', async () => {
   const { m, state, relaunches, injected } = mkReboot({ intents: null }); // absent = all-enabled default
   await m._handleIntent('a', { type: 'reboot', body: '' });

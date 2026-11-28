@@ -730,3 +730,164 @@ test('t2407: cutJobs restarts a busy node and logs the cut count', () => {
   assert.deepStrictEqual(calls, ['fence:true', 'count', 'restart']);
   assert.deepStrictEqual(logs, ['restart requested remotely; cutting 2 suite jobs this machine is running for other teams']);
 });
+
+const { waitedClause, restartWaitLine } = require('../restart-waiter');
+
+function blockerWaiter(extra = {}) {
+  let jobs = [];
+  const seen = [];
+  const w = freshWaiter(1_000_000, {
+    suiteJobs: () => jobs,
+    teamOf: (s) => s.team,
+    notify: (asked, why, wait) => seen.push(giveUpBody(asked, why, wait)),
+    ...extra,
+  });
+  return { ...w, seen, setJobs: (j) => { jobs = j; } };
+}
+
+const TWO_TEAMS_BUSY = [
+  { name: 'avh-ride-hand-265', team: 'avh-ride', agentType: 'claude', activityState: 'thinking' },
+  { name: 'clodex-hand-12', team: 'clodex', agentType: 'claude', activityState: 'thinking' },
+];
+
+test('t2492: at the 30m cap the drop notice names two busy seats of different teams and a running test job, with ages', () => {
+  const abandons = [];
+  const { waiter, clock, seen, setSessions, setJobs, events } = blockerWaiter();
+  setSessions(TWO_TEAMS_BUSY);
+  waiter.arm({ requester: 'avh-ride-lead', onAbandon: (why, wait) => abandons.push([why, waitedClause(wait)]) });
+  clock.advance(24 * 60_000);
+  setJobs([{ id: 'j9', team: 'clodex', ticket: 't2147', kind: 'verify' }]);
+  clock.advance(7 * 60_000);
+  assert.deepStrictEqual(events, [], 'the cap never forces a restart');
+  assert.deepStrictEqual(seen, [
+    'Sessions stayed busy and 1 suite job this machine is running for other teams did not finish — the pending restart was dropped after 30m. Still busy: avh-ride-hand-265 (team avh-ride, busy 29m), clodex-hand-12 (team clodex, busy 29m), test job t2147 verify (5m). Try again when work settles. Requested by: avh-ride-lead.',
+  ]);
+  assert.deepStrictEqual(abandons, [
+    ['gave-up', ' for 30m: avh-ride-hand-265 (team avh-ride, busy 29m), clodex-hand-12 (team clodex, busy 29m), test job t2147 verify (5m)'],
+  ]);
+});
+
+test('t2492: the blocker list is capped at 10 entries, then "+N more"', () => {
+  const { waiter, clock, seen, setSessions } = blockerWaiter();
+  setSessions(Array.from({ length: 12 }, (_, i) => ({ name: `s${i}`, agentType: 'claude', activityState: 'thinking' })));
+  waiter.arm();
+  clock.advance(31 * 60_000);
+  assert.strictEqual(seen.length, 1);
+  assert.match(seen[0], /Still busy: s0 \(busy 29m\), .*s9 \(busy 29m\), \+2 more\. Try again/);
+  assert.doesNotMatch(seen[0], /s10/);
+});
+
+test('t2492: the 10-minute progress line goes to the requester once per wait', () => {
+  const progress = [];
+  const { waiter, clock, setSessions } = blockerWaiter();
+  setSessions(TWO_TEAMS_BUSY);
+  waiter.arm({ requester: 'avh-ride-lead', onProgress: (p) => progress.push(p) });
+  clock.advance(10 * 60_000 - 2000);
+  assert.deepStrictEqual(progress, [], 'nothing before 10 minutes');
+  clock.advance(2000);
+  assert.strictEqual(progress.length, 1, 'ENTER: one line at 10 minutes');
+  assert.deepStrictEqual({ ran: progress[0].at - progress[0].armedAt, leftMs: progress[0].leftMs, names: progress[0].blockers.map((b) => b.name) },
+    { ran: 600_000, leftMs: 1_200_000, names: ['avh-ride-hand-265', 'clodex-hand-12'] });
+  clock.advance(15 * 60_000);
+  assert.strictEqual(progress.length, 1, 'at most one per wait');
+});
+
+test('t2492: wait events — armed, blocker changes rate-limited to one per 30s, fired; state clears on fire', () => {
+  const evs = [];
+  const { waiter, clock, setSessions, events } = blockerWaiter({ onEvent: (ev) => evs.push([ev.phase, ev.blockers.map((b) => b.name), ev.requesters]) });
+  const a = { name: 'a', agentType: 'claude', activityState: 'thinking' };
+  const b = { name: 'b', agentType: 'claude', activityState: 'idle' };
+  setSessions([a, b]);
+  waiter.arm({ requester: 'lead-1' });
+  assert.strictEqual(waiter.state().armedAt, 1_000_000);
+  clock.advance(32_000);
+  b.activityState = 'thinking';
+  clock.advance(38_000);
+  a.activityState = 'idle';
+  b.activityState = 'idle';
+  clock.advance(20_000);
+  assert.deepStrictEqual(events, ['restart']);
+  assert.deepStrictEqual(evs, [
+    ['armed', [], ['lead-1']],
+    ['waiting', ['a'], ['lead-1']],
+    ['waiting', ['a', 'b'], ['lead-1']],
+    ['fired', [], ['lead-1']],
+  ]);
+  assert.strictEqual(waiter.state(), null, 'a wait that fired leaves no waiting line behind');
+});
+
+test('t2492: a cancelled wait and a dropped wait each broadcast their end', () => {
+  const cancelled = [];
+  const c = blockerWaiter({ onEvent: (ev) => cancelled.push(ev.phase) });
+  c.setSessions(BUSY);
+  c.waiter.arm();
+  c.waiter.disarm({ abandoned: true });
+  assert.deepStrictEqual(cancelled, ['armed', 'cancelled']);
+  assert.strictEqual(c.waiter.state(), null);
+  const dropped = [];
+  const d = blockerWaiter({ onEvent: (ev) => dropped.push(ev.phase) });
+  d.setSessions(BUSY);
+  d.waiter.arm();
+  d.clock.advance(31 * 60_000);
+  assert.deepStrictEqual(dropped, ['armed', 'waiting', 'dropped']);
+  assert.strictEqual(d.waiter.state(), null);
+});
+
+test('t2492: restartWaitLine splits by audience — the requester sees every blocker, another team its own plus a count', () => {
+  const armedAt = Date.UTC(2026, 10, 28, 14, 20);
+  const st = {
+    armedAt, at: armedAt + 5 * 60_000, requesters: ['avh-ride-lead'],
+    blockers: [
+      { type: 'seat', name: 'avh-ride-hand-265', team: 'avh-ride', since: armedAt },
+      { type: 'seat', name: 'avh-ride-hand-266', team: 'avh-ride', since: armedAt },
+      { type: 'seat', name: 'clodex-hand-12', team: 'clodex', since: armedAt + 60_000 },
+    ],
+  };
+  assert.strictEqual(restartWaitLine(st, { viewer: 'avh-ride-lead', team: 'avh-ride' }),
+    'restart waiting since 14:20Z, asked by avh-ride-lead; waiting on: avh-ride-hand-265 (team avh-ride, busy 5m), avh-ride-hand-266 (team avh-ride, busy 5m), clodex-hand-12 (team clodex, busy 4m)');
+  assert.strictEqual(restartWaitLine(st, { viewer: 'clodex-hand-3', team: 'clodex' }),
+    'restart waiting since 14:20Z, asked by avh-ride-lead; waiting on: clodex-hand-12 (team clodex, busy 4m) and 2 seats on other teams');
+  assert.strictEqual(restartWaitLine(st, { viewer: 'solo', team: null }),
+    'restart waiting since 14:20Z, asked by avh-ride-lead; waiting on: 3 seats on other teams');
+});
+
+test('t2492: the pending-restart dialog leads with the waiting line', () => {
+  const armedAt = Date.UTC(2026, 10, 28, 14, 20);
+  assert.strictEqual(pendingDetail([], { armedAt, at: armedAt, requesters: [], blockers: [{ type: 'test job', name: 't9 verify', team: null, since: armedAt }] }),
+    `Restart waiting since 14:20Z, asked by the operator; waiting on: test job t9 verify (0s).\n${pendingDetail([])}`);
+});
+
+test('t2492: a one-sample idle flicker keeps a seat\'s busy age, and a merge moving to the head of the queue keeps its own', () => {
+  const evs = [];
+  let runs = ['ticket t5 auto-merge queued behind it (team clodex)'];
+  const { waiter, clock, seen, setSessions } = blockerWaiter({ inFlightRuns: () => runs, runCapMs: 60 * 60_000, onEvent: (ev) => evs.push(ev) });
+  const a = { name: 'a', team: 'clodex', agentType: 'claude', activityState: 'thinking' };
+  setSessions([a]);
+  waiter.arm();
+  clock.advance(20 * 60_000);
+  a.activityState = 'idle';
+  runs = ['ticket t5 auto-merge and its post-merge suite (team clodex)'];
+  clock.advance(2000);
+  a.activityState = 'thinking';
+  clock.advance(11 * 60_000);
+  assert.deepStrictEqual(seen, [
+    'Sessions stayed busy — the pending restart was dropped after 30m. Still busy: a (team clodex, busy 29m), merge t5 (29m). Try again when work settles.',
+  ]);
+});
+
+test('t2492: operator typing is shown to every viewer, not counted as another team\'s', () => {
+  const armedAt = Date.UTC(2026, 10, 28, 14, 20);
+  const st = { armedAt, at: armedAt + 20_000, requesters: ['lead-1'], blockers: [{ type: 'operator typing', name: 'operator', team: null, since: armedAt + 15_000 }] };
+  assert.strictEqual(restartWaitLine(st, { viewer: 'other-hand', team: 'other' }),
+    'restart waiting since 14:20Z, asked by lead-1; waiting on: operator typing (5s)');
+});
+
+test('t2492: a second requester joining an armed wait broadcasts the new requester list at once', () => {
+  const evs = [];
+  const { waiter, setSessions } = blockerWaiter({ onEvent: (ev) => evs.push([ev.phase, ev.requesters]) });
+  setSessions(BUSY);
+  waiter.arm({ requester: 'lead-1' });
+  waiter.arm({ requester: 'lead-2' });
+  waiter.arm({ requester: 'lead-2' });
+  assert.deepStrictEqual(evs, [['armed', ['lead-1']], ['waiting', ['lead-1', 'lead-2']]]);
+});

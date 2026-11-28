@@ -1480,7 +1480,7 @@ function createRemoteWiring(deps) {
       refreshActivity();
       return [{ id: null, team: null }];
     }
-    return jobs.map((j) => ({ id: j.id, team: j.team || null }));
+    return jobs.map((j) => ({ id: j.id, team: j.team || null, ticket: j.ticket || null, kind: j.kind || null }));
   }
 
   let activitySnap = null;

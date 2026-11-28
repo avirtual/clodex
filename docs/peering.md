@@ -584,6 +584,18 @@ cap, after which the restart is dropped with a notice and admission reopens; a
 cancel reopens it too, and nothing about the fence is persisted. `Restart Now`
 still cuts the job.
 
+The waiter records what held each tick (`currentBlockers` in restart-waiter.js:
+busy seats with their team, test jobs, exec runs, merges, operator typing), each
+with how long it has held continuously. A drop names them, capped at 10 then
+"+N more", in the desktop notification or headless log (`giveUpBody`) and in the
+requester's `[agent:reboot] reboot DROPPED — sessions stayed busy for 30m: …`
+line. At 10 minutes the requester gets one passive progress line. Arm, a
+blocker-set change (at most one per 30 s) and the end each broadcast a
+`restart-wait` ipc-message and a host log line; while armed, `[agent:who]` leads
+with `restart waiting since HH:MMZ, asked by <seat>; waiting on: …` — every
+blocker for a requester, its own team's plus a count of the rest for any other
+seat — and the menu's pending-restart dialog leads with the same line.
+
 A desktop quit with a live runner job is stopped once and asks: `Quit When
 Finished` fences the runner the same way and quits when the jobs end (a second
 quit meanwhile offers `Quit Now`, `Keep Waiting`, `Cancel Quit`; at the same

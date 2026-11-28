@@ -38,15 +38,102 @@ function classifyRestart(sessions) {
 // wait armed from the menu can be JOINED by an agent 25 minutes later, and "the
 // pending restart requested by X was dropped" then tells the operator that their
 // own restart was someone else's. The appended form is true in all three cases —
-// menu-only, agent-only, mixed. No duration for the same reason: a seat that
-// joined a wait in progress did not wait the full cap.
-function giveUpBody(names, { suiteJobs = 0, sessionsBusy = true } = {}) {
+// menu-only, agent-only, mixed.
+function giveUpBody(names, { suiteJobs = 0, sessionsBusy = true } = {}, wait = null) {
   const asked = (Array.isArray(names) ? names : []).filter(Boolean);
   const { text, total: n } = suiteJobsPhrase(suiteJobs);
   const jobs = `${text} did not finish`;
   const why = !n ? 'Sessions stayed busy' : sessionsBusy ? `Sessions stayed busy and ${jobs}` : jobs.charAt(0).toUpperCase() + jobs.slice(1);
-  const base = `${why} — the pending restart was dropped. Try again when work settles.`;
+  const named = hasBlockers(wait)
+    ? ` after ${ageText(wait.waitedMs)}. Still busy: ${blockersPhrase(wait.blockers, wait.at)}` : '';
+  const base = `${why} — the pending restart was dropped${named}. Try again when work settles.`;
   return asked.length ? `${base} Requested by: ${asked.join(', ')}.` : base;
+}
+
+const BLOCKER_LIST_MAX = 10;
+
+function ageText(ms) {
+  const v = Math.max(0, Number(ms) || 0);
+  return v >= 60_000 ? `${Math.floor(v / 60_000)}m` : `${Math.floor(v / 1000)}s`;
+}
+
+function blockerLabel(b, at) {
+  const age = ageText(at - b.since);
+  if (b.type === 'seat') return `${b.name} (${b.team ? `team ${b.team}, ` : ''}busy ${age})`;
+  if (b.type === 'operator typing') return `operator typing (${age})`;
+  return `${b.type} ${b.name} (${age})`;
+}
+
+function blockersPhrase(blockers, at, max = BLOCKER_LIST_MAX) {
+  const list = Array.isArray(blockers) ? blockers : [];
+  const shown = list.slice(0, max).map((b) => blockerLabel(b, at));
+  if (list.length > max) shown.push(`+${list.length - max} more`);
+  return shown.join(', ');
+}
+
+function hasBlockers(wait) {
+  return !!(wait && Array.isArray(wait.blockers) && wait.blockers.length);
+}
+
+function waitedClause(wait) {
+  return hasBlockers(wait) ? ` for ${ageText(wait.waitedMs)}: ${blockersPhrase(wait.blockers, wait.at)}` : '';
+}
+
+function clockText(ms) {
+  return `${new Date(ms).toISOString().slice(11, 16)}Z`;
+}
+
+function restartWaitLine(state, { viewer = null, team = null } = {}) {
+  if (!state) return '';
+  const asked = state.requesters && state.requesters.length ? state.requesters.join(', ') : 'the operator';
+  const head = `restart waiting since ${clockText(state.armedAt)}, asked by ${asked}`;
+  const all = Array.isArray(state.blockers) ? state.blockers : [];
+  const full = viewer == null || (state.requesters || []).includes(viewer);
+  const own = full ? all : all.filter((b) => b.type === 'operator typing' || (team && b.team === team));
+  const rest = all.length - own.length;
+  const allSeats = all.filter((b) => !own.includes(b)).every((b) => b.type === 'seat');
+  const noun = allSeats ? (rest === 1 ? 'seat' : 'seats') : (rest === 1 ? 'blocker' : 'blockers');
+  const parts = [];
+  if (own.length) parts.push(blockersPhrase(own, state.at));
+  if (rest) parts.push(`${own.length ? 'and ' : ''}${rest} ${noun} on other teams`);
+  return parts.length ? `${head}; waiting on: ${parts.join(' ')}` : head;
+}
+
+function restartWaitLogLine(ev) {
+  if (!ev) return '';
+  if (ev.phase === 'armed' || ev.phase === 'waiting') return restartWaitLine(ev);
+  return `restart wait ended: ${ev.phase}`;
+}
+
+function currentBlockers({ sessions, teamOf, runs, jobs, typing }) {
+  const out = [];
+  const team = (s) => { if (!teamOf) return null; try { return teamOf(s) || null; } catch { return null; } };
+  const label = (x) => (x != null && x !== '' ? plainLabel(x, TEAM_LABEL_MAX) : '');
+  const byName = new Map();
+  for (const s of sessions) {
+    if (!s || s._dead) continue;
+    byName.set(s.name, s);
+    if (s.agentType && s.activityState !== 'idle') out.push({ key: `seat:${s.name}`, type: 'seat', name: s.name, team: team(s) });
+  }
+  for (const r of runs) {
+    const text = String(r);
+    const merge = /auto-merge/.test(text) ? /^ticket (\S+)[\s\S]*?(?:\(team ([^)]+)\))?$/.exec(text) : null;
+    if (merge) {
+      out.push({ key: `merge:${merge[1]}`, type: 'merge', name: label(merge[1]), team: label(merge[2]) || null });
+      continue;
+    }
+    const name = plainLabel(text.split(' (')[0], 80);
+    const owner = byName.get(text.split(' run #')[0]);
+    out.push({ key: `run:${name}`, type: 'exec run', name, team: owner ? team(owner) : null });
+  }
+  for (const j of jobs) {
+    if (!j) continue;
+    const what = [label(j.ticket), label(j.kind)].filter(Boolean).join(' ') || (j.id != null ? label(j.id) : 'unnamed');
+    const name = j.runner != null ? `${what} on ${label(j.runner)}` : what;
+    out.push({ key: `job:${j.id != null ? j.id : name}`, type: 'test job', name, team: j.team ? label(j.team) : null });
+  }
+  if (typing) out.push({ key: 'typing', type: 'operator typing', name: 'operator', team: null });
+  return out;
 }
 
 const TEAM_LABEL_MAX = 32;
@@ -123,8 +210,9 @@ function restartDetail({ busy = 0, idle = 0, jobs = [] } = {}) {
   return [seats, line, tail].filter(Boolean).join('\n');
 }
 
-function pendingDetail(jobs) {
-  return `Clodex will restart once every session and the keyboard are idle${suiteWaitClause(Array.isArray(jobs) ? jobs.filter(Boolean) : 0)}. Restart now anyway, cancel the pending restart, or keep waiting?`;
+function pendingDetail(jobs, wait = null) {
+  const line = restartWaitLine(wait);
+  return `${line ? `${line.charAt(0).toUpperCase()}${line.slice(1)}.\n` : ''}Clodex will restart once every session and the keyboard are idle${suiteWaitClause(Array.isArray(jobs) ? jobs.filter(Boolean) : 0)}. Restart now anyway, cancel the pending restart, or keep waiting?`;
 }
 
 // A one-shot waiter that arms a poll loop and fires `restart` only once EVERY live
@@ -137,8 +225,9 @@ function pendingDetail(jobs) {
 function createIdleWaiter({
   getSessions, now, setTimer, clearTimer, restart, notify, lastInputAt,
   inFlightRuns = () => [], suiteJobs = () => [], fence = null, log = null,
+  teamOf = null, onEvent = null,
   pollMs = 2000, sustainMs = 10_000, capMs = 30 * 60_000, operatorQuietMs = sustainMs,
-  runCapMs = 10 * 60_000,
+  runCapMs = 10 * 60_000, progressMs = 10 * 60_000, changeMinMs = 30_000,
 }) {
   let timer = null;      // non-null iff armed
   let armedAt = 0;       // when the wait began (drives the cap)
@@ -153,8 +242,47 @@ function createIdleWaiter({
   // would let a restart drop the callbacks and leave a stale name to be reported
   // against the NEXT wait.
   let requests = [];
+  let blockers = [];
+  let blockersAt = 0;
+  let progressSent = false;
+  let emittedKeys = '';
+  let emittedAt = 0;
+  let recent = new Map();
 
   function isArmed() { return timer !== null; }
+
+  function track(t, cur) {
+    const curKeys = new Set(cur.map((b) => b.key));
+    for (const b of blockers) if (!curKeys.has(b.key)) recent.set(b.key, { since: b.since, goneAt: t });
+    for (const [k, r] of recent) if (t - r.goneAt > sustainMs) recent.delete(k);
+    const prev = new Map(blockers.map((b) => [b.key, b.since]));
+    const sinceOf = (k) => (prev.has(k) ? prev.get(k) : recent.has(k) ? recent.get(k).since : t);
+    blockers = cur.map((b) => ({ ...b, since: sinceOf(b.key) })).sort((a, b) => a.since - b.since);
+    for (const b of blockers) recent.delete(b.key);
+    blockersAt = t;
+  }
+
+  function snapshot(phase) {
+    return {
+      phase, armedAt, at: blockersAt, requesters: requesterNames(),
+      blockers: blockers.map(({ type, name, team, since }) => ({ type, name, team, since })),
+    };
+  }
+
+  function emit(phase) {
+    if (!onEvent) return;
+    try { onEvent(snapshot(phase)); } catch {}
+  }
+
+  function maybeEmitChange(t) {
+    const keys = blockers.map((b) => b.key).sort().join('\n');
+    if (keys === emittedKeys || t - emittedAt < changeMinMs) return;
+    emittedKeys = keys;
+    emittedAt = t;
+    emit('waiting');
+  }
+
+  function state() { return timer === null ? null : snapshot('waiting'); }
 
   // Seats that armed this wait, deduped, in arm order. Empty when the wait came
   // from the menu — the operator who pressed the button needs no attribution.
@@ -168,10 +296,10 @@ function createIdleWaiter({
   // tell a 30-minute give-up from a human pressing Cancel, and the two demand
   // opposite advice — retry when work settles, versus do not retry, a person
   // said no.
-  function drainAbandoned(reason) {
+  function drainAbandoned(reason, detail = null) {
     const rs = requests;
     requests = [];
-    for (const r of rs) { if (r.onAbandon) { try { r.onAbandon(reason); } catch {} } }
+    for (const r of rs) { if (r.onAbandon) { try { r.onAbandon(reason, detail); } catch {} } }
   }
 
   // `abandoned` separates the two ways a pending wait ends early: an operator
@@ -179,7 +307,7 @@ function createIdleWaiter({
   // restart, where the request is about to be fulfilled and "dropped" would be a
   // lie the seat acts on.
   function disarm({ abandoned = false } = {}) {
-    if (timer !== null) { clearTimer(timer); timer = null; }
+    if (timer !== null) { emit(abandoned ? 'cancelled' : 'fired'); clearTimer(timer); timer = null; }
     quietSince = null;
     if (abandoned) drainAbandoned('cancelled');
     else requests = [];
@@ -209,14 +337,24 @@ function createIdleWaiter({
       const asked = requesterNames();
       let held = [];
       try { held = inFlightRuns() || []; } catch { held = []; }
-      const sessionsBusy = classifyRestart(getSessions()).busy > 0 || held.length > 0 || t - lastInputAt() < operatorQuietMs;
-      try { notify(asked, { suiteJobs: liveSuiteJobs(), sessionsBusy }); } catch {}
-      drainAbandoned('gave-up');
+      const capSessions = Array.from(getSessions());
+      const capTyping = t - lastInputAt() < operatorQuietMs;
+      const capJobs = liveSuiteJobs();
+      const sessionsBusy = classifyRestart(capSessions).busy > 0 || held.length > 0 || capTyping;
+      track(t, currentBlockers({
+        sessions: capSessions, teamOf, runs: t - armedAt >= runCapMs ? [] : held, jobs: capJobs, typing: capTyping,
+      }));
+      const wait = { blockers: snapshot('dropped').blockers, at: t, waitedMs: t - armedAt };
+      try { notify(asked, { suiteJobs: capJobs, sessionsBusy }, wait); } catch {}
+      emit('dropped');
+      drainAbandoned('gave-up', wait);
       setFence(false);
       return;
     }
-    const { busy } = classifyRestart(getSessions());
-    const suiteHold = liveSuiteJobs().length > 0;
+    const sessions = Array.from(getSessions());
+    const { busy } = classifyRestart(sessions);
+    const jobs = liveSuiteJobs();
+    const suiteHold = jobs.length > 0;
     let runs = [];
     try { runs = inFlightRuns() || []; } catch { runs = []; }
     const runsPastCap = runs.length > 0 && t - armedAt >= runCapMs;
@@ -228,7 +366,9 @@ function createIdleWaiter({
         if (log) { try { log.info('app', `restart waiting on in-flight exec runs: ${key}`); } catch {} }
       }
     }
-    if (busy > 0 || runsHold || suiteHold || t - lastInputAt() < operatorQuietMs) {
+    const typing = t - lastInputAt() < operatorQuietMs;
+    track(t, currentBlockers({ sessions, teamOf, runs: runsHold ? runs : [], jobs, typing }));
+    if (busy > 0 || runsHold || suiteHold || typing) {
       quietSince = null; // any busy sample resets the sustained window
     } else {
       if (quietSince === null) quietSince = t; // streak begins now
@@ -238,6 +378,7 @@ function createIdleWaiter({
       // are left waiting on a restart that already fell over.
       if (t - quietSince >= sustainMs) {
         quietSince = null;
+        emit('fired');
         requests = [];
         if (runsPastCap && log) {
           try { log.warn('app', `restart proceeding past the ${Math.round(runCapMs / 60_000)}m exec-run ceiling — abandoning: ${runs.join(', ')}`); } catch {}
@@ -245,6 +386,12 @@ function createIdleWaiter({
         restart();
         return;
       }
+    }
+    maybeEmitChange(t);
+    if (!progressSent && t - armedAt >= progressMs) {
+      progressSent = true;
+      const p = { blockers: snapshot('waiting').blockers, at: t, armedAt, leftMs: Math.max(0, capMs - (t - armedAt)) };
+      for (const r of requests) { if (r.onProgress) { try { r.onProgress(p); } catch {} } }
     }
     timer = setTimer(tick, pollMs);
   }
@@ -254,21 +401,34 @@ function createIdleWaiter({
   // stream of requests would push the give-up horizon out forever and the cap
   // would stop being a cap. The pending wait already serves the new request —
   // but every requester still has to learn how it ended.
-  function arm({ onAbandon, requester } = {}) {
+  function arm({ onAbandon, onProgress, requester } = {}) {
     const name = typeof requester === 'string' && requester ? requester : null;
-    if (typeof onAbandon === 'function' || name) {
-      requests.push({ name, onAbandon: typeof onAbandon === 'function' ? onAbandon : null });
+    const joins = timer !== null && name && !requesterNames().includes(name);
+    if (typeof onAbandon === 'function' || typeof onProgress === 'function' || name) {
+      requests.push({
+        name,
+        onAbandon: typeof onAbandon === 'function' ? onAbandon : null,
+        onProgress: typeof onProgress === 'function' ? onProgress : null,
+      });
     }
+    if (joins) emit('waiting');
     if (timer !== null) return false; // already waiting — one waiter
     armedAt = now();
     quietSince = null;
     heldOnRuns = '';
+    blockers = [];
+    recent = new Map();
+    blockersAt = armedAt;
+    progressSent = false;
+    emittedKeys = '';
+    emittedAt = armedAt;
     setFence(true);
     timer = setTimer(tick, pollMs);
+    emit('armed');
     return true;
   }
 
-  return { arm, disarm, isArmed };
+  return { arm, disarm, isArmed, state };
 }
 
 const QUIT_CAP_MS = 30 * 60_000;
@@ -440,4 +600,5 @@ module.exports = {
   classifyRestart, createIdleWaiter, giveUpBody, suiteJobsLine, restartDetail, pendingDetail, suiteWaitClause,
   createQuitGuard, quitDialog, waitingQuitDialog, quitGiveUpBody, suiteJobsPhrase,
   runnerBusyError, planRemoteRestart,
+  blockersPhrase, waitedClause, restartWaitLine, restartWaitLogLine, ageText, BLOCKER_LIST_MAX,
 };

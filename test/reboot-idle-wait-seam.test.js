@@ -184,7 +184,7 @@ test('t2400: main.js holds the restart on runner jobs, fences on arm, and takes 
   assert.match(src, /fence:\s*\(on\)\s*=>\s*\{\s*if \(engine\) engine\.fenceSuiteRunner\(on\);\s*\}/);
   assert.match(src, /if \(busy === 0 && !jobs\.length\) \{/);
   assert.match(src, /detail:\s*restartDetail\(\{ busy, idle, jobs \}\)/);
-  assert.match(src, /detail:\s*pendingDetail\(suiteRestartJobs\(\)\)/);
+  assert.match(src, /detail:\s*pendingDetail\(suiteRestartJobs\(\), idleWaiter\.state\(\)\)/);
   assert.match(src, /restartWaitsForSuite:\s*true,/);
 });
 
@@ -208,7 +208,7 @@ test('main.js: the give-up notification delegates its copy to the tested builder
   // dead value passes — so the copy lives in `giveUpBody` and is tested by being
   // CALLED (test/restart-waiter.test.js). What is source-only, and therefore
   // pinned here, is that main.js delegates to it and hands it the names.
-  assert.match(lit, /body:\s*giveUpBody\(\s*asked\s*,\s*why\s*\)/,
+  assert.match(lit, /body:\s*giveUpBody\(\s*asked\s*,\s*why\s*,\s*wait\s*\)/,
     'ENTER: this is the give-up notification, and its copy comes from the tested builder — '
     + 'a body rebuilt inline here would escape the behavioural tests entirely');
 
@@ -231,4 +231,19 @@ test('t2407: the peer wiring gets the deferred seam for POST /api/restart wait, 
   waitPath();
   operatorPath();
   assert.deepStrictEqual(calls, ['deferred', 'immediate']);
+});
+
+test('t2492: both hosts wire the restart-wait progress, state, team and event seams', () => {
+  const read = (f) => fs.readFileSync(path.join(__dirname, '..', f), 'utf8');
+  const main = read('main.js');
+  assert.match(seamBody(main, 'restartHostWhenIdle'), /onProgress:\s*opts && opts\.onProgress/);
+  assert.match(main, /restartWaitState:\s*\(\)\s*=>\s*idleWaiter\.state\(\),/);
+  assert.match(main, /teamOf:\s*\(s\)\s*=>\s*manager\.teamNameOf\(s\.name, s\.cwd\),/);
+  assert.match(main, /if \(manager\) \{ try \{ manager\.restartWaitEvent\(ev\); \} catch \{\} \}/);
+  const headless = read('headless-main.js');
+  assert.match(headless, /restartWaitState:\s*headlessRestart\.restartWaitState,/);
+  assert.match(headless, /teamOf:\s*\(s\)\s*=>\s*engine\.manager\.teamNameOf\(s\.name, s\.cwd\),/);
+  assert.match(headless, /onEvent:\s*\(ev\)\s*=>\s*engine\.manager\.restartWaitEvent\(ev\),/);
+  assert.match(read('headless-restart.js'), /onProgress:\s*opts && opts\.onProgress/);
+  assert.match(read('engine.js'), /restartWaitState:\s*\(\)\s*=>\s*\(seams\.restartWaitState \? seams\.restartWaitState\(\) : null\),/);
 });

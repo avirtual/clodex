@@ -178,7 +178,7 @@ function restartClodex() {
   setTimeout(() => { app.relaunch(); app.quit(); }, 500);
 }
 
-const { classifyRestart, createIdleWaiter, giveUpBody, restartDetail, pendingDetail, createQuitGuard, quitGiveUpBody } = require('./restart-waiter');
+const { classifyRestart, createIdleWaiter, giveUpBody, restartDetail, pendingDetail, createQuitGuard, quitGiveUpBody, restartWaitLogLine } = require('./restart-waiter');
 const suiteRestartJobs = () => (engine ? engine.suiteRestartJobs() : []);
 const idleWaiter = createIdleWaiter({
   getSessions: () => Array.from(manager.sessions.values()),
@@ -191,14 +191,19 @@ const idleWaiter = createIdleWaiter({
   suiteJobs: suiteRestartJobs,
   fence: (on) => quitGuard.restartFence(on),
   log,
-  notify: (asked, why) => {
+  teamOf: (s) => manager.teamNameOf(s.name, s.cwd),
+  onEvent: (ev) => {
+    try { log.info('app', restartWaitLogLine(ev)); } catch {}
+    if (manager) { try { manager.restartWaitEvent(ev); } catch {} }
+  },
+  notify: (asked, why, wait) => {
     try {
       if (Notification.isSupported()) new Notification({
         // "canceled" would be false on every render: this is the ONLY notify call
         // site and it is the cap's give-up. An operator cancel does not notify at
         // all — they pressed the button.
         title: 'Restart dropped',
-        body: giveUpBody(asked, why),
+        body: giveUpBody(asked, why, wait),
       }).show();
     } catch {}
   },
@@ -227,7 +232,7 @@ async function confirmRestartClodex() {
       defaultId: 2,
       cancelId: 2,
       message: 'A restart is already pending.',
-      detail: pendingDetail(suiteRestartJobs()),
+      detail: pendingDetail(suiteRestartJobs(), idleWaiter.state()),
     });
     if (response === 0) { idleWaiter.disarm(); restartClodex(); }
     // "Restart Now" above disarms silently — the pending request is fulfilled by
@@ -658,6 +663,7 @@ app.whenReady().then(() => {
       scheduleTrayRefresh: (...a) => scheduleTrayRefresh(...a),
       restartHost: () => restartClodex(),
       restartWaitsForSuite: true,
+      restartWaitState: () => idleWaiter.state(),
       electronChild: (script, extraArgs) => childSpawnSpec({
         execPath: process.execPath, isPackaged: app.isPackaged, appPath: app.getAppPath(),
         script, extraArgs, env: process.env,
@@ -676,7 +682,7 @@ app.whenReady().then(() => {
       // holds the restart until every seat — the requester included — has been
       // idle for a sustained window. Never restartClodex() directly here.
       restartHostWhenIdle: (opts) => {
-        idleWaiter.arm({ onAbandon: opts && opts.onAbandon, requester: opts && opts.requester });
+        idleWaiter.arm({ onAbandon: opts && opts.onAbandon, onProgress: opts && opts.onProgress, requester: opts && opts.requester });
       },
     },
   });

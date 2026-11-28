@@ -1,6 +1,6 @@
 'use strict';
 
-const { createIdleWaiter, giveUpBody, suiteJobsPhrase } = require('./restart-waiter');
+const { createIdleWaiter, giveUpBody, suiteJobsPhrase, restartWaitLogLine } = require('./restart-waiter');
 
 const SUPERVISED_ENV = 'CLODEX_SUPERVISED';
 const DECLINED = new Set(['0', 'false', 'no', 'off']);
@@ -26,6 +26,8 @@ function createHeadlessRestart({
   inFlightRuns,
   suiteJobs = () => [],
   fence = null,
+  teamOf = null,
+  onEvent = null,
   now = () => Date.now(),
   setTimer = (fn, ms) => setTimeout(fn, ms),
   clearTimer = (h) => clearTimeout(h),
@@ -42,16 +44,22 @@ function createHeadlessRestart({
     suiteJobs,
     fence,
     log,
-    notify: (asked, why) => { try { log.warn('app', giveUpBody(asked, why)); } catch {} },
+    teamOf,
+    onEvent: (ev) => {
+      try { log.info('app', restartWaitLogLine(ev)); } catch {}
+      if (onEvent) { try { onEvent(ev); } catch {} }
+    },
+    notify: (asked, why, wait) => { try { log.warn('app', giveUpBody(asked, why, wait)); } catch {} },
   });
   return {
     supervised,
     restartUnavailable: () => (supervised ? null : UNSUPERVISED_REASON),
     restartHostWhenIdle: (opts) => {
-      waiter.arm({ onAbandon: opts && opts.onAbandon, requester: opts && opts.requester });
+      waiter.arm({ onAbandon: opts && opts.onAbandon, onProgress: opts && opts.onProgress, requester: opts && opts.requester });
     },
     disarm: (opts) => waiter.disarm(opts),
     isArmed: () => waiter.isArmed(),
+    restartWaitState: () => waiter.state(),
   };
 }
 

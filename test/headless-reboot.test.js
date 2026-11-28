@@ -353,7 +353,7 @@ test('t2401: supervised headless: disarm and the give-up both lift the fence', (
   assert.deepStrictEqual({ exits: b.st.exits, fence: b.st.fence, warns: b.st.warns }, {
     exits: [],
     fence: [true, false],
-    warns: ['1 suite job this machine is running for other teams did not finish — the pending restart was dropped. Try again when work settles.'],
+    warns: ['1 suite job this machine is running for other teams did not finish — the pending restart was dropped after 30m. Still busy: test job j1 (29m). Try again when work settles.'],
   });
 });
 
@@ -421,4 +421,31 @@ test('t2407: a second launch with no window open reopens one the way activate do
   assert.doesNotMatch(m[1], /createWindow/);
   assert.match(src, /function openWindowIfNone\(\) \{\s*if \(BrowserWindow\.getAllWindows\(\)\.length === 0\) \{\s*createWindow\(DEFAULT_WORKSPACE_ID\);\s*\}\s*\}/);
   assert.match(src, /app\.on\('activate', openWindowIfNone\);/);
+});
+
+test('t2492: headless: the wait is logged with its blockers, the drop names them, and the state clears', () => {
+  const clock = fakeClock(1_000_000);
+  const lines = [];
+  const evs = [];
+  const log = { info: (_t, m) => lines.push(`info ${m}`), warn: (_t, m) => lines.push(`warn ${m}`), error() {} };
+  const sessions = [
+    { name: 'avh-ride-hand-265', team: 'avh-ride', agentType: 'claude', activityState: 'thinking' },
+    { name: 'clodex-hand-12', team: 'clodex', agentType: 'claude', activityState: 'thinking' },
+  ];
+  const hr = createHeadlessRestart({
+    env: { [SUPERVISED_ENV]: '1' }, log, getSessions: () => sessions, restart: () => {}, lastInputAt: () => 0,
+    teamOf: (s) => s.team, onEvent: (ev) => evs.push(ev.phase),
+    now: clock.now, setTimer: clock.setTimer, clearTimer: clock.clearTimer,
+  });
+  hr.restartHostWhenIdle({ requester: 'avh-ride-lead' });
+  assert.strictEqual(hr.restartWaitState().requesters[0], 'avh-ride-lead');
+  clock.advance(31 * 60_000);
+  assert.deepStrictEqual(lines, [
+    'info restart waiting since 00:16Z, asked by avh-ride-lead',
+    'info restart waiting since 00:16Z, asked by avh-ride-lead; waiting on: avh-ride-hand-265 (team avh-ride, busy 28s), clodex-hand-12 (team clodex, busy 28s)',
+    'warn Sessions stayed busy — the pending restart was dropped after 30m. Still busy: avh-ride-hand-265 (team avh-ride, busy 29m), clodex-hand-12 (team clodex, busy 29m). Try again when work settles. Requested by: avh-ride-lead.',
+    'info restart wait ended: dropped',
+  ]);
+  assert.deepStrictEqual(evs, ['armed', 'waiting', 'dropped']);
+  assert.strictEqual(hr.restartWaitState(), null);
 });
