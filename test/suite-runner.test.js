@@ -915,7 +915,8 @@ test('t2480: eviction sets a cache entry aside as a .gone~ sibling before removi
   const cacheFile = path.join(f.root, 'suite-runner', 'cache.json');
   fs.writeFileSync(cacheFile, JSON.stringify({ [rel]: 0 }));
   const ticking = f.runner.tick();
-  await firstCall;
+  await Promise.race([firstCall, ticking]);
+  assert.strictEqual(removals.length, 1, 'the eviction is removed through removeTree');
   const gone = removals[0].p;
   assert.deepStrictEqual([path.dirname(gone), path.basename(gone).startsWith('.gone~'), fs.existsSync(path.join(gone, 'node_modules', 'x.js')), fs.existsSync(path.join(f.work, rel))],
     [repoDir, true, true, false]);
