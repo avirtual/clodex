@@ -199,6 +199,29 @@ test('hourly peer mail over 12 hours wakes once; typed input, a ✉ click and an
   }
 }));
 
+test('a stream seat: the composer send re-arms the allowance spent by the automatic wake', withClock(async (t) => {
+  const r = rig(t, { hours: 1 });
+  const sent = [];
+  r.m.sessions.set('st', { name: 'st', agentType: 'claude', io: 'stream', activityState: 'idle', createdAt: 1, outbox: [], stream: { pid: 1, write: (m) => sent.push(m) } });
+  r.m._gatedDeliver('st', 'peer@laptop', 'first', false);
+  t.mock.timers.setTime(T0 + 2 * H);
+  assert.deepStrictEqual(r.m._sweepParkWake(Date.now()), ['st']);
+  r.m.sessions.get('st').activityState = 'idle';
+  r.m._gatedDeliver('st', 'peer@laptop', 'second', false);
+  t.mock.timers.setTime(T0 + 4 * H);
+  assert.deepStrictEqual(r.m._sweepParkWake(Date.now()), [], 'ENTER: spent before the composer send');
+  assert.strictEqual(r.m.seatSend('st', 'hello').ok, true);
+  const s = r.m.sessions.get('st');
+  s.activityState = 'idle';
+  s.outbox = [];
+  s._draft = '';
+  s._draftState = null;
+  s.lastUserInputTs = 0;
+  r.m._gatedDeliver('st', 'peer@laptop', 'third', false);
+  t.mock.timers.setTime(T0 + 6 * H);
+  assert.deepStrictEqual(r.m._sweepParkWake(Date.now()), ['st']);
+}));
+
 test('a seat on a permission dialog is skipped without spending the allowance', withClock(async (t) => {
   const r = rig(t, { hours: 2 });
   r.m._gatedDeliver('root', 'clodex@laptop', 'held', false);

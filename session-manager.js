@@ -3161,6 +3161,7 @@ function createSessionManager(deps) {
       const body = String(text == null ? '' : text);
       const imgs = Array.isArray(images) ? images : [];
       if (!body.trim() && !imgs.length) return { ok: false, error: 'empty message' };
+      this._rearmParkWake(name, 'typed input');
       this._lastOperatorInputAt = Date.now();
       const landed = this._armSubmit(s, body);
       if (landed && typeof landed.then === 'function') {
