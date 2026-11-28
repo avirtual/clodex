@@ -1116,7 +1116,7 @@ runner starts an exclusive job only when nothing is running there, and starts
 nothing beside it until it ends; its build, if it has one, holds the runner the
 same way. When the first job in queue order is exclusive and cannot start yet,
 no job behind it starts, so the runner drains toward it; a later post-merge or
-verify still sorts ahead of a queued exclusive hand job. This is a scheduling
+verify that is not a shadow run still sorts ahead of a queued exclusive hand job. This is a scheduling
 request, not a resource limit: a box container has no CPU or memory limit.
 While an exclusive job runs, the runner's info reports every slot in use; the
 activity snapshot still counts the jobs actually running. With more than one
@@ -1157,7 +1157,7 @@ failure is logged and dropped, the loop never waits for the remote job, and the
 pair is written to `logs/suite-compare.jsonl` (docs/tests.md) when both halves
 are in. A post-merge job measures the merge commit in the root checkout. A
 remote result for a job superseded by a newer tree of the same ticket and kind
-is discarded and the stale job cancelled.
+is discarded and the stale job cancelled. The submit carries `shadow: true`, and a runner queues a shadow job behind every non-shadow job whatever its kind (hand jobs included, from any team); among shadow jobs the usual order holds (post-merge, verify, then submit order). A shadow job already running is not interrupted, and `get testjobs` shows its kind as `verify (shadow)` or `post-merge (shadow)`. A runner too old to know the field ignores it and queues the job by kind.
 
 Under `gate:on` the same `_runTicketSuite` calls (verify, its re-measure,
 post-merge) submit the tree to the runner first, always as a container job

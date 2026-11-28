@@ -100,3 +100,6 @@ An `unavailable` box state (a Docker timeout, an unreachable daemon) or an unrea
 
 ## cachedRead
 An expired entry still answers its last value while one refresh runs in the background; the refresh writes only while the key still maps to the same entry, so a `forgetBox` during it is never undone. The first-ever read of a key is the only one that waits on Docker. `rooms` caches `box.freeBytes` for `buildAnswer` on the info path only; `submit` and `buildBox` read it live through `readRoom`.
+
+## queue
+Order: every non-shadow job (`shadow !== true`) before every shadow job, then `KIND_ORDER`, then `seq`. A shadow run decides nothing, so it never starts ahead of a deciding run or another team's hand job; only the sort key carries this, so `startable`, `pump` and the exclusive head rule see the reordered queue unchanged.

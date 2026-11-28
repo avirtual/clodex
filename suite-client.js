@@ -199,7 +199,7 @@ function createSuiteClient({
       jobId: null, attempt: 0, treeHash: null, sha: null, dirty: null, queuedAt: null, startedAt: null, env: null, started: false,
       t0: now(), budgetMs, queueBudgetMs, runBudgetMs, buildBudgetMs, buildSince: null, timeoutMs, onSubmitted, onDetach, onState,
       shouldStop: () => ctx.stopWhy != null || shouldStop(), stopWhy: null,
-      failFast: typeof opts.repick === 'function', submitted: false, exclusive: opts.exclusive === true,
+      failFast: typeof opts.repick === 'function', submitted: false, exclusive: opts.exclusive === true, shadow: opts.shadow === true,
       shares: box && Array.isArray(shares) ? shares.map(({ share, version }) => ({ share, version })) : [],
       lostAfterMs: typeof opts.reroute === 'function' ? LOST_AFTER_MS : Infinity, cap: null, attempts: [], abandoned: null, ended: false,
       pick: opts.pick && typeof opts.pick === 'object' ? opts.pick : null,
@@ -386,6 +386,7 @@ function createSuiteClient({
       ...(ctx.boxDef ? { box: ctx.boxDef } : {}),
       ...(ctx.shares.length ? { shares: ctx.shares } : {}),
       ...(ctx.exclusive ? { exclusive: true } : {}),
+      ...(ctx.shadow ? { shadow: true } : {}),
     };
     ctx.queuedAt = now();
     if (ctx.shouldStop()) return { unknown: 'cancelled by the caller before submit' };
@@ -732,7 +733,7 @@ function createSuiteClient({
     };
     const moved = (next) => { me.peer = next.peer; me.wire = next.wire; me.name = next.name; };
     Promise.resolve()
-      .then(() => run({ ...opts, snap, scope: 'full', onJob: ({ jobId }) => { me.jobId = jobId; me.sawDetach = false; }, onSubmitted: ({ jobId }) => { me.submitted = jobId; }, onDetach: () => { me.sawDetach = true; }, onRepick: moved, onReroute: (next) => { moved(next); me.jobId = null; }, onMove: (next) => { moved(next); me.jobId = null; } }))
+      .then(() => run({ ...opts, snap, scope: 'full', shadow: true, onJob: ({ jobId }) => { me.jobId = jobId; me.sawDetach = false; }, onSubmitted: ({ jobId }) => { me.submitted = jobId; }, onDetach: () => { me.sawDetach = true; }, onRepick: moved, onReroute: (next) => { moved(next); me.jobId = null; }, onMove: (next) => { moved(next); me.jobId = null; } }))
       .catch((e) => ({ unknown: `client error: ${e.message}`, res: null, record: null }))
       .then((out) => {
         me.remote = out;

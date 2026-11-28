@@ -136,6 +136,7 @@ function activityJob(job, lastOutputAt = null, streams = null) {
     queuedAt: job.queuedAt, startedAt: job.startedAt != null ? job.startedAt : null,
     runStartedAt: job.runStartedAt != null ? job.runStartedAt : null,
     lastOutputAt,
+    ...(job.shadow === true ? { shadow: true } : {}),
     streams,
   };
 }
@@ -401,6 +402,7 @@ function validateSubmit(b, limits) {
   if (b.timeoutMs != null && !(b.timeoutMs > 0 && b.timeoutMs <= limits.maxTimeoutMs)) return 'bad timeoutMs';
   if (b.isolation != null && b.isolation !== 'container') return 'bad isolation';
   if (b.exclusive !== undefined && typeof b.exclusive !== 'boolean') return 'bad exclusive';
+  if (b.shadow !== undefined && typeof b.shadow !== 'boolean') return 'bad shadow';
   if (b.box != null) {
     const x = b.box;
     if (typeof x !== 'object' || Array.isArray(x) || b.isolation !== 'container') return 'bad box';
@@ -578,7 +580,7 @@ function createSuiteRunner({
 
   function queue() {
     return [...jobs.values()].filter((j) => j.state === 'queued')
-      .sort((a, b) => (KIND_ORDER[a.kind] - KIND_ORDER[b.kind]) || (a.seq - b.seq));
+      .sort((a, b) => ((a.shadow === true) - (b.shadow === true)) || (KIND_ORDER[a.kind] - KIND_ORDER[b.kind]) || (a.seq - b.seq));
   }
 
   function positionOf(job) {
@@ -1510,6 +1512,7 @@ function createSuiteRunner({
       ...(typeof origin === 'string' && origin ? { origin: origin.slice(0, 64) } : {}),
       ...(build ? { build } : {}),
       ...(body.exclusive === true ? { exclusive: true } : {}),
+      ...(body.shadow === true ? { shadow: true } : {}),
     };
   }
 

@@ -149,7 +149,7 @@ function testjobsBoxText(box) {
 
 function testjobCells(job, state, age, quiet, passFail) {
   return [
-    state, job.team || '-', job.ticket || job.id || '-', job.kind || '-',
+    state, job.team || '-', job.ticket || job.id || '-', job.shadow === true ? `${job.kind || '-'} (shadow)` : job.kind || '-',
     job.isolation || '-', job.image || '-', age, quiet, passFail,
   ];
 }

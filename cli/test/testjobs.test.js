@@ -157,3 +157,15 @@ test('t2428: get testjobs marks a running exclusive job, a queued one waiting fo
   const states = text.split('\n').slice(2).map((l) => l.split(/\s{2,}/)[0]);
   assert.deepStrictEqual(states, ['run exclusive', 'waiting for an idle runner (exclusive)', 'queued (exclusive ignored)', 'queued']);
 });
+
+test('t2461: get testjobs marks a shadow job in its kind column', () => {
+  const { renderTestjobs } = require('../src/output');
+  const text = renderTestjobs({ enabled: true, snapshot: {
+    ...SNAPSHOT, slots: { total: 1, inUse: 1 },
+    running: [RUNNING],
+    waiting: [{ ...WAITING, id: 'j6', ticket: 't12', kind: 'post-merge', shadow: true }, WAITING],
+    recent: [],
+  } });
+  const kinds = text.split('\n').slice(2).map((l) => l.split(/\s{2,}/)[3]);
+  assert.deepStrictEqual(kinds, ['verify', 'post-merge (shadow)', 'hand']);
+});

@@ -1003,6 +1003,28 @@ for (const [name, extra, wantTimeout, wantBudget] of RUN_LIMIT_ROWS) {
   });
 }
 
+test('t2461: a shadow submit says it is a shadow run; a box decide does not', async () => {
+  const shadowSent = [];
+  const shadowClient = { reachable: async () => ({ ok: true, info: {} }), shadow: async (o) => { shadowSent.push(o); return null; } };
+  const fs1 = mkFixture({ manifestExtra: { testRunner: { peer: 'runner-1', gate: 'shadow' } }, peers: [R1], client: shadowClient });
+  await fs1.m._shadowSubmit(fs1.tm.loadManifest('team'), { id: 't1' }, '/w', {});
+  const boxSent = [];
+  const boxClient = { run: async (o) => { boxSent.push(o); return { unknown: 'runner unreachable', res: null, record: null }; } };
+  const timers = { setTimeout: () => 1, clearTimeout: () => {} };
+  const fb = mkFixture({ manifestExtra: { testRunner: { ...PUSH_ON } }, peers: [R1], client: boxClient, extraDeps: { boxDecideTimers: timers } });
+  const team = fb.tm.loadManifest('team');
+  require('../team-box').writeBox(team.dir, BOX_TEXT);
+  await fb.m._boxDecide(team, { id: 't1' }, '/w', {});
+  assert.deepStrictEqual([shadowSent.length, boxSent.length], [1, 1], 'ENTER: both jobs were submitted');
+  assert.deepStrictEqual([
+    { route: shadowSent[0].route, shadow: shadowSent[0].shadow },
+    { hasShadow: 'shadow' in boxSent[0] },
+  ], [
+    { route: 'gate:shadow', shadow: true },
+    { hasShadow: false },
+  ]);
+});
+
 const PHASE_ENV_TR = { env: { A: '1', B: 'env' }, handEnv: { B: 'hand', H: '1' }, verifyEnv: { B: 'verify', V: '1' }, mergeEnv: { B: 'merge', M: '1' } };
 const PHASE_SUBMIT_ROWS = [
   ['shadow', 'verify', {}, { A: '1', B: 'verify', V: '1' }],

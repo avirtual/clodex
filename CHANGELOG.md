@@ -17,6 +17,7 @@ blocks a release.
 - Test runners: a team's `env` now also reaches test runs on the source machine (a verify or post-merge suite that falls back home, and a hand's local run), which previously ran without it.
 - Test runners: `[agent:team runner verify-env:KEY=VALUE]` and `merge-env:KEY=VALUE` set env for the verify run or the post-merge suite only, as `hand-env:` does for hand runs.
 - Sessions: a seat can no longer be named `CLAUDE.local.md`, which the Claude CLI would read as instructions from the shared messages folder.
+- Test runners: a shadow run (gate `shadow`, which decides nothing) now waits behind every deciding run and every hand job on a runner, instead of starting ahead of other teams' hand jobs.
 
 ## 5.212.0 — 2026-11-28
 
