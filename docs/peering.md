@@ -929,7 +929,7 @@ or run) or `run` (see **Run scope**). remote-wiring injects `offerFor`,
 - **Hello.** Cap `offers` means this node reads `?origin=<name>` on
   `GET /api/peer/hello` and serves `POST /api/peer/offers`. When the origin is a
   valid node name listed in the offer's `peers` and the offer is enabled, hello
-  carries `offers: { own, capacity? }`; otherwise the key is absent. `own` is exactly
+  carries `offers: { own, slots?, capacity? }`; otherwise the key is absent. `own` is exactly
   `{scope:'discovery', boxes, open, kinds:['container'], facts:{os, arch, cpus,
   memMb, runtime}}`; `runtime` is `null` when no container runtime answers (or
   the node has no sandbox manager), else `{platforms:[…]}`. `cpus` and `memMb`
@@ -940,7 +940,10 @@ or run) or `run` (see **Run scope**). remote-wiring injects `offerFor`,
   a sibling of `own`. On receipt `sanitizeWireOffers` joins it into the stored
   offer's `facts.runtime` as bounded non-negative integers, dropping anything
   else; it drops an unknown key in the entry, the facts or the runtime instead
-  of refusing the entry. Facts are probed
+  of refusing the entry. `slots` (1..`MAX_SLOTS`) is the node's suite runner
+  slot total (`slotTotal`, the value `info()` reports), sent beside `own` for
+  the same reason and only when the node has a runner; on receipt it joins the
+  stored entry as `own.slots`, anything else dropped. Facts are probed
   when the entry is built, never stored; no host name, version or schedule
   times cross the wire.
 - **Dialers.** Every operator hello (not a suite-scoped one) whose `origin` is a
@@ -1025,9 +1028,11 @@ or run) or `run` (see **Run scope**). remote-wiring injects `offerFor`,
   and `settings:set` drops a `boxOffer` key. A saved change reaches each peer at
   its next hello; there is no extra timer.
 - **Seeing offers.** `clodexctl get offers` reads `GET /api/offers` and prints
-  `SOURCE PEER BOXES OPEN OS/ARCH CPUS MEMORY RUNTIME`: this node's own offer as
+  `SOURCE PEER BOXES SLOTS OPEN OS/ARCH CPUS MEMORY RUNTIME`: this node's own offer as
   `self`, then one row per directory entry with its provenance (`hello` or
-  `announce`). The peer ⓘ popover shows one `Boxes` line when the `hello` row
+  `announce`). BOXES is the box offer; SLOTS is how many test jobs the node's
+  suite runner runs at once, empty for a node with no runner or one too old to
+  send it. The peer ⓘ popover shows one `Boxes` line when the `hello` row
   for that peer's label carries an offer (`offer:directory`), and none
   otherwise. The popover and Preferences re-read on the `offers-changed` broadcast, sent by `offer:set`
   and by either ingest when the directory listing changed.

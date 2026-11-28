@@ -7,6 +7,7 @@ const path = require('path');
 
 const {
   sanitizeBoxOffer, offerFromEnv, scheduleOpen, wireEntry, offerEntry, sanitizeWireOffers, wireOffers, warnStoredOffer, bootOffer, offerEnabled, runGrant,
+  engineSlots, MAX_SLOTS,
 } = require('../box-offer');
 const { initStores } = require('../stores.js');
 const { mkTmpRoot } = require('./lib/tmp-roots');
@@ -169,6 +170,53 @@ test('sanitizeWireOffers joins the capacity as bounded counts, dropping bad valu
   );
   const native = withRuntime(null);
   assert.deepStrictEqual(sanitizeWireOffers({ own: native, capacity: { cpus: 8 } }), { own: native });
+});
+
+test('offerEntry carries a runner slot total apart from boxes, and none when there is no runner', () => {
+  const facts = { os: 'linux', arch: 'x64', cpus: 4, memMb: 8192, runtime: null };
+  assert.deepStrictEqual(offerEntry(VALID, facts, new Date(2026, 10, 13, 23, 0), { slots: 1 }), {
+    scope: 'discovery', boxes: 2, slots: 1, open: true, kinds: ['container'], facts,
+  });
+  assert.deepStrictEqual(wireEntry(ALWAYS, facts, 'murmur', undefined, { slots: 3 }), {
+    scope: 'discovery', boxes: 1, slots: 3, open: true, kinds: ['container'], facts,
+  });
+  for (const slots of [undefined, null, 0, 5, 1.5, '2']) {
+    assert.ok(!('slots' in offerEntry(ALWAYS, facts, undefined, { slots })), `slots ${slots} is absent`);
+  }
+});
+
+test('wireOffers sends slots beside own so the base validator accepts the bytes, and sanitizeWireOffers joins it back', () => {
+  const facts = { os: 'linux', arch: 'x64', cpus: 4, memMb: 8192, runtime: null };
+  const own = offerEntry(VALID, facts, new Date(2026, 10, 13, 23, 0), { slots: 1 });
+  const bytes = JSON.parse(JSON.stringify({ v: 1, from: 'laptop', ...wireOffers(own) }));
+  const base = { scope: 'discovery', boxes: 2, open: true, kinds: ['container'], facts };
+  assert.deepStrictEqual(bytes, { v: 1, from: 'laptop', own: base, slots: 1 });
+  assert.deepStrictEqual(baseSanitizeWireOffers(bytes), { own: base });
+  assert.deepStrictEqual(sanitizeWireOffers(bytes), { own: { ...base, slots: 1 } });
+  const withCap = wireOffers({ ...WIRE_OWN, slots: 4, facts: { ...WIRE_OWN.facts, runtime: { platforms: ['linux/amd64'], cpus: 8 } } });
+  assert.deepStrictEqual(withCap, { own: WIRE_OWN, slots: 4, capacity: { cpus: 8 } });
+  assert.deepStrictEqual(baseSanitizeWireOffers(withCap), { own: WIRE_OWN });
+});
+
+test('sanitizeWireOffers drops a bad slots value and still accepts an offer without one', () => {
+  assert.deepStrictEqual(sanitizeWireOffers({ own: WIRE_OWN }), { own: WIRE_OWN });
+  for (const slots of [0, 5, 1.5, '2', null, -1]) {
+    assert.deepStrictEqual(sanitizeWireOffers({ own: WIRE_OWN, slots }), { own: WIRE_OWN }, `slots ${slots}`);
+  }
+  assert.deepStrictEqual(sanitizeWireOffers({ own: { ...WIRE_OWN, slots: 2 } }), { own: WIRE_OWN });
+  assert.deepStrictEqual(sanitizeWireOffers({ own: WIRE_OWN, slots: 4 }), { own: { ...WIRE_OWN, slots: 4 } });
+});
+
+test('engineSlots reads the runner slotTotal, and is absent with no runner or a failing getter', () => {
+  assert.strictEqual(engineSlots(() => ({ slotTotal: () => 2 })), 2);
+  assert.strictEqual(engineSlots(() => null), undefined);
+  assert.strictEqual(engineSlots(() => ({})), undefined);
+  assert.strictEqual(engineSlots(undefined), undefined);
+  assert.strictEqual(engineSlots(() => { throw new Error('down'); }), undefined);
+});
+
+test('the offer slot bound is the suite runner bound', () => {
+  assert.strictEqual(MAX_SLOTS, require('../suite-runner').MAX_SLOTS);
 });
 
 const UNKNOWN_KEYS = [

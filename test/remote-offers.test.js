@@ -43,12 +43,12 @@ function req(port, pathname, { method = 'GET', token = OP_TOKEN, body = null } =
   });
 }
 
-async function startNode(t, { offer = OFFER, wired = true, maxRows, facts = FACTS } = {}) {
+async function startNode(t, { offer = OFFER, wired = true, maxRows, facts = FACTS, engine = null } = {}) {
   let n = 0;
   const state = { offer, clock: 5000, factsCalls: 0 };
   const offerDirectory = createOfferDirectory({ now: () => state.clock, newRoute: () => `route-${++n}`, ...(maxRows ? { maxRows } : {}) });
   const callbacks = wired
-    ? offerCallbacks({ getBoxOffer: () => state.offer, getOfferFacts: () => { state.factsCalls++; return facts; }, offerDirectory })
+    ? offerCallbacks({ getBoxOffer: () => state.offer, getOfferFacts: () => { state.factsCalls++; return facts; }, offerDirectory, getSuiteEngine: () => engine })
     : {};
   const server = new RemoteServer({
     port: 0, host: '127.0.0.1', pagePath: '/nonexistent', hostLabel: 'murmur', version: '9.9.9',
@@ -236,4 +236,20 @@ test('POST /api/peer/offers answers 503 when the directory is full', async (t) =
   const second = await announce(port, 'constructor', ANNOUNCED);
   assert.deepStrictEqual([second.status, second.json], [503, { ok: false, error: 'offers directory full' }]);
   assert.deepStrictEqual(offerDirectory.list().map((r) => r.name), ['laptop']);
+});
+
+test('a node with a suite runner shows its slot total in its own offer and sends it beside own in hello', async (t) => {
+  const { port } = await startNode(t, { engine: { slotTotal: () => 1 } });
+  assert.deepStrictEqual((await req(port, '/api/offers')).json.own, { ...OWN, slots: 1 });
+  const hello = (await req(port, '/api/peer/hello?origin=laptop')).json;
+  assert.deepStrictEqual(hello.offers, { own: OWN, slots: 1 });
+  assert.deepStrictEqual(baseSanitizeWireOffers(hello.offers), { own: OWN });
+});
+
+test('an announce with slots beside own is stored with them; one without is stored without', async (t) => {
+  const { port, offerDirectory } = await startNode(t);
+  const slotted = (own, slots) => req(port, '/api/peer/offers', { method: 'POST', body: JSON.stringify({ v: 1, from: 'laptop', own, slots }) });
+  assert.strictEqual((await slotted(ANNOUNCED, 3)).status, 200);
+  assert.strictEqual((await announce(port, 'constructor', ANNOUNCED)).status, 200);
+  assert.deepStrictEqual(offerDirectory.list().map((r) => [r.name, r.offer]), [['laptop', { ...ANNOUNCED, slots: 3 }], ['constructor', ANNOUNCED]]);
 });
