@@ -899,7 +899,7 @@ function createSuiteClient({
       kind: row.kind, scope: row.scope, ...(row.named ? { named: row.named } : {}), team: row.team, ticket: row.ticket, seat: row.seat,
       tree: row.tree, sha: row.sha, treeHash: row.treeHash, queuedAt: row.queuedAt, route: row.route, override: row.override,
       outcome, reason, pass: rec ? rec.pass : null, fail: rec ? rec.fail : null, tests: rec ? rec.tests : null,
-      endedAt: iso(now()), durationMs: null, env: row.env, recovered: true,
+      endedAt: iso(now()), durationMs: null, env: row.env, ...(row.pick ? { pick: row.pick } : {}), ...(row.moved ? { moved: row.moved } : {}), recovered: true,
     };
     appendLedger(record);
     log(`suite-client: recovered run ${row.id} after a host restart: team ${row.team}, ticket ${row.ticket}, ${row.kind} on ${row.where}, job ${row.jobId}: ${outcome}`);

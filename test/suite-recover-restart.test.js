@@ -5,8 +5,8 @@ const assert = require('node:assert');
 const fs = require('node:fs');
 const path = require('node:path');
 const { mkTmpRoot } = require('./lib/tmp-roots');
-const { createSuiteClient, LOST_AFTER_MS } = require('../suite-client');
-const { createIdleWaiter, suiteWaitClause, restartDetail } = require('../restart-waiter');
+const { createSuiteClient, LOST_AFTER_MS, ledgerPicks } = require('../suite-client');
+const { createIdleWaiter, suiteWaitClause, restartDetail, pendingDetail } = require('../restart-waiter');
 
 const BOOT = Date.parse('2026-11-28T10:00:00.000Z');
 const SWEEP = BOOT + 60000;
@@ -46,7 +46,7 @@ function harness(t, lines, answers) {
   });
   clock = SWEEP;
   const rows = () => fs.readFileSync(ledgerFile, 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l));
-  return { client, calls, logs, rows, written: () => rows().slice(lines.length) };
+  return { client, calls, logs, rows, ledgerFile, written: () => rows().slice(lines.length) };
 }
 
 const jobs = (job) => ({ status: 200, body: { ok: true, jobs: [job] } });
@@ -171,6 +171,22 @@ test('t2475: a recovered end row carries the start row identity, and one log lin
     endedAt: '2026-11-28T10:01:00.000Z', durationMs: null, env: { isolation: 'native' }, recovered: true,
   }]);
   assert.deepStrictEqual(h.logs, ['suite-client: recovered run r-done after a host restart: team avh, ticket t2108, verify on work, job r-done-job: pass']);
+});
+
+test('t2475: a recovered pool-picked run reads as ended in the picks view, with its pick and moves kept', async (t) => {
+  const pick = { chosen: 'work', ranks: [{ member: 'work', score: 1 }] };
+  const moved = [{ from: 'rig', to: 'work', at: '2026-11-28T09:50:30.000Z' }];
+  const h = harness(t, [start('r-pick', { pick, moved })], { 'peer-work': jobs({ id: 'r-pick-job', state: 'gone' }) });
+  await h.client.recoverOpenRuns();
+  const [row] = h.written();
+  assert.deepStrictEqual([row.pick, row.moved], [pick, moved]);
+  const shown = ledgerPicks(h.ledgerFile).find((p) => p.id === 'r-pick');
+  assert.deepStrictEqual([shown.phase, shown.outcome, shown.endedAt], ['end', 'lost', '2026-11-28T10:01:00.000Z']);
+});
+
+test('t2475: the pending-restart dialog names an outbound run apart from the local runner\'s jobs', () => {
+  assert.strictEqual(pendingDetail([{ id: 'x', team: 'avh', ticket: 't2108', kind: 'verify', runner: 'work' }]),
+    'Clodex will restart once every session and the keyboard are idle and 1 run on work (avh t2108 verify) finishes. Restart now anyway, cancel the pending restart, or keep waiting?');
 });
 
 test('t2475: running the boot step twice, or twice at once, writes one end row', async (t) => {

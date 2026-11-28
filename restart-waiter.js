@@ -123,8 +123,7 @@ function restartDetail({ busy = 0, idle = 0, jobs = [] } = {}) {
 }
 
 function pendingDetail(jobs) {
-  const n = Array.isArray(jobs) ? jobs.filter(Boolean).length : 0;
-  return `Clodex will restart once every session and the keyboard are idle${suiteWaitClause(n)}. Restart now anyway, cancel the pending restart, or keep waiting?`;
+  return `Clodex will restart once every session and the keyboard are idle${suiteWaitClause(Array.isArray(jobs) ? jobs.filter(Boolean) : 0)}. Restart now anyway, cancel the pending restart, or keep waiting?`;
 }
 
 // A one-shot waiter that arms a poll loop and fires `restart` only once EVERY live
