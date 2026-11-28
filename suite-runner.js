@@ -500,7 +500,7 @@ function createSuiteRunner({
   root, oldRoot = null, work, isolation = userIsolation(), limits = {}, spawn = childProcess.spawn,
   now = Date.now, log = () => {}, timers = DEFAULT_TIMERS, platform = process.platform, arch = process.arch,
   box = null, boxSweep = null, onActivity = null, activityMs = ACTIVITY_MS, slots = 1, shares = [], buildBoxes = false, exclusive = 'honour',
-  removeTree = forceRemoveAsync,
+  removeTree = forceRemoveAsync, sizeOf = bytesOf,
 }) {
   const held = Array.isArray(shares) ? shares.map(({ name, path: at, version }) => ({ name, path: at, version })) : [];
   const slotTotal = slotCount(slots);
@@ -1371,10 +1371,12 @@ function createSuiteRunner({
   function evict(p) {
     const gone = goneSibling(p);
     try { fs.renameSync(p, gone); } catch (e) {
-      if (e.code === 'ENOENT') return;
-      throw e;
+      if (e.code === 'ENOENT') return true;
+      log(`suite-runner: evicting ${p} failed: ${e.message}`);
+      return false;
     }
     sweepGone(gone);
+    return true;
   }
 
   function sweepGone(p) {
@@ -1394,7 +1396,7 @@ function createSuiteRunner({
       const entries = [];
       for (const e of cacheEntries()) {
         let bytes = 0;
-        for (const p of e.paths) bytes += await bytesOf(p);
+        for (const p of e.paths) bytes += await sizeOf(p);
         entries.push({ ...e, usedAt: cache[e.rel] || 0, bytes });
       }
       if (anyLive() || active.size) return { ran: false };
@@ -1402,7 +1404,9 @@ function createSuiteRunner({
       const removed = [];
       for (const e of entries.sort((a, b) => a.usedAt - b.usedAt)) {
         if (now() - e.usedAt > lim.cacheIdleMs || total > lim.cacheMaxBytes) {
-          for (const p of e.paths) evict(p);
+          let evicted = true;
+          for (const p of e.paths) evicted = evict(p) && evicted;
+          if (!evicted) continue;
           delete cache[e.rel];
           total -= e.bytes;
           removed.push(e.rel);

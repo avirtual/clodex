@@ -929,9 +929,34 @@ test('t2480: eviction sets a cache entry aside as a .gone~ sibling before removi
   for (const r of removals.slice(0, 2)) r.resolve();
 });
 
+test('t2480: an entry whose eviction rename fails is logged and stays indexed; the next entry is still evicted and the index written', async (t) => {
+  const clock = 30 * 24 * 3600 * 1000;
+  const logged = [];
+  const f = await fixture(t, { now: () => clock, runnerOver: { removeTree: () => Promise.resolve(), log: (m) => logged.push(m) } });
+  await drain();
+  const locked = path.join('deps', 'locked', 'a'.repeat(64));
+  const open = path.join('deps', f.snap.repoKey, 'b'.repeat(64));
+  for (const rel of [locked, open]) {
+    fs.mkdirSync(path.join(f.work, rel), { recursive: true });
+    fs.writeFileSync(path.join(f.work, `${rel}.json`), '{}');
+  }
+  const cacheFile = path.join(f.root, 'suite-runner', 'cache.json');
+  fs.writeFileSync(cacheFile, JSON.stringify({ [locked]: 0, [open]: 1 }));
+  fs.chmodSync(path.join(f.work, 'deps', 'locked'), 0o555);
+  t.after(() => fs.chmodSync(path.join(f.work, 'deps', 'locked'), 0o755));
+  const result = await f.runner.tick();
+  assert.deepStrictEqual([result.ran, result.removed], [true, [open]]);
+  assert.deepStrictEqual([fs.existsSync(path.join(f.work, locked)), fs.existsSync(path.join(f.work, open)), JSON.parse(fs.readFileSync(cacheFile, 'utf8'))], [true, false, { [locked]: 0 }]);
+  assert.ok(logged.some((m) => m.startsWith(`suite-runner: evicting ${path.join(f.work, locked)} failed: `)), logged.join('\n'));
+});
+
 test('t2480: a job submitted while the cache size walk is in flight stops eviction before any entry goes', async (t) => {
   const clock = 30 * 24 * 3600 * 1000;
-  const f = await fixture(t, { now: () => clock });
+  let release = null;
+  let entered = null;
+  const walking = new Promise((resolve) => { entered = resolve; });
+  const gate = new Promise((resolve) => { release = resolve; });
+  const f = await fixture(t, { now: () => clock, runnerOver: { sizeOf: () => { entered(); return gate.then(() => 0); } } });
   await drain();
   await f.runner.submit(f.body('warm'));
   await f.runner.cancel('warm');
@@ -944,9 +969,11 @@ test('t2480: a job submitted while the cache size walk is in flight stops evicti
   }
   fs.writeFileSync(cacheFile, JSON.stringify({ [rels[0]]: 0, [rels[1]]: 1 }));
   const ticking = f.runner.tick();
-  const submitted = f.runner.submit(f.body('mid-walk'));
+  await walking;
+  const submitted = await f.runner.submit(f.body('mid-walk'));
+  assert.strictEqual(submitted.state, 'awaiting-pack', 'ENTER: the job went live during the walk');
+  release();
   assert.deepStrictEqual(await ticking, { ran: false });
-  assert.strictEqual((await submitted).state, 'awaiting-pack', 'ENTER: the job went live during the walk');
   assert.deepStrictEqual([rels.map((rel) => fs.existsSync(path.join(f.work, rel))), Object.keys(JSON.parse(fs.readFileSync(cacheFile, 'utf8')))], [[true, true], rels]);
 });
 
