@@ -111,7 +111,7 @@ A test that needs a login or config file builds a fixture home and passes it thr
 
 ## Wait on a condition, not a fixed time
 
-A test waiting for async work polls for the state it asserts, with a generous deadline; a fixed window that git fits in here misses on a slower disk. A test asserting something did NOT happen keeps a fixed window, started after the last thing that did.
+A test waiting for async work polls for the state it asserts, with a generous deadline; a fixed window that git fits in here misses on a slower disk. A test asserting something did NOT happen keeps a fixed window, started after the last thing that did. A wait for a reply is on the event itself with a real-time bound, never a count of event-loop turns: the turns run out while a subprocess is still working on a loaded machine (`sendOf` in test/suite-hand-routing.test.js).
 
 ## The live box test
 
