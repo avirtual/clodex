@@ -296,7 +296,7 @@ const START_1 = '{"id":"run-1","phase":"start","where":"runner-1","runner":"p1",
   + '"queuedAt":"1970-01-01T00:00:01.000Z","startedAt":"1970-01-01T00:00:01.000Z","env":{"envKey":"k"}}';
 const startOf = (jobId, attempt) => START_1.replace('"jobId":"run-1","attempt":1', `"jobId":"${jobId}","attempt":${attempt}`);
 
-function liveRun(t, { states, packAt = 0 }) {
+function liveRun(t, { states, packAt = 0, reroute = false }) {
   const root = mkTmpRoot('suite-resubmit-');
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const ledgerFile = path.join(root, 'suite-runs.jsonl');
@@ -304,6 +304,7 @@ function liveRun(t, { states, packAt = 0 }) {
   const polls = {};
   const deletes = [];
   let posts = 0;
+  let clock = 1000;
   const conn = {
     suiteAsk: async (method, p) => {
       if (p === '/api/suite/info') return { status: 200, body: { ok: true, limits: {}, env: { envKey: 'k' } } };
@@ -319,7 +320,9 @@ function liveRun(t, { states, packAt = 0 }) {
       }
       const id = decodeURIComponent(/ids=([^&]+)/.exec(p)[1]);
       polls[id] = (polls[id] || 0) + 1;
-      const state = (states[id] || [])[polls[id] - 1] || 'gone';
+      const list = states[id] || [];
+      const state = list[polls[id] - 1] || (list[list.length - 1] === 'lost' ? 'lost' : 'gone');
+      if (state === 'lost') return { status: 502, body: null };
       if (state === 'hang') return new Promise(() => {});
       return { status: 200, body: { ok: true, jobs: [{ id, state, treeHash: TREE, exit: { code: 0, signal: null }, reason: null, queueMs: 0, setupMs: 1, runMs: 2, out: {} }] } };
     },
@@ -331,17 +334,17 @@ function liveRun(t, { states, packAt = 0 }) {
     buildPack: async () => { fs.writeFileSync(packFile, 'pack'); return { file: packFile, bytes: 4, sha256: 'x', over: false }; },
   };
   const client = createSuiteClient({
-    getPeerManager: () => ({ get: (id) => (id === 'p1' ? conn : null) }),
-    snapshot, randomUUID: () => 'run-1', sleep: async () => {}, ledgerFile, now: () => 1000,
+    getPeerManager: () => ({ get: (id) => (id === 'p1' || id === 'p2' ? conn : null) }),
+    snapshot, randomUUID: () => 'run-1', sleep: async (ms) => { if (reroute) clock += ms; }, ledgerFile, now: () => clock,
   });
-  const done = client.run({ peer: 'p1', name: 'runner-1', tree: '/w' });
+  const done = client.run({ peer: 'p1', name: 'runner-1', tree: '/w', ...(reroute ? { reroute: () => ({ peer: 'p2', name: 'runner-2' }) } : {}) });
   const lines = () => (fs.existsSync(ledgerFile) ? fs.readFileSync(ledgerFile, 'utf8').split('\n').filter(Boolean) : []);
   const until = async (n) => { for (let i = 0; i < 200 && lines().length < n; i += 1) await new Promise((r) => setImmediate(r)); return lines(); };
-  const recover = async (answer) => {
+  const recover = async (answer, at = 61000) => {
     const calls = [];
     const later = createSuiteClient({
-      getPeerManager: () => ({ get: (id) => (id === 'p1' ? { suiteAsk: async (m, p, b, ms) => { calls.push([m, p, ms]); return m === 'DELETE' ? { status: 200, body: { ok: true } } : answer(p); } } : null) }),
-      ledgerFile, now: () => 61000,
+      getPeerManager: () => ({ get: (id) => (id === 'p1' || id === 'p2' ? { suiteAsk: async (m, p, b, ms) => { calls.push([id, m, p, ms]); return m === 'DELETE' ? { status: 200, body: { ok: true } } : answer(p); } } : null) }),
+      ledgerFile, now: () => at,
     });
     const written = await later.recoverOpenRuns();
     return { written, calls };
@@ -363,7 +366,7 @@ test('t2478: a run retried once after it started names attempt 2\'s job on the l
   const r = liveRun(t, { states: { 'run-1': ['running', 'gone'], 'run-1-2': ['hang'] } });
   assert.deepStrictEqual(await r.until(2), [START_1, startOf('run-1-2', 2)]);
   const { written, calls } = await r.recover(() => jobs({ id: 'run-1-2', state: 'running' }));
-  assert.deepStrictEqual(calls, [['GET', '/api/suite/jobs?ids=run-1-2&wait=0', LOST_AFTER_MS], ['DELETE', '/api/suite/jobs/run-1-2', undefined]]);
+  assert.deepStrictEqual(calls, [['p1', 'GET', '/api/suite/jobs?ids=run-1-2&wait=0', LOST_AFTER_MS], ['p1', 'DELETE', '/api/suite/jobs/run-1-2', undefined]]);
   assert.deepStrictEqual(written.map((w) => [w.id, w.jobId, w.attempt, w.outcome, w.reason]),
     [['run-1', 'run-1-2', 2, 'lost', 'host restarted while the job was in flight; cancelled on the runner']]);
 });
@@ -373,8 +376,21 @@ test('t2478: a run retried twice after it started names attempt 3\'s job, and re
   assert.deepStrictEqual(await r.until(3), [START_1, startOf('run-1-2', 2), startOf('run-1-3', 3)]);
   assert.deepStrictEqual(r.deletes, ['/api/suite/jobs/run-1-2'], 'ENTER: attempt 2 was submitted and then cancelled for the incomplete pack');
   const { written, calls } = await r.recover(() => jobs({ id: 'run-1-3', state: 'done', reason: null, record: { outcome: 'pass', pass: 4, fail: 0, tests: 4 } }));
-  assert.deepStrictEqual(calls, [['GET', '/api/suite/jobs?ids=run-1-3&wait=0', LOST_AFTER_MS]]);
+  assert.deepStrictEqual(calls, [['p1', 'GET', '/api/suite/jobs?ids=run-1-3&wait=0', LOST_AFTER_MS]]);
   assert.deepStrictEqual(written.map((w) => [w.id, w.jobId, w.attempt, w.outcome, w.pass]), [['run-1', 'run-1-3', 3, 'pass', 4]]);
+});
+
+test('t2478: a run rerouted after it started names the new runner\'s queued job at once, and recovery cancels it there, not on the lost runner', async (t) => {
+  const r = liveRun(t, { states: { 'run-1': ['running', 'lost'], 'run-1-2': ['hang'] }, reroute: true });
+  const lines = await r.until(2);
+  assert.strictEqual(lines[0], START_1);
+  assert.strictEqual(lines.length, 2, 'ENTER: the resubmit row is written while the job is still queued');
+  const row = JSON.parse(lines[1]);
+  assert.deepStrictEqual([row.phase, row.where, row.runner, row.jobId, row.attempt, row.queuedAt, row.startedAt],
+    ['start', 'runner-2', 'p2', 'run-1-2', 2, '1970-01-01T00:02:31.000Z', null]);
+  const { written, calls } = await r.recover(() => jobs({ id: 'run-1-2', state: 'queued' }), 400000);
+  assert.deepStrictEqual(calls, [['p2', 'GET', '/api/suite/jobs?ids=run-1-2&wait=0', LOST_AFTER_MS], ['p2', 'DELETE', '/api/suite/jobs/run-1-2', undefined]]);
+  assert.deepStrictEqual(written.map((w) => [w.id, w.where, w.jobId, w.attempt, w.outcome]), [['run-1', 'runner-2', 'run-1-2', 2, 'lost']]);
 });
 
 test('t2478: a run retried after it started and then ended normally is not open after a restart', async (t) => {

@@ -925,7 +925,8 @@ A minute after boot, `recoverOpenRuns` reads the ledger's last 512 KB and
 closes every remote start row (`runner` set, `wire` push or pull) that has no
 end row, began before this process booted and within the runner's 24 h
 retention. A run resubmitted after its start row was written (attempt 2 and
-later) appends a full start row again with the new `jobId` and `attempt`, so
+later, a reroute included) appends a full start row again with the new `jobId`
+and `attempt` once the runner accepts it, `startedAt` null until it starts, so
 the latest start row of a run names its live job. It asks each runner once per
 wire for up to 20 open job ids at a time and writes one end row per run marked
 `recovered: true`: the runner's outcome and totals for a finished job with a

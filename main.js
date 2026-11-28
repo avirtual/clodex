@@ -208,9 +208,9 @@ const quitGuard = createQuitGuard({
   fence: (on) => { if (engine) engine.fenceSuiteRunner(on); },
   quit: () => app.quit(),
   ask: (model) => dialog.showMessageBox(model),
-  notify: (n) => {
+  notify: (jobs) => {
     try {
-      if (Notification.isSupported()) new Notification({ title: 'Quit dropped', body: quitGiveUpBody(n) }).show();
+      if (Notification.isSupported()) new Notification({ title: 'Quit dropped', body: quitGiveUpBody(jobs) }).show();
     } catch {}
   },
   now: () => Date.now(),

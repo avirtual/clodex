@@ -502,7 +502,7 @@ function createSuiteClient({
   }
 
   function markResubmitted(ctx) {
-    if (ctx.started && ctx.ledgerJobId !== ctx.jobId) writeStartRow(ctx);
+    if (ctx.ledgerJobId != null && ctx.ledgerJobId !== ctx.jobId) writeStartRow(ctx);
   }
 
   function writeStartRow(ctx) {

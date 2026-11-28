@@ -98,15 +98,9 @@ function localJobsLine(list) {
 }
 
 function suiteWaitClause(jobs) {
-  const { local, outbound } = splitSuiteJobs(jobs);
-  const n = Array.isArray(jobs) ? local.length : Number.isInteger(jobs) && jobs > 0 ? jobs : 0;
-  const parts = [
-    ...(n > 0 ? [`${n} suite job${n === 1 ? '' : 's'} this machine is running for other teams`] : []),
-    ...(outbound.length ? [outboundPhrase(outbound)] : []),
-  ];
-  if (!parts.length) return '';
-  const one = parts.length === 1 && (n || outbound.length) === 1;
-  return ` and ${parts.join(' and ')} finish${one ? 'es' : ''}`;
+  const { text, total } = suiteJobsPhrase(jobs);
+  if (!total) return '';
+  return ` and ${text} finish${total === 1 ? 'es' : ''}`;
 }
 
 function suiteJobsPhrase(jobs) {

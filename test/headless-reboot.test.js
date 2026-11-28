@@ -386,7 +386,7 @@ test('t2401: main.js routes before-quit through the quit guard first, and restar
   assert.match(src, /function restartClodex\(\) \{\s*quitGuard\.passThrough\(\);/);
   assert.match(src, /fence:\s*\(on\)\s*=>\s*quitGuard\.restartFence\(on\),/);
   assert.match(src, /ask:\s*\(model\)\s*=>\s*dialog\.showMessageBox\(model\),/);
-  assert.match(src, /body:\s*quitGiveUpBody\(n\)/);
+  assert.match(src, /notify: \(jobs\) => \{[\s\S]*?body:\s*quitGiveUpBody\(jobs\)/);
 });
 
 test('t2407: a SIGTERM/SIGINT names the suite jobs it cuts, and says nothing when there are none', () => {
