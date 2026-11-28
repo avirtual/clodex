@@ -29,6 +29,7 @@ function rig({ root = mkTmpRoot('clx-ctxhold-'), session = {} } = {}) {
     looksLikeIntent: require('../intent-scanner').looksLikeIntent,
     shadowIntentKey: require('../intent-scanner').shadowIntentKey,
     execBodyCap: 64 * 1024,
+    isInjectInFlight: require('../inject-queue').isInjectInFlight,
     stripLevelOf: () => 0,
     getPersistence: () => ({
       list: () => [...persisted.values()],
@@ -256,7 +257,7 @@ test('the replaced CLI never releases a reload hold', () => {
   } finally { mock.timers.reset(); }
 });
 
-test('restart mid-transition: the hold and the mail survive and the state reads failed', () => {
+test('restart mid-transition: the hold and the mail survive, no failure notice, the boot path releases it', () => {
   mock.timers.enable({ apis: ['setTimeout'] });
   try {
     const root = mkTmpRoot('clx-ctxhold-restart-');
@@ -266,10 +267,12 @@ test('restart mid-transition: the hold and the mail survive and the state reads 
     assert.strictEqual(a.onDisk(), 1);
     const b = rig({ root });
     assert.strictEqual(b.m._injectHoldReason(b.s), 'clear-window');
-    assert.strictEqual(b.m.ctxHoldState('a'), 'clear did not complete');
+    assert.strictEqual(b.m._ctxHoldMap().get('a').state, 'restored');
+    assert.strictEqual(b.m.ctxHoldState('a'), 'clearing');
     assert.strictEqual(b.onDisk(), 1);
     b.m._drainPendingAtIdle(b.s);
     assert.deepStrictEqual(b.written, []);
+    assert.strictEqual(b.casts.filter((c) => c.p && c.p.kind === 'context-stuck').length, 0, 'a restart is not a failure');
     b.s._bootReadySeen = true;
     b.m._ctxHoldOnBootReady(b.s);
     assert.strictEqual(b.m._ctxHoldReason(b.s), null, 'the boot path of the restored seat releases it');
@@ -280,18 +283,23 @@ test('restart mid-transition: the hold and the mail survive and the state reads 
 test('the age wake does not fire for a seat in the hold', () => {
   mock.timers.enable({ apis: ['setTimeout'] });
   try {
+    const at = Date.now() - 2 * HOUR;
+    const park = (r) => pend.parkDelivery(r.PENDING_DIR, 'a', '[agent:from bob] OLD-MAIL', 1, null, false, 1, null, null, at);
+    const control = rig();
+    control.m._parkWakeHours = () => 1;
+    park(control);
+    assert.deepStrictEqual(control.m._sweepParkWake(Date.now()), ['a'], 'ENTER: without the clear the 2h-old mail wakes the seat');
     const h = rig();
     h.m._parkWakeHours = () => 1;
-    parkWhileBusy(h, 'OLD-MAIL');
-    h.s.activityState = 'idle';
+    park(h);
     h.m._handleContextIntent(h.s, 'clear', '');
-    assert.deepStrictEqual(h.m._sweepParkWake(Date.now() + 2 * HOUR), []);
+    assert.deepStrictEqual(h.m._sweepParkWake(Date.now()), []);
     assert.deepStrictEqual(h.written, ['/clear']);
     assert.strictEqual(h.onDisk(), 1);
   } finally { mock.timers.reset(); }
 });
 
-test('jsonl-intent seat: the clear dispatches before the idle flip and the same hold applies', () => {
+test('jsonl-intent seat: a clear handled ahead of the idle flip holds the idle drain', () => {
   mock.timers.enable({ apis: ['setTimeout'] });
   try {
     const h = rig({ session: { intentSource: 'jsonl' } });
@@ -332,5 +340,117 @@ test('the continuation passes only its own window: a busy seat still holds it un
     h.m._emitActivity('a', 'idle', true);
     assert.deepStrictEqual(h.written, ['/clear', 'HANDOFF go on']);
     assert.strictEqual(h.m._ctxHoldReason(h.s), 'clear-window', 'typed but its turn has not started');
+  } finally { mock.timers.reset(); }
+});
+
+for (const [agentType, cmd] of [['codex', '/clear'], ['muse', '/clear']]) {
+  test(`${agentType} seat: a clear arms no hold and mail is typed as before`, () => {
+    mock.timers.enable({ apis: ['setTimeout'] });
+    try {
+      const h = rig({ session: { type: agentType, agentType } });
+      h.m._handleContextIntent(h.s, 'clear', '');
+      assert.deepStrictEqual(h.written, [cmd], `ENTER: ${agentType} has a clear command`);
+      assert.strictEqual(h.m._ctxHoldMap().has('a'), false);
+      assert.strictEqual(h.m._injectHoldReason(h.s), null);
+      h.m._injectText(h.s, 'AFTER-CLEAR', { parkable: true });
+      assert.deepStrictEqual(h.written, [cmd, 'AFTER-CLEAR']);
+    } finally { mock.timers.reset(); }
+  });
+}
+
+test('the pre-arm reads the line as the dispatcher does: an emphasised clear is pre-armed', () => {
+  const h = rig();
+  h.m._preArmCtxHold(h.s, 'done\n**[agent:context clear]**');
+  assert.strictEqual(h.s._ctxPreArmed, 'clear');
+  assert.strictEqual(h.m._injectHoldReason(h.s), 'clear-window');
+});
+
+test('a failed clear whose own session-id edge arrives late completes and releases', () => {
+  mock.timers.enable({ apis: ['setTimeout'] });
+  try {
+    const h = rig();
+    h.m._handleContextIntent(h.s, 'clear', '');
+    h.m._failCtxHold('a', h.m._ctxHoldMap().get('a').gen, 'test');
+    assert.strictEqual(h.m.ctxHoldState('a'), 'clear did not complete');
+    h.s._leftSessionIds = ['sid-A'];
+    assert.strictEqual(h.m._ctxHoldSessionEdge(h.s, 'sid-A', 'sid-B'), 'released');
+    assert.strictEqual(h.m._ctxHoldReason(h.s), null);
+    assert.strictEqual(h.s.needsAttention, null);
+  } finally { mock.timers.reset(); }
+});
+
+test('a failed hold keeps its attention across a turn start and is a request row', () => {
+  mock.timers.enable({ apis: ['setTimeout'] });
+  try {
+    const h = rig();
+    h.m._handleContextIntent(h.s, 'clear', '');
+    h.m._failCtxHold('a', h.m._ctxHoldMap().get('a').gen, 'test');
+    h.m._emitActivity('a', 'thinking');
+    assert.strictEqual(h.s.needsAttention && h.s.needsAttention.kind, 'context-stuck');
+    assert.strictEqual(h.s.needsAttention.message, 'clear did not complete');
+  } finally { mock.timers.reset(); }
+});
+
+test('the row shows the transition in words while it is in flight', () => {
+  mock.timers.enable({ apis: ['setTimeout'] });
+  try {
+    const h = rig();
+    const rows = [];
+    h.m._sendToSession = (_n, ch, _name, c) => { if (ch === 'session-compacting') rows.push(c && c.trigger); };
+    h.m._handleContextIntent(h.s, 'clear', '');
+    assert.deepStrictEqual(h.m.ctxHoldBadge('a').trigger, 'clearing');
+    h.s._leftSessionIds = ['sid-A'];
+    h.m._ctxHoldSessionEdge(h.s, 'sid-A', 'sid-B');
+    assert.deepStrictEqual(rows, ['clearing', null]);
+    assert.strictEqual(h.m.ctxHoldBadge('a'), null);
+  } finally { mock.timers.reset(); }
+});
+
+test('a wire session rotation is a session-id edge for the hold', () => {
+  mock.timers.enable({ apis: ['setTimeout'] });
+  try {
+    const h = rig();
+    h.m._handleContextIntent(h.s, 'clear', '');
+    h.m._wireSessionCorroborated = () => true;
+    h.m._noteConversationForDigest = () => {};
+    h.m._onWireSessionRotated(h.s, 'a', 'sid-B');
+    assert.strictEqual(h.m._ctxHoldReason(h.s), null);
+  } finally { mock.timers.reset(); }
+});
+
+test('a dropped seat drops its hold record', () => {
+  mock.timers.enable({ apis: ['setTimeout'] });
+  try {
+    const h = rig();
+    h.m._handleContextIntent(h.s, 'clear', '');
+    h.m._dropCtxHold('a');
+    assert.strictEqual(h.m._ctxHoldMap().has('a'), false);
+    assert.strictEqual(rig({ root: h.root }).m._ctxHoldMap().has('a'), false, 'and the file forgets it');
+  } finally { mock.timers.reset(); }
+});
+
+test('a compact accepted while a clear is in flight keeps today\'s path and the clear hold', () => {
+  mock.timers.enable({ apis: ['setTimeout'] });
+  try {
+    const h = rig({ session: { intentSource: 'jsonl' } });
+    h.m._handleContextIntent(h.s, 'clear', '');
+    const gen = h.m._ctxHoldMap().get('a').gen;
+    h.m._handleContextIntent(h.s, 'compact', '');
+    assert.deepStrictEqual(h.written, ['/clear', '/compact']);
+    assert.strictEqual(h.m._ctxHoldMap().get('a').gen, gen);
+    assert.strictEqual(h.m._ctxHoldReason(h.s), 'clear-window');
+  } finally { mock.timers.reset(); }
+});
+
+test('a second reload while one is in flight keeps today\'s drop', () => {
+  mock.timers.enable({ apis: ['setTimeout'] });
+  try {
+    const h = rig();
+    h.m.kill = async () => {};
+    h.m._handleContextIntent(h.s, 'reload', 'first');
+    const gen = h.m._ctxHoldMap().get('a').gen;
+    h.m._handleContextIntent(h.s, 'reload', 'second');
+    assert.strictEqual(h.m._ctxHoldMap().get('a').gen, gen);
+    assert.strictEqual(h.s._reloadInFlight, true);
   } finally { mock.timers.reset(); }
 });
