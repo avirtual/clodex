@@ -598,6 +598,7 @@ function askHost() {
       ? `(box ${m.box.isolation || 'unstamped'}${m.box.imageId ? `, image ${String(m.box.imageId).replace(/^sha256:/, '').slice(0, 12)}` : ''})` : null;
     digest({
       status: m.status, signal: m.signal, stdout: m.stdout, stderr: m.stderr, error: null,
+      recorded: m.output === 'unavailable' ? m.recorded : null,
     }, Date.now() - startedAt, [via, box, m.note].filter(Boolean).join(' ') || null);
   });
   startedIso = nowIso();
@@ -611,21 +612,32 @@ function askHost() {
 if (CHANNEL) askHost();
 else runLocal({});
 
+function recordedTotals(rec) {
+  if (!rec || typeof rec !== 'object' || (rec.outcome !== 'pass' && rec.outcome !== 'fail')) return null;
+  const { pass, fail, tests } = rec;
+  if (![pass, fail, tests].every((n) => Number.isInteger(n) && n >= 0) || pass + fail > tests) return null;
+  return { outcome: rec.outcome, pass, fail, tests };
+}
+
 function digest(res, wallMs, note) {
   const headAfter = gitRead(measure, ['rev-parse', 'HEAD']);
   if (headBefore && headAfter && headAfter !== headBefore) {
     headSuffix = ` (HEAD moved to ${headAfter.slice(0, 9)} during the queue; the suite measured the tree at its start)`;
   }
-  if (note) headSuffix += ` ${note}`;
-
   const stdout = res.stdout || '';
   const stderr = res.stderr || '';
-  const code = res.status;
-  const exitCode = code || 1;
 
   let totals = null;
   const TOTALS_RE = /TOTALS: (\d+) pass, (\d+) fail, (\d+) tests/g;
   for (let m = TOTALS_RE.exec(stdout); m; m = TOTALS_RE.exec(stdout)) totals = m;
+  const recorded = totals ? null : recordedTotals(res.recorded);
+  if (recorded) {
+    totals = [null, recorded.pass, recorded.fail, recorded.tests];
+    headSuffix += ' (output unavailable; the counts are the runner\'s record)';
+  }
+  if (note) headSuffix += ` ${note}`;
+  const code = recorded ? (recorded.outcome === 'pass' && recorded.fail === 0 ? 0 : res.status || 1) : res.status;
+  const exitCode = code || 1;
 
   const hay = `${stdout}\n${stderr}`;
 

@@ -897,6 +897,68 @@ test('cache eviction never runs while a job is live', async (t) => {
   assert.strictEqual(fs.existsSync(path.join(f.work, rel)), false);
 });
 
+test('t2480: eviction sets a cache entry aside as a .gone~ sibling before removing it, and a boot after a quit mid-removal unindexes it and sweeps the sibling', async (t) => {
+  const clock = 30 * 24 * 3600 * 1000;
+  const removals = [];
+  const f = await fixture(t, {
+    now: () => clock,
+    runnerOver: { removeTree: (p) => new Promise((resolve) => { removals.push({ p, resolve }); }) },
+  });
+  await drain();
+  const repoDir = path.join(f.work, 'deps', f.snap.repoKey);
+  const rel = path.join('deps', f.snap.repoKey, 'a'.repeat(64));
+  fs.mkdirSync(path.join(f.work, rel, 'node_modules'), { recursive: true });
+  fs.writeFileSync(path.join(f.work, rel, 'node_modules', 'x.js'), 'x\n');
+  fs.writeFileSync(path.join(f.work, `${rel}.json`), '{}');
+  const cacheFile = path.join(f.root, 'suite-runner', 'cache.json');
+  fs.writeFileSync(cacheFile, JSON.stringify({ [rel]: 0 }));
+  const result = await f.runner.tick();
+  await drain();
+  assert.deepStrictEqual([result.ran, result.removed, removals.length], [true, [rel], 2], 'the tick ends while both removals are still pending');
+  const [goneDir, goneMarker] = removals.map((r) => r.p);
+  assert.deepStrictEqual([path.dirname(goneDir), path.basename(goneDir).startsWith('.gone~'), fs.existsSync(path.join(goneDir, 'node_modules', 'x.js')), fs.existsSync(path.join(f.work, rel))],
+    [repoDir, true, true, false]);
+  assert.deepStrictEqual([path.dirname(goneMarker), fs.existsSync(path.join(f.work, `${rel}.json`)), JSON.parse(fs.readFileSync(cacheFile, 'utf8'))], [repoDir, false, {}]);
+  f.runner.close();
+  const goneMirror = path.join(f.work, 'mirrors', '.gone~0123456789ab');
+  fs.mkdirSync(goneMirror);
+  const runner = f.make({ removeTree: (p) => { removals.push({ p }); return Promise.resolve(); } });
+  t.after(() => runner.close());
+  await drain();
+  assert.deepStrictEqual(removals.slice(2).map((r) => r.p).sort(), [goneMirror, goneDir, goneMarker].sort());
+  for (const r of removals.slice(0, 2)) r.resolve();
+});
+
+test('t2480: a job submitted while the cache size walk is in flight stops eviction before any entry goes', async (t) => {
+  const clock = 30 * 24 * 3600 * 1000;
+  const f = await fixture(t, { now: () => clock });
+  await drain();
+  await f.runner.submit(f.body('warm'));
+  await f.runner.cancel('warm');
+  assert.strictEqual((await f.runner.poll(['warm'])).jobs[0].state, 'done', 'ENTER: nothing is live before the tick');
+  const cacheFile = path.join(f.root, 'suite-runner', 'cache.json');
+  const rels = ['a', 'b'].map((c) => path.join('deps', f.snap.repoKey, c.repeat(64)));
+  for (const rel of rels) {
+    fs.mkdirSync(path.join(f.work, rel), { recursive: true });
+    fs.writeFileSync(path.join(f.work, `${rel}.json`), '{}');
+  }
+  fs.writeFileSync(cacheFile, JSON.stringify({ [rels[0]]: 0, [rels[1]]: 1 }));
+  const ticking = f.runner.tick();
+  const submitted = f.runner.submit(f.body('mid-walk'));
+  assert.deepStrictEqual(await ticking, { ran: false });
+  assert.strictEqual((await submitted).state, 'awaiting-pack', 'ENTER: the job went live during the walk');
+  assert.deepStrictEqual([rels.map((rel) => fs.existsSync(path.join(f.work, rel))), Object.keys(JSON.parse(fs.readFileSync(cacheFile, 'utf8')))], [[true, true], rels]);
+});
+
+test('t2480: the cache size walk does no synchronous filesystem call', () => {
+  const src = fs.readFileSync(SOURCE, 'utf8');
+  const start = src.indexOf('async function bytesOf(');
+  assert.ok(start >= 0, 'ENTER: bytesOf is found and async');
+  const body = src.slice(start, src.indexOf('\n}\n', start));
+  assert.ok(body.includes('fs.promises.readdir'), `ENTER: the body is the walk; got ${body}`);
+  assert.doesNotMatch(body, /Sync\(/);
+});
+
 test('runJob makes no git call after isolation.prepare', () => {
   const src = fs.readFileSync(SOURCE, 'utf8');
   const start = src.indexOf('async function runJob(');
@@ -1288,6 +1350,45 @@ test('recovery with the box removed keeps an interrupted box job dir until a swe
   r2.close();
   await boot({ box: null, boxSweep: async () => { sweeps.push('pass'); } });
   assert.deepStrictEqual([sweeps, fs.existsSync(cutDir), fs.existsSync(holdFile)], [['fail', 'fail', 'pass'], false, false]);
+});
+
+test('t2480: recovery reaps a job work dir no stored job maps to through the isolation, and keeps a retained job\'s dir', async (t) => {
+  const reaped = [];
+  const f = await fixture(t, { wrap: (base) => ({ ...base, reap: async (jobDir, ...rest) => { await base.reap(jobDir, ...rest); reaped.push(path.basename(jobDir)); } }) });
+  f.runner.close();
+  storeJob(f, 'kept-done', 'done', { endedAt: Date.now(), exit: { code: 0, signal: null } });
+  const keptDir = jobPaths(f.work, 'kept-done').dir;
+  fs.mkdirSync(path.join(keptDir, 'tree'), { recursive: true });
+  const orphan = path.join(f.work, 'jobs', 'deadbeef');
+  fs.mkdirSync(path.join(orphan, 'tree', 'sub'), { recursive: true });
+  fs.writeFileSync(path.join(orphan, 'tree', 'sub', 'x.txt'), 'x\n');
+  fs.chmodSync(path.join(orphan, 'tree', 'sub'), 0o500);
+  const runner = f.make();
+  t.after(() => runner.close());
+  for (let i = 0; i < 50 && !reaped.length; i++) await drain();
+  assert.deepStrictEqual((await runner.poll(['kept-done'])).jobs.map((j) => [j.id, j.state]), [['kept-done', 'done']]);
+  assert.deepStrictEqual([reaped, fs.existsSync(orphan), fs.existsSync(keptDir)], [['deadbeef'], false, true]);
+});
+
+test('t2480: an orphan job work dir found while a box hold is in force joins the hold and goes when a sweep confirms', async (t) => {
+  const fb = fakeBox();
+  const f = await fixture(t, { runnerOver: { box: fb.box } });
+  f.runner.close();
+  storeJob(f, 'cut-box', 'running', { isolation: 'container', identity: BOX_IDENTITY });
+  const cutDir = jobPaths(f.work, 'cut-box').dir;
+  fs.mkdirSync(path.join(cutDir, 'tree'), { recursive: true });
+  const orphan = path.join(f.work, 'jobs', 'deadbeef');
+  fs.mkdirSync(path.join(orphan, 'tree'), { recursive: true });
+  const holdFile = path.join(f.root, 'suite-runner', 'box-hold.json');
+  const r1 = f.make({ box: null });
+  await drain();
+  r1.close();
+  assert.deepStrictEqual([fs.existsSync(orphan), JSON.parse(fs.readFileSync(holdFile, 'utf8'))],
+    [true, { why: 'no box is configured to confirm cleanup', dirs: [cutDir, orphan] }]);
+  const r2 = f.make({ box: null, boxSweep: async () => {} });
+  t.after(() => r2.close());
+  await drain();
+  assert.deepStrictEqual([fs.existsSync(orphan), fs.existsSync(cutDir), fs.existsSync(holdFile)], [false, false, false]);
 });
 
 test('a box test exec whose setup path cannot be mounted ends setup-failed with the reason, at setup or at the test exec, and exit 125 or a CLI error ends box-failed', async (t) => {

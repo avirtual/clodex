@@ -249,14 +249,20 @@ function makeReadOnly(p, io = fs) {
   io.chmodSync(p, (st.mode & 0o555) | 0o444 | (st.isDirectory() ? 0o111 : 0));
 }
 
-function bytesOf(p) {
+async function bytesOf(p) {
   let st;
-  try { st = fs.lstatSync(p); } catch { return 0; }
+  try { st = await fs.promises.lstat(p); } catch { return 0; }
   if (!st.isDirectory()) return st.size;
+  let names;
+  try { names = await fs.promises.readdir(p); } catch { return 0; }
   let total = 0;
-  for (const name of fs.readdirSync(p)) total += bytesOf(path.join(p, name));
+  for (const name of names) total += await bytesOf(path.join(p, name));
   return total;
 }
+
+const GONE = '.gone~';
+const isGone = (name) => name.startsWith(GONE);
+const goneSibling = (p) => path.join(path.dirname(p), `${GONE}${crypto.randomBytes(6).toString('hex')}`);
 
 function utf8Slice(buf) {
   let start = 0;
@@ -911,20 +917,40 @@ function createSuiteRunner({
         else reaps.push(Promise.resolve().then(() => isolation.reap(jobWork(id))).catch((e) => log(`suite-runner: reap ${id} after restart failed: ${e.message}`)));
       }
     }
-    if ((box && !box.labelsOnly) || boxed.length || boxHold) reaps.push(recoverBox(boxed).catch((e) => log(`suite-runner: box recovery failed: ${e.message}`)));
+    const boxStep = (box && !box.labelsOnly) || boxed.length || boxHold ? recoverBox(boxed).catch((e) => log(`suite-runner: box recovery failed: ${e.message}`)) : null;
+    if (boxStep) reaps.push(boxStep);
+    const orphans = orphanDirs();
+    if (orphans.length) reaps.push(Promise.resolve(boxStep).then(() => reapOrphans(orphans)));
     if (buildHold) reaps.push(sweepBuild());
     return Promise.all(reaps);
+  }
+
+  function orphanDirs() {
+    const root = path.join(work, 'jobs');
+    const owned = new Set([...jobs.keys()].map((id) => path.basename(jobWork(id))));
+    return fs.readdirSync(root).filter((name) => !owned.has(name)).map((name) => path.join(root, name));
+  }
+
+  async function reapOrphans(dirs) {
+    if (boxHold) { enterHold(boxHold.why, dirs); return; }
+    for (const dir of dirs.filter((d) => fs.existsSync(d))) {
+      try { await isolation.reap(dir); } catch (e) { log(`suite-runner: reap of orphan ${dir} failed: ${e.message}`); }
+    }
   }
 
   function reconcile() {
     const cache = readJson(cacheFile, {});
     const kept = {};
     for (const [rel, at] of Object.entries(cache)) if (rel.startsWith(BOX_KEY) || fs.existsSync(path.join(work, rel))) kept[rel] = at;
+    const mirrorsRoot = path.join(work, 'mirrors');
+    for (const name of fs.readdirSync(mirrorsRoot).filter(isGone)) sweepGone(path.join(mirrorsRoot, name));
     const depsRoot = path.join(work, 'deps');
     for (const repo of fs.readdirSync(depsRoot)) {
       const dir = path.join(depsRoot, repo);
       if (!fs.lstatSync(dir).isDirectory()) continue;
-      const names = fs.readdirSync(dir);
+      const listed = fs.readdirSync(dir);
+      for (const name of listed.filter(isGone)) sweepGone(path.join(dir, name));
+      const names = listed.filter((name) => !isGone(name));
       const isDir = (name) => fs.lstatSync(path.join(dir, name)).isDirectory();
       const dirs = new Set();
       for (const name of names.filter(isDir)) {
@@ -1286,7 +1312,7 @@ function createSuiteRunner({
     const deps = path.join(work, 'deps');
     for (const repo of (fs.existsSync(deps) ? fs.readdirSync(deps) : [])) {
       for (const name of fs.readdirSync(path.join(deps, repo))) {
-        if (name.endsWith('.json')) continue;
+        if (name.endsWith('.json') || isGone(name)) continue;
         const entry = path.join(deps, repo, name);
         out.push({ rel: path.join('deps', repo, name), paths: [entry, `${entry}.json`] });
       }
@@ -1323,6 +1349,19 @@ function createSuiteRunner({
     return gone.map((im) => im.tags[0] || im.id);
   }
 
+  function evict(p) {
+    const gone = goneSibling(p);
+    try { fs.renameSync(p, gone); } catch (e) {
+      if (e.code === 'ENOENT') return;
+      throw e;
+    }
+    sweepGone(gone);
+  }
+
+  function sweepGone(p) {
+    Promise.resolve().then(() => removeTree(p)).catch((e) => log(`suite-runner: removing ${p} failed: ${e.message}`));
+  }
+
   async function maintain() {
     if (recovering || maintenance || anyLive() || active.size) return { ran: false };
     maintenance = (async () => {
@@ -1333,12 +1372,18 @@ function createSuiteRunner({
       }
       if (anyLive() || active.size) return { ran: false };
       const cache = readJson(cacheFile, {});
-      const entries = cacheEntries().map((e) => ({ ...e, usedAt: cache[e.rel] || 0, bytes: e.paths.reduce((n, p) => n + bytesOf(p), 0) }));
+      const entries = [];
+      for (const e of cacheEntries()) {
+        let bytes = 0;
+        for (const p of e.paths) bytes += await bytesOf(p);
+        entries.push({ ...e, usedAt: cache[e.rel] || 0, bytes });
+      }
+      if (anyLive() || active.size) return { ran: false };
       let total = entries.reduce((n, e) => n + e.bytes, 0);
       const removed = [];
       for (const e of entries.sort((a, b) => a.usedAt - b.usedAt)) {
         if (now() - e.usedAt > lim.cacheIdleMs || total > lim.cacheMaxBytes) {
-          for (const p of e.paths) forceRemove(p);
+          for (const p of e.paths) evict(p);
           delete cache[e.rel];
           total -= e.bytes;
           removed.push(e.rel);
