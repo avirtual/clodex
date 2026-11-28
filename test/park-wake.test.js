@@ -31,7 +31,7 @@ function rig(t, { hours = 0, home = mkTmpRoot('clodex-pw-home-'), PENDING_DIR = 
     draftChunkSignal: require('../proxy-util').draftChunkSignal,
     getPeerManager: () => null,
     isHumanPtyInput: require('../proxy-util').isHumanPtyInput,
-    randBase36: (n) => String(++idN).padStart(n, 'p'), parkIdInUse: require('../pending-store').parkIdInUse,
+    randBase36: (n) => String(++idN).padStart(n, 'p'), parkIdInUse: require('../pending-store').parkIdInUse, claimParkedById,
   });
   m.sessions.set('root', { name: 'root', agentType: 'claude', activityState: 'idle', createdAt: 1, pty: { write() {} } });
   return { m, injected, logs, settings, home, PENDING_DIR, root: () => m.sessions.get('root') };
