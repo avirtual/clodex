@@ -288,7 +288,7 @@ test('t2466: suiteRunnerRecordFromForm passes exclusive through and omits it whe
 test('t2483: the markup carries the box options textarea, its label field and the exact help text', () => {
   assert.match(section(), /<textarea id="prefs-suite-runner-boxArgs"[^>]*><\/textarea>/);
   assert.match(section(), /<input type="text" id="prefs-suite-runner-boxArgsLabel"/);
-  assert.ok(section().includes('<p class="hint-text">Extra options added to docker run for every test box on this machine, one per line with the value attached (for example --device=/dev/dri). They apply to the code of every team this runner accepts jobs from. Other machines see only the label and a fingerprint.</p>'));
+  assert.ok(section().includes('<p class="hint-text">Extra options added to docker run for every test box on this machine, one per line with the value attached (for example --device=/dev/dri). They apply to the code of every team this runner accepts jobs from. Other machines see only the label and a fingerprint. They have no effect on jobs this runner runs without a box.</p>'));
 });
 
 test('t2483: suiteRunnerRecordFromForm reads one box option per line and the label, and omits both when the form does not name them', () => {
