@@ -494,3 +494,36 @@ test('t2363: runArgv binds each share read-only under /job/tree/.shares right af
   assert.throws(() => runArgv({ image: IMAGE, runnerKey: RUNNER_KEY, n: 1, uid: 501, gid: 20, jobDir: '/w/jobs/abcd1234', job: ARM_JOB, argv: ['true'], env: {}, shares: [{ name: 'a', src: '/srv/a,dst=/x' }] }),
     /share not mountable: "a"/);
 });
+
+test('t2470: reap removes the job dir through a pending async rm with no sync walk, and a failed rm rejects as a removal naming the dir', async (t) => {
+  const realFs = require('../resolve-fs').resolveFs();
+  const root = mkTmpRoot('suite-box-late-');
+  t.after(() => { require('node:child_process').spawnSync('chmod', ['-R', 'u+w', root]); realFs.rmSync(root, { recursive: true, force: true }); });
+  const jobDir = path.join(root, 'jobs', 'abcd1234');
+  realFs.mkdirSync(path.join(jobDir, 'tree', 'ro'), { recursive: true });
+  realFs.chmodSync(path.join(jobDir, 'tree', 'ro'), 0o555);
+  const syncs = [];
+  const watch = (name) => (p, ...rest) => { if (String(p).startsWith(jobDir)) syncs.push(name); return realFs[name](p, ...rest); };
+  const rms = [];
+  let fail = null;
+  const lateFs = {
+    ...realFs,
+    lstatSync: watch('lstatSync'), readdirSync: watch('readdirSync'), chmodSync: watch('chmodSync'), rmSync: watch('rmSync'),
+    promises: { ...realFs.promises, rm: (p, o) => new Promise((resolve, reject) => { rms.push({ p, land: () => (fail ? Promise.reject(fail) : realFs.promises.rm(p, o)).then(resolve, reject) }); }) },
+  };
+  const { boxIsolation: box } = loadBoxWith({ fs: lateFs, 'original-fs': lateFs });
+  const adapterLate = box({ image: IMAGE, work: root, stateDir: STATE, uid: 501, gid: 20, docker: stubDocker(() => ({ stdout: '' })) });
+  let reaped = false;
+  const reaping = adapterLate.reap(jobDir, null, ARM_JOB).then(() => { reaped = true; });
+  for (let i = 0; i < 20 && !rms.length; i++) await new Promise((r) => setImmediate(r));
+  assert.deepStrictEqual([rms.map((r) => r.p), reaped, realFs.existsSync(jobDir)], [[jobDir], false, true], 'ENTER: the rm is pending');
+  await rms[0].land();
+  await reaping;
+  assert.deepStrictEqual([reaped, realFs.existsSync(jobDir), syncs], [true, false, []]);
+  realFs.mkdirSync(jobDir, { recursive: true });
+  fail = new Error('EACCES: permission denied');
+  const failing = adapterLate.reap(jobDir, null, ARM_JOB);
+  for (let i = 0; i < 20 && rms.length < 2; i++) await new Promise((r) => setImmediate(r));
+  rms[1].land().catch(() => {});
+  await assert.rejects(failing, (e) => e.removal === true && e.message === `removing ${jobDir} failed: EACCES: permission denied`);
+});
