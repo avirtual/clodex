@@ -441,6 +441,12 @@ const BOX_RETRY_LOAD_ROWS = [
   ['since and an unconfirmed job', { attempts: 1, nextAt: 5, lastEndedAt: 4, inFlight: false, since: 3, unconfirmed: { jobId: 'j1', peer: 'p1', wire: 'pull' } }, { attempts: 1, nextAt: 5, lastEndedAt: 4, inFlight: false, since: 3, unconfirmed: { jobId: 'j1', peer: 'p1', wire: 'pull' } }],
   ['a non-number since', { attempts: 1, nextAt: 5, lastEndedAt: 4, inFlight: false, since: '3' }, { attempts: 1, nextAt: 5, lastEndedAt: 4, inFlight: false }],
   ['a malformed unconfirmed job', { attempts: 1, nextAt: 5, lastEndedAt: 4, inFlight: false, unconfirmed: { jobId: 7 } }, undefined],
+  ['t2472: a not-admitted reason, its told list and a refusal', { attempts: 1, nextAt: 5, lastEndedAt: 4, inFlight: false, notAdmitted: { reason: 'runner r not connected', at: 5 }, told: ['runner r not connected', 7], refused: 'runner refused the job: queue full' },
+    { attempts: 1, nextAt: 5, lastEndedAt: 4, inFlight: false, notAdmitted: { reason: 'runner r not connected', at: 5 }, told: ['runner r not connected'], refused: 'runner refused the job: queue full' }],
+  ['t2472: a queued run with its job', { attempts: 0, nextAt: 5, lastEndedAt: 4, inFlight: true, run: { state: 'queued', since: 6, runner: 'r', jobId: 'j1', peer: 'p1', wire: 'push', cancelAt: 9, x: 1 } },
+    { attempts: 0, nextAt: 5, lastEndedAt: 4, inFlight: true, run: { state: 'queued', since: 6, runner: 'r', jobId: 'j1', peer: 'p1', wire: 'push', cancelAt: 9 } }],
+  ['t2472: a malformed run and not-admitted are dropped, the retry kept', { attempts: 0, nextAt: 5, lastEndedAt: 4, inFlight: true, run: { state: 'done', since: 6, runner: 'r' }, notAdmitted: { reason: '' } },
+    { attempts: 0, nextAt: 5, lastEndedAt: 4, inFlight: true }],
 ];
 
 const BYPASS = { by: 'lead', reason: 'runner gone for a day', at: '2026-11-23T10:00:00.000Z', sha: 'a'.repeat(40) };

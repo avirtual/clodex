@@ -336,9 +336,22 @@ function boxRetryOf(v) {
   const job = u && typeof u === 'object' && typeof u.jobId === 'string' && u.jobId && typeof u.peer === 'string' && u.peer
     ? { jobId: u.jobId, peer: u.peer, wire: u.wire === 'pull' ? 'pull' : 'push' } : null;
   if (u !== undefined && !job) return null;
+  const str = (x) => typeof x === 'string' && x !== '';
+  const na = v.notAdmitted;
+  const notAdmitted = na && typeof na === 'object' && str(na.reason) && num(na.at) ? { reason: na.reason, at: na.at } : null;
+  const told = Array.isArray(v.told) ? v.told.filter(str) : [];
+  const r = v.run;
+  const run = r && typeof r === 'object' && (r.state === 'queued' || r.state === 'running') && num(r.since) && str(r.runner)
+    ? {
+      state: r.state, since: r.since, runner: r.runner,
+      ...(str(r.jobId) && str(r.peer) ? { jobId: r.jobId, peer: r.peer, wire: r.wire === 'pull' ? 'pull' : 'push' } : {}),
+      ...(num(r.cancelAt) ? { cancelAt: r.cancelAt } : {}),
+    } : null;
   return {
     attempts: v.attempts, nextAt: v.nextAt, lastEndedAt: v.lastEndedAt, inFlight: v.inFlight,
     ...(num(v.since) ? { since: v.since } : {}), ...(job ? { unconfirmed: job } : {}),
+    ...(notAdmitted ? { notAdmitted } : {}), ...(told.length ? { told } : {}),
+    ...(str(v.refused) ? { refused: v.refused } : {}), ...(run ? { run } : {}),
   };
 }
 
