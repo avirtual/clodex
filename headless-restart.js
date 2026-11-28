@@ -1,6 +1,6 @@
 'use strict';
 
-const { createIdleWaiter, giveUpBody } = require('./restart-waiter');
+const { createIdleWaiter, giveUpBody, suiteJobsPhrase } = require('./restart-waiter');
 
 const SUPERVISED_ENV = 'CLODEX_SUPERVISED';
 const DECLINED = new Set(['0', 'false', 'no', 'off']);
@@ -60,9 +60,9 @@ function cutClause(n) {
 }
 
 function restartNowLine(cut) {
-  const n = Number.isInteger(cut) && cut > 0 ? cut : 0;
+  const { text, total } = suiteJobsPhrase(cut);
   const base = 'restart requested — shutting down, exit 64 for supervisor relaunch';
-  return n ? `${base}; ${cutClause(n)}` : base;
+  return total ? `${base}; cutting ${text}` : base;
 }
 
 function signalCutLine(sig, cut) {

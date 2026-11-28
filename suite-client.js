@@ -17,6 +17,7 @@ const BUILD_BUDGET_MS = 25 * 60 * 1000;
 const SNAPSHOT_WAIT_MS = 2000;
 const LOST_AFTER_MS = 150000;
 const RUNNER_KEEP_MS = 24 * 60 * 60 * 1000;
+const RECOVER_IDS_MAX = 20;
 const RECOVERED_REASON = 'recovered after a host restart';
 const IN_FLIGHT_REASON = 'host restarted while the job was in flight';
 const OUTPUT_READ_MS = LOST_AFTER_MS;
@@ -416,6 +417,7 @@ function createSuiteClient({
     ctx.failFast = false;
     ctx.fallback = null;
     ctx.moveAt = now() + MOVE_CHECK_MS;
+    markResubmitted(ctx);
     try { ctx.onSubmitted({ jobId, attempt }); } catch {}
     if (ctx.stopWhy) {
       await cancel(ctx.peer, jobId, ctx.wire);
@@ -496,6 +498,15 @@ function createSuiteClient({
     if (ctx.started) return;
     ctx.started = true;
     ctx.startedAt = job.state === 'done' && job.queueMs != null ? ctx.queuedAt + job.queueMs : now();
+    writeStartRow(ctx);
+  }
+
+  function markResubmitted(ctx) {
+    if (ctx.ledgerJobId != null && ctx.ledgerJobId !== ctx.jobId) writeStartRow(ctx);
+  }
+
+  function writeStartRow(ctx) {
+    ctx.ledgerJobId = ctx.jobId;
     appendLedger({
       id: ctx.id, phase: 'start', where: ctx.where, runner: ctx.peer, wire: ctx.wire, jobId: ctx.jobId, attempt: ctx.attempt,
       kind: ctx.kind, scope: ctx.scope, ...(ctx.named ? { named: ctx.named } : {}), ...(ctx.namedFiles || {}), team: ctx.team, ticket: ctx.ticket, seat: ctx.seat,
@@ -871,10 +882,18 @@ function createSuiteClient({
     return out;
   }
 
-  async function recoverRun(row) {
+  async function recoverRuns(rows) {
+    const { runner, wire } = rows[0];
+    const ids = rows.map((row) => encodeURIComponent(row.jobId)).join(',');
     const r = await Promise.resolve()
-      .then(() => once(row.runner, (c) => c.suiteAsk('GET', `/api/suite/jobs?ids=${encodeURIComponent(row.jobId)}&wait=0`, null, LOST_AFTER_MS), row.wire))
+      .then(() => once(runner, (c) => c.suiteAsk('GET', `/api/suite/jobs?ids=${ids}&wait=0`, null, LOST_AFTER_MS), wire))
       .catch((e) => ({ status: 0, body: null, error: e && e.message ? e.message : String(e) }));
+    const written = [];
+    for (const row of rows) written.push(await recoverRun(row, r));
+    return written;
+  }
+
+  async function recoverRun(row, r) {
     let outcome = 'lost';
     let reason;
     let rec = null;
@@ -912,8 +931,16 @@ function createSuiteClient({
     recovering = (async () => {
       if (!ledgerFile) return [];
       const open = openRemoteRuns(ledgerTail(ledgerFile), { bootAt, since: now() - RUNNER_KEEP_MS }).filter((row) => !runs.has(row.id));
+      const groups = new Map();
+      for (const row of open) {
+        const key = JSON.stringify([row.runner, row.wire]);
+        if (!groups.has(key)) groups.set(key, []);
+        groups.get(key).push(row);
+      }
       const written = [];
-      for (const row of open) written.push(await recoverRun(row));
+      for (const group of groups.values()) {
+        for (let i = 0; i < group.length; i += RECOVER_IDS_MAX) written.push(...await recoverRuns(group.slice(i, i + RECOVER_IDS_MAX)));
+      }
       return written;
     })().finally(() => { recovering = null; });
     return recovering;
@@ -1484,4 +1511,4 @@ function createChannelHost({
   };
 }
 
-module.exports = { createSuiteClient, createChannelHost, OUTPUT_UNREAD_NOTICE, OUTPUT_READ_MS, route, jobEnvRefusal, phaseEnv, localPhaseEnv, localPhaseDropped, envDroppedLine, envDroppedRow, ENV_DROPPED_MAX, ENV_DROPPED_NAME_MAX, PHASE_ENV_KEYS, lastTotals, localHalf, failingNames, agreement, boxVerdict, fallbackOf, FALLBACK_CODES, pickRunner, runnerLoad, pickRecord, consideredOf, waitNote, ledgerPicks, ledgerFiles, LEDGER_FILES_MAX, LEDGER_PATH_MAX, CONSIDERED_MAX, pickLine, poolNote, aloneNote, HAND_QUEUE_MS, HAND_RUN_MS, handSlackMs, handExecSlackMs, HUNG_RE, BUILD_BUDGET_MS, LOST_AFTER_MS };
+module.exports = { createSuiteClient, createChannelHost, OUTPUT_UNREAD_NOTICE, OUTPUT_READ_MS, route, jobEnvRefusal, phaseEnv, localPhaseEnv, localPhaseDropped, envDroppedLine, envDroppedRow, ENV_DROPPED_MAX, ENV_DROPPED_NAME_MAX, PHASE_ENV_KEYS, lastTotals, localHalf, failingNames, agreement, boxVerdict, fallbackOf, FALLBACK_CODES, pickRunner, runnerLoad, pickRecord, consideredOf, waitNote, ledgerPicks, ledgerFiles, LEDGER_FILES_MAX, LEDGER_PATH_MAX, CONSIDERED_MAX, pickLine, poolNote, aloneNote, HAND_QUEUE_MS, HAND_RUN_MS, handSlackMs, handExecSlackMs, HUNG_RE, BUILD_BUDGET_MS, LOST_AFTER_MS, RECOVER_IDS_MAX };

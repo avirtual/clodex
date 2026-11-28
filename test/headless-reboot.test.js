@@ -363,12 +363,21 @@ test('t2401: the forced headless restart names the suite jobs it cuts', () => {
   assert.strictEqual(restartNowLine(2), 'restart requested — shutting down, exit 64 for supervisor relaunch; cutting 2 suite jobs this machine is running for other teams');
 });
 
+test('t2478: the forced headless restart names local and outbound jobs apart', () => {
+  const away = { id: 'x', team: 'avh', ticket: 't2108', kind: 'verify', runner: 'work' };
+  assert.strictEqual(restartNowLine([{ id: 'j1', team: 'alpha' }]), 'restart requested — shutting down, exit 64 for supervisor relaunch; cutting 1 suite job this machine is running for other teams');
+  assert.strictEqual(restartNowLine([away]), 'restart requested — shutting down, exit 64 for supervisor relaunch; cutting 1 run on work (avh t2108 verify)');
+  assert.strictEqual(restartNowLine([{ id: 'j1', team: 'alpha' }, away]),
+    'restart requested — shutting down, exit 64 for supervisor relaunch; cutting 1 suite job this machine is running for other teams and 1 run on work (avh t2108 verify)');
+  assert.strictEqual(restartNowLine([]), 'restart requested — shutting down, exit 64 for supervisor relaunch');
+});
+
 test('t2401: headless-main.js feeds the waiter the runner jobs and fence, sets the reboot-reply seam, and logs the cut on restartNow', () => {
   const src = seamNames('headless-main.js');
   assert.match(src, /suiteJobs:\s*\(\)\s*=>\s*engine\.suiteRestartJobs\(\),/);
   assert.match(src, /fence:\s*\(on\)\s*=>\s*engine\.fenceSuiteRunner\(on\),/);
   assert.match(src, /restartWaitsForSuite:\s*true,/);
-  assert.match(src, /function restartNow\(\) \{\s*let cut = 0;\s*try \{ cut = engine\.suiteRestartJobs\(\)\.length; \} catch \{\}\s*log\.info\('app', restartNowLine\(cut\)\);/);
+  assert.match(src, /function restartNow\(\) \{\s*let cut = \[\];\s*try \{ cut = engine\.suiteRestartJobs\(\); \} catch \{\}\s*log\.info\('app', restartNowLine\(cut\)\);/);
 });
 
 test('t2401: main.js routes before-quit through the quit guard first, and restarts pass it', () => {
@@ -377,7 +386,7 @@ test('t2401: main.js routes before-quit through the quit guard first, and restar
   assert.match(src, /function restartClodex\(\) \{\s*quitGuard\.passThrough\(\);/);
   assert.match(src, /fence:\s*\(on\)\s*=>\s*quitGuard\.restartFence\(on\),/);
   assert.match(src, /ask:\s*\(model\)\s*=>\s*dialog\.showMessageBox\(model\),/);
-  assert.match(src, /body:\s*quitGiveUpBody\(n\)/);
+  assert.match(src, /notify: \(jobs\) => \{[\s\S]*?body:\s*quitGiveUpBody\(jobs\)/);
 });
 
 test('t2407: a SIGTERM/SIGINT names the suite jobs it cuts, and says nothing when there are none', () => {

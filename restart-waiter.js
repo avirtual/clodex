@@ -42,8 +42,8 @@ function classifyRestart(sessions) {
 // joined a wait in progress did not wait the full cap.
 function giveUpBody(names, { suiteJobs = 0, sessionsBusy = true } = {}) {
   const asked = (Array.isArray(names) ? names : []).filter(Boolean);
-  const n = Number.isInteger(suiteJobs) && suiteJobs > 0 ? suiteJobs : 0;
-  const jobs = `${n} suite job${n === 1 ? '' : 's'} this machine is running for other teams did not finish`;
+  const { text, total: n } = suiteJobsPhrase(suiteJobs);
+  const jobs = `${text} did not finish`;
   const why = !n ? 'Sessions stayed busy' : sessionsBusy ? `Sessions stayed busy and ${jobs}` : jobs.charAt(0).toUpperCase() + jobs.slice(1);
   const base = `${why} — the pending restart was dropped. Try again when work settles.`;
   return asked.length ? `${base} Requested by: ${asked.join(', ')}.` : base;
@@ -98,15 +98,16 @@ function localJobsLine(list) {
 }
 
 function suiteWaitClause(jobs) {
+  const { text, total } = suiteJobsPhrase(jobs);
+  if (!total) return '';
+  return ` and ${text} finish${total === 1 ? 'es' : ''}`;
+}
+
+function suiteJobsPhrase(jobs) {
   const { local, outbound } = splitSuiteJobs(jobs);
   const n = Array.isArray(jobs) ? local.length : Number.isInteger(jobs) && jobs > 0 ? jobs : 0;
-  const parts = [
-    ...(n > 0 ? [`${n} suite job${n === 1 ? '' : 's'} this machine is running for other teams`] : []),
-    ...(outbound.length ? [outboundPhrase(outbound)] : []),
-  ];
-  if (!parts.length) return '';
-  const one = parts.length === 1 && (n || outbound.length) === 1;
-  return ` and ${parts.join(' and ')} finish${one ? 'es' : ''}`;
+  const parts = [...(n > 0 ? [suiteJobsCount(n)] : []), ...(outbound.length ? [outboundPhrase(outbound)] : [])];
+  return { text: parts.join(' and '), total: n + outbound.length };
 }
 
 function restartDetail({ busy = 0, idle = 0, jobs = [] } = {}) {
@@ -209,7 +210,7 @@ function createIdleWaiter({
       let held = [];
       try { held = inFlightRuns() || []; } catch { held = []; }
       const sessionsBusy = classifyRestart(getSessions()).busy > 0 || held.length > 0 || t - lastInputAt() < operatorQuietMs;
-      try { notify(asked, { suiteJobs: liveSuiteJobs().length, sessionsBusy }); } catch {}
+      try { notify(asked, { suiteJobs: liveSuiteJobs(), sessionsBusy }); } catch {}
       drainAbandoned('gave-up');
       setFence(false);
       return;
@@ -296,9 +297,9 @@ function waitingQuitDialog(jobs) {
   };
 }
 
-function quitGiveUpBody(n) {
-  const k = Number.isInteger(n) && n > 0 ? n : 0;
-  return `${k} suite job${k === 1 ? '' : 's'} this machine is running for other teams did not finish within 30 minutes — the quit was dropped. Quit again to choose.`;
+function quitGiveUpBody(jobs) {
+  const { text, total } = suiteJobsPhrase(jobs);
+  return `${total ? text : suiteJobsCount(0)} did not finish within 30 minutes — the quit was dropped. Quit again to choose.`;
 }
 
 function suiteJobsCount(n) {
@@ -382,7 +383,7 @@ function createQuitGuard({
     if (now() - armedAt >= capMs) {
       stopWait();
       hold('quit', false);
-      try { notify(jobs.length); } catch {}
+      try { notify(jobs); } catch {}
       return;
     }
     timer = setTimer(tick, pollMs);
@@ -437,6 +438,6 @@ function createQuitGuard({
 
 module.exports = {
   classifyRestart, createIdleWaiter, giveUpBody, suiteJobsLine, restartDetail, pendingDetail, suiteWaitClause,
-  createQuitGuard, quitDialog, waitingQuitDialog, quitGiveUpBody,
+  createQuitGuard, quitDialog, waitingQuitDialog, quitGiveUpBody, suiteJobsPhrase,
   runnerBusyError, planRemoteRestart,
 };

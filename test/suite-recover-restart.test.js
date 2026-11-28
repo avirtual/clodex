@@ -6,7 +6,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { mkTmpRoot } = require('./lib/tmp-roots');
 const { createSuiteClient, LOST_AFTER_MS, ledgerPicks } = require('../suite-client');
-const { createIdleWaiter, suiteWaitClause, restartDetail, pendingDetail } = require('../restart-waiter');
+const { createIdleWaiter, suiteWaitClause, restartDetail, pendingDetail, giveUpBody, quitGiveUpBody, createQuitGuard } = require('../restart-waiter');
 
 const BOOT = Date.parse('2026-11-28T10:00:00.000Z');
 const SWEEP = BOOT + 60000;
@@ -263,7 +263,8 @@ test('t2475: at the cap an outbound run still in flight drops the restart, it is
   const { clock, events, waiter } = waiterOn(run.client);
   waiter.arm();
   clock.advance(31 * 60_000);
-  assert.deepStrictEqual(events, [['gave-up', { suiteJobs: 1, sessionsBusy: false }]]);
+  assert.deepStrictEqual(events, [['gave-up', { suiteJobs: run.client.outboundRuns(), sessionsBusy: false }]]);
+  assert.strictEqual(events[0][1].suiteJobs.length, 1);
   assert.strictEqual(waiter.isArmed(), false);
   run.end().catch(() => {});
 });
@@ -286,4 +287,209 @@ test('t2475: engine counts outbound runs in the restart hold behind the same sea
   assert.match(src, /fenceSuiteRunner, suiteRestartJobs: restartSuiteJobs,/);
   assert.match(src, /const suiteRecoverTimer = setTimeout\(\(\) => \{\s*suiteClient\.recoverOpenRuns\(\)/);
   assert.match(src, /clearTimeout\(suiteRecoverTimer\)/);
+});
+
+const TREE = 'a'.repeat(40);
+const HEAD = 'b'.repeat(40);
+const START_1 = '{"id":"run-1","phase":"start","where":"runner-1","runner":"p1","wire":"push","jobId":"run-1","attempt":1,"kind":"hand","scope":"full","team":null,"ticket":null,"seat":null,'
+  + `"tree":"/w","sha":"${HEAD}","treeHash":"${TREE}","dirty":false,"pid":null,"route":null,"override":null,`
+  + '"queuedAt":"1970-01-01T00:00:01.000Z","startedAt":"1970-01-01T00:00:01.000Z","env":{"envKey":"k"}}';
+const startOf = (jobId, attempt) => START_1.replace('"jobId":"run-1","attempt":1', `"jobId":"${jobId}","attempt":${attempt}`);
+
+function liveRun(t, { states, packAt = 0, reroute = false }) {
+  const root = mkTmpRoot('suite-resubmit-');
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const ledgerFile = path.join(root, 'suite-runs.jsonl');
+  const packFile = path.join(root, 'pack');
+  const polls = {};
+  const deletes = [];
+  let posts = 0;
+  let clock = 1000;
+  const conn = {
+    suiteAsk: async (method, p) => {
+      if (p === '/api/suite/info') return { status: 200, body: { ok: true, limits: {}, env: { envKey: 'k' } } };
+      if (method === 'DELETE') { deletes.push(p); return { status: 200, body: { ok: true } }; }
+      if (method === 'POST' && p === '/api/suite/jobs') {
+        posts += 1;
+        return { status: 200, body: { ok: true, state: posts === packAt ? 'awaiting-pack' : 'queued' } };
+      }
+      if (method === 'POST' && p.endsWith('/commit')) return { status: 409, body: { ok: false, incomplete: true } };
+      if (p.includes('/output?')) {
+        const text = p.includes('stream=stdout') ? 'TOTALS: 1 pass, 0 fail, 1 tests\n' : '';
+        return { status: 200, body: { ok: true, text, offset: 0, total: Buffer.byteLength(text) } };
+      }
+      const id = decodeURIComponent(/ids=([^&]+)/.exec(p)[1]);
+      polls[id] = (polls[id] || 0) + 1;
+      const list = states[id] || [];
+      const state = list[polls[id] - 1] || (list[list.length - 1] === 'lost' ? 'lost' : 'gone');
+      if (state === 'lost') return { status: 502, body: null };
+      if (state === 'hang') return new Promise(() => {});
+      return { status: 200, body: { ok: true, jobs: [{ id, state, treeHash: TREE, exit: { code: 0, signal: null }, reason: null, queueMs: 0, setupMs: 1, runMs: 2, out: {} }] } };
+    },
+    suitePut: async (p, chunk) => ({ status: 200, body: { ok: true, size: chunk.length } }),
+  };
+  const snapshot = {
+    snapshotTree: async () => ({ treeHash: TREE, head: HEAD, headTree: TREE, tmpDir: null }),
+    releaseSnapshot: () => {},
+    buildPack: async () => { fs.writeFileSync(packFile, 'pack'); return { file: packFile, bytes: 4, sha256: 'x', over: false }; },
+  };
+  const client = createSuiteClient({
+    getPeerManager: () => ({ get: (id) => (id === 'p1' || id === 'p2' ? conn : null) }),
+    snapshot, randomUUID: () => 'run-1', sleep: async (ms) => { if (reroute) clock += ms; }, ledgerFile, now: () => clock,
+  });
+  const done = client.run({ peer: 'p1', name: 'runner-1', tree: '/w', ...(reroute ? { reroute: () => ({ peer: 'p2', name: 'runner-2' }) } : {}) });
+  const lines = () => (fs.existsSync(ledgerFile) ? fs.readFileSync(ledgerFile, 'utf8').split('\n').filter(Boolean) : []);
+  const until = async (n) => { for (let i = 0; i < 200 && lines().length < n; i += 1) await new Promise((r) => setImmediate(r)); return lines(); };
+  const recover = async (answer, at = 61000) => {
+    const calls = [];
+    const later = createSuiteClient({
+      getPeerManager: () => ({ get: (id) => (id === 'p1' || id === 'p2' ? { suiteAsk: async (m, p, b, ms) => { calls.push([id, m, p, ms]); return m === 'DELETE' ? { status: 200, body: { ok: true } } : answer(p); } } : null) }),
+      ledgerFile, now: () => at,
+    });
+    const written = await later.recoverOpenRuns();
+    return { written, calls };
+  };
+  return { done, lines, until, recover, deletes };
+}
+
+test('t2478: a run that never retried writes the start row it always did, and no second one', async (t) => {
+  const r = liveRun(t, { states: { 'run-1': ['running', 'done'] } });
+  const out = await r.done;
+  assert.strictEqual(out.unknown, null, 'ENTER: the run concluded');
+  const lines = r.lines();
+  assert.strictEqual(lines.length, 2);
+  assert.strictEqual(lines[0], START_1);
+  assert.strictEqual(JSON.parse(lines[1]).phase, 'end');
+});
+
+test('t2478: a run retried once after it started names attempt 2\'s job on the ledger, and recovery asks the runner about that job only', async (t) => {
+  const r = liveRun(t, { states: { 'run-1': ['running', 'gone'], 'run-1-2': ['hang'] } });
+  assert.deepStrictEqual(await r.until(2), [START_1, startOf('run-1-2', 2)]);
+  const { written, calls } = await r.recover(() => jobs({ id: 'run-1-2', state: 'running' }));
+  assert.deepStrictEqual(calls, [['p1', 'GET', '/api/suite/jobs?ids=run-1-2&wait=0', LOST_AFTER_MS], ['p1', 'DELETE', '/api/suite/jobs/run-1-2', undefined]]);
+  assert.deepStrictEqual(written.map((w) => [w.id, w.jobId, w.attempt, w.outcome, w.reason]),
+    [['run-1', 'run-1-2', 2, 'lost', 'host restarted while the job was in flight; cancelled on the runner']]);
+});
+
+test('t2478: a run retried twice after it started names attempt 3\'s job, and recovery closes it with that job\'s result', async (t) => {
+  const r = liveRun(t, { states: { 'run-1': ['running', 'gone'], 'run-1-3': ['hang'] }, packAt: 2 });
+  assert.deepStrictEqual(await r.until(3), [START_1, startOf('run-1-2', 2), startOf('run-1-3', 3)]);
+  assert.deepStrictEqual(r.deletes, ['/api/suite/jobs/run-1-2'], 'ENTER: attempt 2 was submitted and then cancelled for the incomplete pack');
+  const { written, calls } = await r.recover(() => jobs({ id: 'run-1-3', state: 'done', reason: null, record: { outcome: 'pass', pass: 4, fail: 0, tests: 4 } }));
+  assert.deepStrictEqual(calls, [['p1', 'GET', '/api/suite/jobs?ids=run-1-3&wait=0', LOST_AFTER_MS]]);
+  assert.deepStrictEqual(written.map((w) => [w.id, w.jobId, w.attempt, w.outcome, w.pass]), [['run-1', 'run-1-3', 3, 'pass', 4]]);
+});
+
+test('t2478: a run rerouted after it started names the new runner\'s queued job at once, and recovery cancels it there, not on the lost runner', async (t) => {
+  const r = liveRun(t, { states: { 'run-1': ['running', 'lost'], 'run-1-2': ['hang'] }, reroute: true });
+  const lines = await r.until(2);
+  assert.strictEqual(lines[0], START_1);
+  assert.strictEqual(lines.length, 2, 'ENTER: the resubmit row is written while the job is still queued');
+  const row = JSON.parse(lines[1]);
+  assert.deepStrictEqual([row.phase, row.where, row.runner, row.jobId, row.attempt, row.queuedAt, row.startedAt],
+    ['start', 'runner-2', 'p2', 'run-1-2', 2, '1970-01-01T00:02:31.000Z', null]);
+  const { written, calls } = await r.recover(() => jobs({ id: 'run-1-2', state: 'queued' }), 400000);
+  assert.deepStrictEqual(calls, [['p2', 'GET', '/api/suite/jobs?ids=run-1-2&wait=0', LOST_AFTER_MS], ['p2', 'DELETE', '/api/suite/jobs/run-1-2', undefined]]);
+  assert.deepStrictEqual(written.map((w) => [w.id, w.where, w.jobId, w.attempt, w.outcome]), [['run-1', 'runner-2', 'run-1-2', 2, 'lost']]);
+});
+
+test('t2478: a run retried after it started and then ended normally is not open after a restart', async (t) => {
+  const r = liveRun(t, { states: { 'run-1': ['running', 'gone'], 'run-1-2': ['done'] } });
+  const out = await r.done;
+  assert.strictEqual(out.unknown, null, 'ENTER: attempt 2 concluded');
+  const lines = r.lines();
+  assert.deepStrictEqual(lines.slice(0, 2), [START_1, startOf('run-1-2', 2)]);
+  assert.deepStrictEqual([lines.length, JSON.parse(lines[2]).phase, JSON.parse(lines[2]).jobId], [3, 'end', 'run-1-2']);
+  assert.deepStrictEqual(await r.recover(() => jobs({ id: 'run-1-2', state: 'done' })), { written: [], calls: [] });
+});
+
+test('t2478: literal rows, a start row then a resubmit row for the same run recover as one run on the latest job id', async (t) => {
+  const h = harness(t, [start('r-retry'), start('r-retry', { jobId: 'r-retry-2', attempt: 2 }), start('r-twice'), start('r-twice', { jobId: 'r-twice-2', attempt: 2 }), start('r-twice', { jobId: 'r-twice-3', attempt: 3 })], {
+    'peer-work': () => ({ status: 200, body: { ok: true, jobs: [{ id: 'r-retry-2', state: 'gone' }, { id: 'r-twice-3', state: 'gone' }] } }),
+  });
+  const written = await h.client.recoverOpenRuns();
+  assert.deepStrictEqual(written.map((w) => [w.id, w.jobId, w.attempt, w.outcome]), [['r-retry', 'r-retry-2', 2, 'lost'], ['r-twice', 'r-twice-3', 3, 'lost']]);
+  assert.deepStrictEqual(h.calls, [['peer-work', 'GET', '/api/suite/jobs?ids=r-retry-2,r-twice-3&wait=0', LOST_AFTER_MS]]);
+});
+
+test('t2478: three open runs on two runners make two polls, one per runner, and cancels stay one per job', async (t) => {
+  const h = harness(t, [start('g-a'), start('g-c', { runner: 'peer-rig', where: 'rig' }), start('g-b')], {
+    'peer-work': () => ({ status: 200, body: { ok: true, jobs: [
+      { id: 'g-a-job', state: 'done', reason: null, record: { outcome: 'pass', pass: 2, fail: 0, tests: 2 } },
+      { id: 'g-b-job', state: 'running' },
+    ] } }),
+    'peer-rig': () => jobs({ id: 'g-c-job', state: 'queued' }),
+  });
+  const written = await h.client.recoverOpenRuns();
+  assert.deepStrictEqual(h.calls, [
+    ['peer-work', 'GET', '/api/suite/jobs?ids=g-a-job,g-b-job&wait=0', LOST_AFTER_MS],
+    ['peer-work', 'DELETE', '/api/suite/jobs/g-b-job', undefined],
+    ['peer-rig', 'GET', '/api/suite/jobs?ids=g-c-job&wait=0', LOST_AFTER_MS],
+    ['peer-rig', 'DELETE', '/api/suite/jobs/g-c-job', undefined],
+  ]);
+  assert.deepStrictEqual(written.map((w) => [w.id, w.outcome]), [['g-a', 'pass'], ['g-b', 'lost'], ['g-c', 'lost']]);
+});
+
+test('t2478: the same runner on two wires is asked once per wire', async (t) => {
+  const h = harness(t, [start('w-a'), start('w-b', { wire: 'pull' })], {
+    'peer-work': (url) => jobs({ id: url.includes('w-a') ? 'w-a-job' : 'w-b-job', state: 'gone' }),
+  });
+  await h.client.recoverOpenRuns();
+  assert.deepStrictEqual(h.calls.map((c) => c[2]), ['/api/suite/jobs?ids=w-a-job&wait=0', '/api/suite/jobs?ids=w-b-job&wait=0']);
+});
+
+test('t2478: an unreachable runner marks all its open runs lost in one go', async (t) => {
+  const h = harness(t, [start('u-a', { runner: 'peer-away' }), start('u-b', { runner: 'peer-away' })], {});
+  const written = await h.client.recoverOpenRuns();
+  assert.deepStrictEqual(written.map((w) => [w.id, w.outcome, w.reason]), [
+    ['u-a', 'lost', 'host restarted while the job was in flight; runner unreachable (no peer peer-away)'],
+    ['u-b', 'lost', 'host restarted while the job was in flight; runner unreachable (no peer peer-away)'],
+  ]);
+  assert.deepStrictEqual(h.calls, []);
+});
+
+test('t2478: recovery asks for at most 20 job ids per poll and splits above it', async (t) => {
+  const ids = Array.from({ length: 21 }, (_, i) => `b-${String(i).padStart(2, '0')}`);
+  const h = harness(t, ids.map((id) => start(id)), { 'peer-work': () => ({ status: 200, body: { ok: true, jobs: [] } }) });
+  const written = await h.client.recoverOpenRuns();
+  assert.strictEqual(written.length, 21);
+  const asked = h.calls.map((c) => /ids=([^&]+)/.exec(c[2])[1].split(','));
+  assert.deepStrictEqual(asked.map((a) => a.length), [20, 1]);
+  assert.deepStrictEqual(asked[1], ['b-20-job']);
+});
+
+const AWAY = { id: 'x', team: 'avh', ticket: 't2108', kind: 'verify', runner: 'work' };
+const HOME = { id: 'j1', team: 'alpha' };
+
+test('t2478: the restart give-up notice names local and outbound jobs apart', () => {
+  assert.strictEqual(giveUpBody([], { suiteJobs: [HOME], sessionsBusy: false }),
+    '1 suite job this machine is running for other teams did not finish — the pending restart was dropped. Try again when work settles.');
+  assert.strictEqual(giveUpBody([], { suiteJobs: [AWAY], sessionsBusy: false }),
+    '1 run on work (avh t2108 verify) did not finish — the pending restart was dropped. Try again when work settles.');
+  assert.strictEqual(giveUpBody([], { suiteJobs: [HOME, AWAY], sessionsBusy: true }),
+    'Sessions stayed busy and 1 suite job this machine is running for other teams and 1 run on work (avh t2108 verify) did not finish — the pending restart was dropped. Try again when work settles.');
+});
+
+test('t2478: the quit give-up notice names local and outbound jobs apart', () => {
+  assert.strictEqual(quitGiveUpBody([HOME]),
+    '1 suite job this machine is running for other teams did not finish within 30 minutes — the quit was dropped. Quit again to choose.');
+  assert.strictEqual(quitGiveUpBody([AWAY]),
+    '1 run on work (avh t2108 verify) did not finish within 30 minutes — the quit was dropped. Quit again to choose.');
+  assert.strictEqual(quitGiveUpBody([HOME, AWAY]),
+    '1 suite job this machine is running for other teams and 1 run on work (avh t2108 verify) did not finish within 30 minutes — the quit was dropped. Quit again to choose.');
+});
+
+test('t2478: the quit guard hands the give-up notice the live job list', async () => {
+  const notices = [];
+  let timer = null;
+  let clock = 0;
+  const guard = createQuitGuard({
+    suiteJobs: () => [AWAY], quit: () => {}, ask: async () => ({ response: 0 }), notify: (jobs) => notices.push(quitGiveUpBody(jobs)),
+    now: () => clock, setTimer: (fn) => { timer = fn; return 1; }, clearTimer: () => { timer = null; },
+  });
+  guard.beforeQuit({ preventDefault() {} });
+  await new Promise((r) => setImmediate(r));
+  clock = 30 * 60_000;
+  timer();
+  assert.deepStrictEqual(notices, ['1 run on work (avh t2108 verify) did not finish within 30 minutes — the quit was dropped. Quit again to choose.']);
 });

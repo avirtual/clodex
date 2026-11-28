@@ -8274,7 +8274,26 @@ test('t2472: a retry the runner accepted shows queued then running on the board,
 
 test('t2472: a retry still queued at the deadline is cancelled and the ticket ends held saying how many attempts ran and that the last was still queued', async () => {
   const r = queueLoop(FREE);
-  const c = retryClient(r, (o) => { o.onSubmitted({ jobId: 'job-q' }); r.clock.now = 4_600_000; return { unknown: `the job did not start within the ${o.queueBudgetMs}ms queue budget (cancelled)`, res: null, record: null }; });
+  const runner = [];
+  const tree = 'a'.repeat(40);
+  const conn = {
+    suiteAsk: async (method, p, body) => {
+      runner.push([method, p.split('?')[0]]);
+      if (p === '/api/suite/info') return { status: 200, body: { ok: true, limits: {}, env: { envKey: 'k' }, box: { state: 'ready', env: { envKey: 'k' } } } };
+      if (method === 'POST') return { status: 200, body: { ok: true, state: 'queued', id: body.id } };
+      if (method === 'DELETE') return { status: 200, body: { ok: true } };
+      const id = decodeURIComponent(/ids=([^&]+)/.exec(p)[1]);
+      r.clock.now = 4_600_000;
+      return { status: 200, body: { ok: true, jobs: [{ id, state: 'queued', treeHash: tree }] } };
+    },
+  };
+  const real = createShadowClient({
+    getPeerManager: () => ({ get: () => conn }), now: () => r.clock.now, sleep: async () => {}, randomUUID: () => 'job-q',
+    snapshot: { snapshotTree: async () => ({ treeHash: tree, head: 'b'.repeat(40), headTree: tree }), releaseSnapshot: () => {} },
+  });
+  const jobIds = [];
+  const c = retryClient(r, (o) => real.run({ ...o, onSubmitted: (s) => { jobIds.push(s.jobId); return o.onSubmitted(s); } }));
+  c.jobIds = jobIds;
   r.f.m._boxDecide = undecided('queue-budget', QB_WHY);
   await r.hold();
   delete r.f.m._boxDecide;
@@ -8284,6 +8303,9 @@ test('t2472: a retry still queued at the deadline is cancelled and the ticket en
   assert.strictEqual(c.runs[0].queueBudgetMs, 3_540_000, 'ENTER: the attempt waits until the deadline');
   const t = r.f.one();
   assert.deepStrictEqual([t.verifyHold.code, t.boxRetry], ['queue-budget', undefined]);
+  const posted = runner.filter(([m, p]) => m === 'POST' && p === '/api/suite/jobs');
+  assert.strictEqual(posted.length, 1, 'ENTER: the retry was submitted to the runner');
+  assert.deepStrictEqual(runner.filter(([m]) => m === 'DELETE'), [['DELETE', `/api/suite/jobs/${c.jobIds[0]}`]]);
   assert.deepStrictEqual(heldNotes(r.f).slice(1), [
     '[ticket t1 HELD] the box did not decide (queue budget) and automatic retries stopped at the 60 min limit (1 of 6 tried; the last one was still queued on the runner and was cancelled); it waited 60 min in total. Try again with [agent:task verify t1].',
   ]);
