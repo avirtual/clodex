@@ -7771,10 +7771,11 @@ const RETRY_CREATE_ROWS = [
   ['run-budget', undefined],
   ['box-build-budget', undefined],
   ['box-build-failed', undefined],
+  ['box-args-failed', undefined],
   ['outcome-unknown', undefined],
 ];
 
-test('t2453: the retry table covers all 13 fallback codes', () => {
+test('t2453: the retry table covers all 14 fallback codes', () => {
   assert.deepStrictEqual(RETRY_CREATE_ROWS.map(([c]) => c).sort(), Object.keys(require('../suite-client').FALLBACK_CODES).sort());
 });
 
@@ -8973,10 +8974,10 @@ test('t2439: runner rm of the member a verify box job runs on stops it as supers
 
 test('t2483: a verify decided on an owner-customised box says so with the label in the notice; an uncustomised one does not', async () => {
   const b = boxLoop(SHADOW_LOCAL.red);
-  const out = await b.run(GATE_ON, boxRemote('custom green', b.events).client);
+  const out = await b.run(GATE_ON, boxRemote('custom green', b.events).client, true);
   assert.deepStrictEqual([out.decidedBy, out.green, out.box.custom], ['box', true, { fingerprint: '64c1563c2aa1', label: 'card-a' }]);
   assert.strictEqual(b.f.m._suiteWhere(out), ' (box) on an owner-customised box (card-a)');
   assert.strictEqual(b.f.m._suiteWhere({ ...out, box: { ...out.box, custom: { fingerprint: '64c1563c2aa1', label: null } } }), ' (box) on an owner-customised box (64c1563c2aa1)');
-  const plain = await b.run(GATE_ON, boxRemote('green', b.events).client);
+  const plain = await b.run(GATE_ON, boxRemote('green', b.events).client, true);
   assert.deepStrictEqual(['custom' in plain.box, b.f.m._suiteWhere(plain)], [false, ' (box)']);
 });
