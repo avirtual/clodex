@@ -249,6 +249,45 @@ test('timer drain racing a manual drain delivers each message once, and a lost r
   assert.strictEqual(r.m._parkWakeSpent('root'), false);
 }));
 
+test('a wake producer held behind a gate for five passes is queued once and makes one turn; later mail stays parked', withClock(async (t) => {
+  const r = rig(t, { hours: 1 });
+  const producers = [];
+  r.m._injectText = (_s, _text, opts) => producers.push(opts.produce);
+  r.m._gatedDeliver('root', 'clodex@laptop', 'm1', false);
+  const woke = [];
+  for (let p = 1; p <= 5; p++) woke.push(...r.m._sweepParkWake(T0 + H + p * 60_000));
+  assert.deepStrictEqual(woke, ['root']);
+  assert.strictEqual(producers.length, 1);
+  assert.match(producers[0](), /m1/);
+  assert.strictEqual(r.m._parkWakeSpent('root'), true);
+  t.mock.timers.setTime(T0 + 2 * H);
+  r.m._gatedDeliver('root', 'clodex@laptop', 'm2', false);
+  for (let p = 1; p <= 5; p++) assert.deepStrictEqual(r.m._sweepParkWake(T0 + 4 * H + p * 60_000), []);
+  assert.strictEqual(producers.length, 1);
+  assert.strictEqual(countPending(r.PENDING_DIR, 'root'), 1);
+}));
+
+test('a ✉ click while the age producer is queued keeps the allowance armed; the next overdue batch wakes once', withClock(async (t) => {
+  const r = rig(t, { hours: 1 });
+  const producers = [];
+  r.m._injectText = (_s, _text, opts) => producers.push(opts.produce);
+  r.m._gatedDeliver('root', 'clodex@laptop', 'm1', false);
+  assert.deepStrictEqual(r.m._sweepParkWake(T0 + 2 * H), ['root']);
+  r.m.flushPending('root');
+  assert.strictEqual(producers.length, 2);
+  assert.match(producers[0](), /m1/);
+  assert.strictEqual(producers[1](), null);
+  assert.strictEqual(r.m._parkWakeSpent('root'), false);
+  t.mock.timers.setTime(T0 + 3 * H);
+  r.m._gatedDeliver('root', 'clodex@laptop', 'm2', false);
+  assert.deepStrictEqual(r.m._sweepParkWake(T0 + 5 * H), ['root']);
+  assert.match(producers[2](), /m2/);
+  assert.strictEqual(r.m._parkWakeSpent('root'), true);
+  r.m._gatedDeliver('root', 'clodex@laptop', 'm3', false);
+  assert.deepStrictEqual(r.m._sweepParkWake(T0 + 9 * H), []);
+  assert.strictEqual(producers.length, 3);
+}));
+
 test('[agent:who] shows the waiting count on the owning node', async () => {
   const PENDING_DIR = mkTmpRoot('clodex-pw-pend-');
   const injected = [];

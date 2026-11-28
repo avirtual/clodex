@@ -10017,7 +10017,13 @@ function createSessionManager(deps) {
       this._saveParkWakeState();
     }
 
+    _parkWakeRearmSeq(name) {
+      return (this._parkWakeRearms && this._parkWakeRearms.get(name)) || 0;
+    }
+
     _rearmParkWake(name, why) {
+      if (!this._parkWakeRearms) this._parkWakeRearms = new Map();
+      this._parkWakeRearms.set(name, this._parkWakeRearmSeq(name) + 1);
       const map = this._parkWakeState();
       if (!map.has(name)) return;
       map.delete(name);
@@ -10033,9 +10039,16 @@ function createSessionManager(deps) {
         if (!s.agentType || s.clone || s._dead || !drainsParkedMail(s.agentType)) continue;
         const b = parkBacklog(PENDING_DIR, s.name);
         if (b.heldAt === null || now - b.heldAt < hours * 3_600_000) continue;
-        if (this._parkWakeSpent(s.name) || this._injectHoldReason(s) || this._anyDraftOpen(s)) continue;
-        const r = this._flushParkedNow(s, claimTag('age'), 'park-age', { hours, onClaim: () => this._spendParkWake(s.name, now) });
+        if (s._parkWakeQueued || this._parkWakeSpent(s.name) || this._injectHoldReason(s) || this._anyDraftOpen(s)) continue;
+        const seq = this._parkWakeRearmSeq(s.name);
+        s._parkWakeQueued = true;
+        const r = this._flushParkedNow(s, claimTag('age'), 'park-age', {
+          hours,
+          onProduce: () => { s._parkWakeQueued = false; },
+          onClaim: () => { if (this._parkWakeRearmSeq(s.name) === seq) this._spendParkWake(s.name, now); },
+        });
         if (r && r.count) woke.push(s.name);
+        else s._parkWakeQueued = false;
       }
       return woke;
     }
@@ -10084,7 +10097,7 @@ function createSessionManager(deps) {
       }, delay);
     }
 
-    _flushParkedNow(target, tag, kind = 'park-flush', { hours = null, onClaim = null } = {}) {
+    _flushParkedNow(target, tag, kind = 'park-flush', { hours = null, onClaim = null, onProduce = null } = {}) {
       // Clear the notice's flush timer ahead of the count check: an empty mailbox means another drainer
       // took the notice, and a timer left armed would force a later unrelated park out early.
       if (target._rebootNoticeFlushTimer) { clearTimeout(target._rebootNoticeFlushTimer); target._rebootNoticeFlushTimer = null; }
@@ -10110,6 +10123,7 @@ function createSessionManager(deps) {
       this._broadcast('ipc-message', { ts: Date.now(), from: 'clodex', to: target.name, kind, body });
       this._injectText(target, '', {
         produce: () => {
+          if (typeof onProduce === 'function') onProduce();
           if (target._dead) return null;
           let texts = [];
           try { texts = this._drainParkedBatch(target, tag, cause); } catch { return null; }
