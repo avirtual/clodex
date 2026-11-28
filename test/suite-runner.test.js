@@ -897,6 +897,39 @@ test('cache eviction never runs while a job is live', async (t) => {
   assert.strictEqual(fs.existsSync(path.join(f.work, rel)), false);
 });
 
+test('t2480: eviction sets a cache entry aside as a .gone~ sibling before removing it, and a boot after a quit mid-removal unindexes it and sweeps the sibling', async (t) => {
+  const clock = 30 * 24 * 3600 * 1000;
+  const removals = [];
+  let called;
+  const firstCall = new Promise((r) => { called = r; });
+  const f = await fixture(t, {
+    now: () => clock,
+    runnerOver: { removeTree: (p) => new Promise((resolve) => { removals.push({ p, resolve }); called(); }) },
+  });
+  await drain();
+  const repoDir = path.join(f.work, 'deps', f.snap.repoKey);
+  const rel = path.join('deps', f.snap.repoKey, 'a'.repeat(64));
+  fs.mkdirSync(path.join(f.work, rel, 'node_modules'), { recursive: true });
+  fs.writeFileSync(path.join(f.work, rel, 'node_modules', 'x.js'), 'x\n');
+  fs.writeFileSync(path.join(f.work, `${rel}.json`), '{}');
+  const cacheFile = path.join(f.root, 'suite-runner', 'cache.json');
+  fs.writeFileSync(cacheFile, JSON.stringify({ [rel]: 0 }));
+  const ticking = f.runner.tick();
+  await firstCall;
+  const gone = removals[0].p;
+  assert.deepStrictEqual([path.dirname(gone), path.basename(gone).startsWith('.gone~'), fs.existsSync(path.join(gone, 'node_modules', 'x.js')), fs.existsSync(path.join(f.work, rel))],
+    [repoDir, true, true, false]);
+  f.runner.close();
+  const goneMirror = path.join(f.work, 'mirrors', '.gone~0123456789ab');
+  fs.mkdirSync(goneMirror);
+  const runner = f.make({ removeTree: (p) => { removals.push({ p }); return Promise.resolve(); } });
+  t.after(() => runner.close());
+  await drain();
+  assert.deepStrictEqual([JSON.parse(fs.readFileSync(cacheFile, 'utf8')), removals.slice(1).map((r) => r.p)], [{}, [goneMirror, gone]]);
+  removals[0].resolve();
+  await ticking;
+});
+
 test('runJob makes no git call after isolation.prepare', () => {
   const src = fs.readFileSync(SOURCE, 'utf8');
   const start = src.indexOf('async function runJob(');
