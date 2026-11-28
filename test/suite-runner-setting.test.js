@@ -752,3 +752,11 @@ test('t2428: a Preferences apply that does not name exclusive keeps the stored i
   assert.strictEqual(set({}, { ...VALID, slots: 3 }).ok, true);
   assert.deepStrictEqual(store.suiteRunner, { ...VALID, slots: 3, exclusive: 'ignore' });
 });
+
+test('t2466: a Preferences apply naming exclusive stores both states and reaches the runner', () => {
+  const { set, store, calls } = ipcFixture({ initial: { ...VALID } });
+  assert.strictEqual(set({}, { ...VALID, exclusive: 'ignore' }).ok, true);
+  assert.deepStrictEqual([store.suiteRunner, calls.reload], [{ ...VALID, exclusive: 'ignore' }, 1]);
+  assert.strictEqual(set({}, { ...VALID, exclusive: 'honour' }).ok, true);
+  assert.deepStrictEqual([store.suiteRunner, calls.reload], [{ ...VALID }, 2]);
+});

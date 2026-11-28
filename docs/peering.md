@@ -678,9 +678,12 @@ change waits for them, like a Preferences Apply. `clodexctl patch testjobs
 `POST /api/testjobs/exclusive` with `{ "exclusive": "honour" | "ignore" }`
 (same token, body and refusals; the `testjobs/exclusive` row) sets the stored
 record's `exclusive` through `setSuiteRunnerExclusive`: the record holds
-`exclusive: "ignore"` only, and a Preferences Apply keeps it. The answer is
+`exclusive: "ignore"` only. The answer is
 `{ ok, exclusive, applied, running }`; `clodexctl patch testjobs --exclusive
-honour|ignore` sends it.
+honour|ignore` sends it. Preferences sets the same key with its
+`prefs-suite-runner-exclusive` box (ticked is `honour`), sent on every Apply
+through `suiteRunner:set` and `applySuiteRunner`; an Apply that does not name
+`exclusive` (an older web bundle) keeps the stored value.
 
 The job's PATH is a fixed list (`jobPath`), never the node's own:
 `/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin`, with

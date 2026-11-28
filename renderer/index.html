@@ -1433,6 +1433,11 @@
             <span>Build box images that teams ask for</span>
           </label>
           <p class="hint-text">Lets every peer you allow to run jobs here run its Dockerfile build steps on this machine, with network access, and keeps the resulting image on disk. Off: a job whose image is missing is refused, as before. Builds can pull any image your Docker login can.</p>
+          <label class="prefs-check">
+            <input type="checkbox" id="prefs-suite-runner-exclusive">
+            <span>Let a team's exclusive jobs run alone on this machine</span>
+          </label>
+          <p class="hint-text">A team can mark its test jobs exclusive so each one has this machine to itself. Off: such a job shares this machine's job slots like any other.</p>
           <div class="prefs-row" style="margin-top: 6px;">
             <span>Shared folders</span>
           </div>

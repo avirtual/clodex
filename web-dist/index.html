@@ -11742,6 +11742,11 @@ body:not(.web-frontend):has(#sidebar[data-folded="1"]) #main {
             <span>Build box images that teams ask for</span>
           </label>
           <p class="hint-text">Lets every peer you allow to run jobs here run its Dockerfile build steps on this machine, with network access, and keeps the resulting image on disk. Off: a job whose image is missing is refused, as before. Builds can pull any image your Docker login can.</p>
+          <label class="prefs-check">
+            <input type="checkbox" id="prefs-suite-runner-exclusive">
+            <span>Let a team's exclusive jobs run alone on this machine</span>
+          </label>
+          <p class="hint-text">A team can mark its test jobs exclusive so each one has this machine to itself. Off: such a job shares this machine's job slots like any other.</p>
           <div class="prefs-row" style="margin-top: 6px;">
             <span>Shared folders</span>
           </div>
@@ -31409,7 +31414,8 @@ Allow?`;
           ...boxImage ? { boxImage } : {},
           ...Number.isInteger(slots) && slots > 1 ? { slots } : {},
           ...Array.isArray(shares) && shares.length ? { shares } : {},
-          ...buildBoxes ? { buildBoxes: true } : {}
+          ...buildBoxes ? { buildBoxes: true } : {},
+          ...form.exclusive == null ? {} : { exclusive: form.exclusive === "ignore" ? "ignore" : "honour" }
         };
       }
       var SHARE_FIELDS = [["name", "name"], ["path", "/absolute/folder"], ["version", "version"]];
@@ -60760,6 +60766,7 @@ Click for live activity`;
       var prefsSuiteRunnerBoxImage = document.getElementById("prefs-suite-runner-boxImage");
       var prefsSuiteRunnerSlots = document.getElementById("prefs-suite-runner-slots");
       var prefsSuiteRunnerBuildBoxes = document.getElementById("prefs-suite-runner-buildBoxes");
+      var prefsSuiteRunnerExclusive = document.getElementById("prefs-suite-runner-exclusive");
       var prefsSuiteRunnerShares = document.getElementById("prefs-suite-runner-shares");
       var prefsSuiteRunnerShareRows = null;
       var prefsSuiteRunnerStatus = document.getElementById("prefs-suite-runner-status");
@@ -64159,6 +64166,7 @@ ${res.stderr}` : "");
         prefsSuiteRunnerBoxImage.disabled = forced.has("boxImage");
         prefsSuiteRunnerSlots.value = String(rec.slots || 1);
         if (prefsSuiteRunnerBuildBoxes) prefsSuiteRunnerBuildBoxes.checked = rec.buildBoxes === true;
+        if (prefsSuiteRunnerExclusive) prefsSuiteRunnerExclusive.checked = rec.exclusive !== "ignore";
         prefsSuiteRunnerShareRows = prefsSuiteRunnerShares ? suiteShareEditor(document, prefsSuiteRunnerShares, rec.shares || []) : null;
         for (const k of ["enabled", "isolation", "work", "boxImage"]) {
           document.getElementById(`prefs-suite-runner-${k}-env`).classList.toggle("hidden", !forced.has(k));
@@ -64193,6 +64201,7 @@ ${res.stderr}` : "");
           boxImage: prefsSuiteRunnerBoxImage.value,
           slots: prefsSuiteRunnerSlots.value,
           ...prefsSuiteRunnerBuildBoxes ? { buildBoxes: prefsSuiteRunnerBuildBoxes.checked } : {},
+          ...prefsSuiteRunnerExclusive ? { exclusive: prefsSuiteRunnerExclusive.checked ? "honour" : "ignore" } : {},
           ...prefsSuiteRunnerShareRows ? { shares: prefsSuiteRunnerShareRows.read() } : {}
         });
       }

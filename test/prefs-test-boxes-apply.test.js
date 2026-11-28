@@ -70,7 +70,7 @@ function harness({ runnerAnswer = null } = {}) {
     prefsOverlay: el(),
     prefsSuiteRunnerBlock: block('runner'),
     prefsSuiteRunnerEnabled: el(), prefsSuiteRunnerIsolation: el(), prefsSuiteRunnerWork: el(),
-    prefsSuiteRunnerBoxImage: el(), prefsSuiteRunnerSlots: el(), prefsSuiteRunnerBuildBoxes: el(),
+    prefsSuiteRunnerBoxImage: el(), prefsSuiteRunnerSlots: el(), prefsSuiteRunnerBuildBoxes: el(), prefsSuiteRunnerExclusive: el(),
     prefsSuiteRunnerShares: null, prefsSuiteRunnerShareRows: null,
     prefsSuiteRunnerNoneNote: el(), prefsSuiteRunnerStatus: el(),
     prefsTestBoxesUnsaved: el(),
@@ -152,7 +152,7 @@ test('runner ticked only: Apply sends the runner record once and no offer', asyn
   h.tickRunner();
   assert.strictEqual(h.unsaved(), 'Unsaved changes in: Test runner');
   await h.ui.apply();
-  assert.deepStrictEqual(h.calls, [['suiteRunnerSet', RUNNER_ON]]);
+  assert.deepStrictEqual(h.calls, [['suiteRunnerSet', { ...RUNNER_ON, exclusive: 'honour' }]]);
   assert.strictEqual(h.unsaved(), null);
 });
 
@@ -201,7 +201,7 @@ test('Save with the runner edited applies it once and closes', async () => {
   const h = harness();
   h.tickRunner();
   await h.ui.save();
-  assert.deepStrictEqual(h.calls, [['setSettings'], ['suiteRunnerSet', RUNNER_ON], ['closePrefs']]);
+  assert.deepStrictEqual(h.calls, [['setSettings'], ['suiteRunnerSet', { ...RUNNER_ON, exclusive: 'honour' }], ['closePrefs']]);
 });
 
 test('Save with a refused runner writes the settings, stays open and shows the runner block', async () => {
@@ -248,4 +248,38 @@ test('opening Preferences with a change pending shows the pending line', async (
   assert.notStrictEqual(h.ctx.prefsSuiteRunnerStatus.textContent, PENDING_LINE, 'ENTER: the line starts as the idle one');
   await h.ctx.refreshSuiteRunnerPrefs();
   assert.strictEqual(h.ctx.prefsSuiteRunnerStatus.textContent, PENDING_LINE);
+});
+
+test('t2466: the exclusive box shows the stored mode, ticked for honour and clear for ignore', () => {
+  const h = harness();
+  assert.strictEqual(h.ctx.prefsSuiteRunnerExclusive.checked, true, 'a record with no exclusive key is honour');
+  h.ctx.renderSuiteRunnerPrefs({ ...RUNNER, setting: { ...RUNNER_ON, exclusive: 'ignore' } });
+  assert.strictEqual(h.ctx.prefsSuiteRunnerExclusive.checked, false);
+  h.ctx.renderSuiteRunnerPrefs({ ...RUNNER, setting: RUNNER_ON });
+  assert.strictEqual(h.ctx.prefsSuiteRunnerExclusive.checked, true);
+});
+
+test('t2466: Apply names exclusive in both states', async () => {
+  for (const [checked, want] of [[false, 'ignore'], [true, 'honour']]) {
+    const h = harness();
+    h.ctx.prefsSuiteRunnerExclusive.checked = checked;
+    h.ctx.prefsSuiteRunnerBlock.fire('change', h.ctx.prefsSuiteRunnerExclusive);
+    assert.strictEqual(h.unsaved(), 'Unsaved changes in: Test runner', 'ENTER: the box alone marks the block edited');
+    await h.ui.apply();
+    assert.deepStrictEqual(h.calls, [['suiteRunnerSet', { enabled: false, isolation: 'user', work: null, exclusive: want }]], want);
+  }
+});
+
+test('t2466: the markup carries the exclusive box with its hint', () => {
+  assert.match(section(), /<input type="checkbox" id="prefs-suite-runner-exclusive">\s*<span>Let a team's exclusive jobs run alone on this machine<\/span>/);
+  assert.ok(section().includes("Off: such a job shares this machine's job slots like any other."));
+});
+
+test('t2466: suiteRunnerRecordFromForm passes exclusive through and omits it when the form does not name it', () => {
+  const shown = { setting: { enabled: true, isolation: 'user', work: null, exclusive: 'ignore' }, forced: [] };
+  const form = { enabled: true, isolation: 'user', work: '', boxImage: '', slots: '1' };
+  const base = { enabled: true, isolation: 'user', work: null };
+  assert.deepStrictEqual(offerView.suiteRunnerRecordFromForm(shown, { ...form, exclusive: 'ignore' }), { ...base, exclusive: 'ignore' });
+  assert.deepStrictEqual(offerView.suiteRunnerRecordFromForm(shown, { ...form, exclusive: 'honour' }), { ...base, exclusive: 'honour' });
+  assert.deepStrictEqual(offerView.suiteRunnerRecordFromForm(shown, form), base);
 });
