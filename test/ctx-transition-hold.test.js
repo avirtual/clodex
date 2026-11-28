@@ -19,7 +19,8 @@ function rig({ root = mkTmpRoot('clx-ctxhold-'), session = {} } = {}) {
     fs, path,
     pathFor: require('../clodex-paths').pathFor, runDirFor: require('../clodex-paths').runDirFor,
     parkDelivery: pend.parkDelivery, drainPending: pend.drainPending,
-    hasActivePending: pend.hasActivePending, countPending: pend.countPending,
+    hasActivePending: pend.hasActivePending, countPending: pend.countPending, parkIdInUse: pend.parkIdInUse,
+    randBase36: (n) => Math.random().toString(36).slice(2, 2 + n).padEnd(n, '0'),
     isDraftOpen: require('../proxy-util').isDraftOpen,
     shouldHoldDm: require('../proxy-util').shouldHoldDm,
     peerStatusLabel: require('../proxy-util').peerStatusLabel,
@@ -593,7 +594,7 @@ function gapRig() {
 }
 
 async function deliverInGap(h) {
-  h.m._handleContextIntent(h.old, 'reload', '');
+  h.m._handleContextIntent(h.old, 'reload', 'next');
   await new Promise((r) => setImmediate(r));
   await ticks();
   assert.strictEqual(h.m.sessions.has('a'), false, 'ENTER: in the gap');
@@ -618,7 +619,11 @@ test('reload gap: a dm, a reminder and a ticket-loop notice are each delivered o
     assert.ok(h.fresh, 'ENTER: respawned');
     h.fresh._bootReadySeen = true;
     h.m._ctxHoldOnBootReady(h.fresh);
-    h.m._drainPendingAtIdle(h.fresh);
+    h.m._drainPendingAtBootReady(h.fresh);
+    assert.strictEqual(h.written.join('\n').includes('GAP-DM'), false, 'held while the handoff is pending');
+    h.m._ctxHoldTyped('a', h.m._ctxHoldMap().get('a').gen);
+    h.m._emitActivity('a', 'thinking');
+    h.m._emitActivity('a', 'idle', true);
     const all = h.written.join('\n');
     assert.deepStrictEqual(['GAP-DM', 'GAP-REM', 'GAP-NOTE'].map((b) => all.split(b).length - 1), [1, 1, 1]);
     assert.strictEqual(h.onDisk(), 0);
@@ -649,7 +654,7 @@ test('reload gap: reservation is by hold record — an unknown name and a seat d
   try {
     const h = gapRig();
     assert.deepStrictEqual(h.m._gatedDeliver('nobody', 'bob', 'X', false), { error: 'no such agent "nobody"' });
-    h.m._handleContextIntent(h.old, 'reload', '');
+    h.m._handleContextIntent(h.old, 'reload', 'next');
     await new Promise((r) => setImmediate(r));
     await ticks();
     assert.strictEqual(h.m.sessions.has('a'), false, 'ENTER: in the gap');
