@@ -398,7 +398,10 @@ Every hold-park logs `park-on-hold for <seat> as <id>: N waiting`, and every dra
 
 ### Clear/reload window
 
-Pty seats only; stream seats are not held. An accepted
+Held seats are pty seats whose agent type drains parked mail
+(`_ctxHoldApplies`: claude). Codex and muse seats are unchanged: their mail
+lives in the in-memory inject queue, and codex mints its new rollout only on
+the next prompt, so a hold would never release. An accepted
 clear (`_handleContextIntent`) or reload/cold-respawn clear (`_coldRespawn`)
 arms a per-seat transition hold (`_armCtxHold`) with a generation number,
 persisted in `ctx-holds.json` at the registry root. While it is set,
@@ -407,24 +410,40 @@ non-bypass `_injectText` is held, and the hold re-parks held units to disk
 (`_reparkHeldInjects`); `_maybeParkDelivery` parks dm, ticket-loop, reminder
 and operator mail even on an idle seat; `_drainParkedBatch` claims nothing,
 so the idle, boot-ready, cap, ride, age-wake and operator-flush producers
-leave mail on disk. On a wire seat the turn-completed handler scans the turn's
-text for a clear/reload line before the idle flip and pre-arms
+leave mail on disk. On a wire seat the turn-completed handler parses the turn's
+lines (`parseIntent`) for a clear/reload before the idle flip and pre-arms
 (`_preArmCtxHold`), because that flip drains parked mail before the intents are
 dispatched; a pre-arm the dispatch did not turn into a real hold is dropped two
 ticks later. The continuation carries `ctxGen`, which passes only its own
 generation's hold, so busy and dialog still hold it. Release
 (`_releaseCtxHold`, one generation only): a bodyless clear on the session-id
-change edge (an id the seat already left is `stale` and releases nothing); a
+change edge, from `onSessionId` or a wire rotation (`_onWireSessionRotated`;
+an id the seat already left is `stale` and releases nothing); a
 clear with a body, or a reload, once its continuation was typed
 (`_ctxHoldTyped`) and that turn started; a bodyless cold-respawn clear at the
 respawned seat's boot-ready. Held mail then goes through the ordinary busy/idle
 delivery. There is no timed release: after `COMPACT_INFLIGHT_TIMEOUT`, a failed
 respawn or a handoff never typed, the hold is marked failed, the operator is
-told once (`context-stuck` ipc-message and attention), `[agent:who]` reads
-"clear did not complete", and only a later clear/reload/respawn, a mail-badge
-click (`flushPending`) or operator input releases it. A restart loads every
-hold as failed. Not covered: the CLI's own `pending.sh` hook drain, which can
-hand parked mail to the continuation's turn.
+told once (`context-stuck` ipc-message, and an attention that stays until
+release and lists as an open request), `[agent:who]` reads
+"clear did not complete", and only the record's own late transition, a later
+clear/reload/respawn, a mail-badge click (`flushPending`) or operator input
+releases it. While in flight the row's badge reads "clearing" / "reloading"
+(`ctxHoldBadge` on the `session-compacting` channel). A restart loads an
+unfinished hold as `restored`: held, no notice, released at boot-ready. A
+removed seat drops its record (`_dropCtxHold`).
+
+Stream seats have no hold: a clear (agent-emitted, operator control, or the
+idle-clear role setting, all through `_sendContextCommand`) is queued ahead of
+every non-operator outbox item, and `_onStreamToolBoundary` drains nothing
+while it is queued, so mail waiting at acceptance reaches the new conversation.
+Mail there is not ordered behind the clear's continuation.
+
+Not covered: the CLI's own `pending.sh` hook drain, which hands every parked
+`*.json` to the continuation's UserPromptSubmit, so in production held mail can
+ride the continuation's turn instead of the turn after it. Covering it needs
+held entries kept out of `*.json` (a follow-up ticket; the hook bytes are
+pinned).
 
 ### Draft and busy protections by seat type
 
