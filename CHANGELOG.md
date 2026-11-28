@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+## 5.218.0 — 2026-11-28
+
 - Context clear and reload: messages that arrive while an agent is clearing or reloading its conversation now wait for the new one. Before, a message could be typed into the conversation being cleared, which then acted on it before the fresh conversation repeated the work, and on a reload it could be lost. A clear or reload that does not complete is shown on the agent's row and keeps the messages. Messages held for the new conversation are no longer picked up early by the agent's own mail hook, and a message or ticket notice sent in the moment an agent is being restarted for a reload now waits for it instead of failing with 'no such agent'.
 
 ## 5.217.0 — 2026-11-28
