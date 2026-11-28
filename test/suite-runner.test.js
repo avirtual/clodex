@@ -1472,7 +1472,11 @@ for (const [phase, extra, firstExec] of [
   assert.strictEqual((await f.runner.submit(f.body('job-b', 'hand', { ...NAMED(HASH_B), ...extra }))).state, 'queued');
   const b = await waitState(f.runner, 'job-b', 'done');
   assert.deepStrictEqual([b.reason, b.exit], [null, { code: 0, signal: null }]);
-  const info = await f.runner.info();
+  let info = await f.runner.info();
+  for (let i = 0; i < 10000 && info.queue.running; i++) {
+    await new Promise((r) => setImmediate(r));
+    info = await f.runner.info();
+  }
   assert.deepStrictEqual([info.box.state, info.queue], ['ready', { running: null, queued: [] }]);
 });
 
