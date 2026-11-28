@@ -1325,7 +1325,7 @@ test('recovery with the box removed keeps an interrupted box job dir until a swe
 
 test('t2480: recovery reaps a job work dir no stored job maps to through the isolation, and keeps a retained job\'s dir', async (t) => {
   const reaped = [];
-  const f = await fixture(t, { wrap: (base) => ({ ...base, reap: (jobDir, ...rest) => { reaped.push(path.basename(jobDir)); return base.reap(jobDir, ...rest); } }) });
+  const f = await fixture(t, { wrap: (base) => ({ ...base, reap: async (jobDir, ...rest) => { await base.reap(jobDir, ...rest); reaped.push(path.basename(jobDir)); } }) });
   f.runner.close();
   storeJob(f, 'kept-done', 'done', { endedAt: Date.now(), exit: { code: 0, signal: null } });
   const keptDir = jobPaths(f.work, 'kept-done').dir;
@@ -1336,7 +1336,7 @@ test('t2480: recovery reaps a job work dir no stored job maps to through the iso
   fs.chmodSync(path.join(orphan, 'tree', 'sub'), 0o500);
   const runner = f.make();
   t.after(() => runner.close());
-  await drain();
+  for (let i = 0; i < 50 && !reaped.length; i++) await drain();
   assert.deepStrictEqual((await runner.poll(['kept-done'])).jobs.map((j) => [j.id, j.state]), [['kept-done', 'done']]);
   assert.deepStrictEqual([reaped, fs.existsSync(orphan), fs.existsSync(keptDir)], [['deadbeef'], false, true]);
 });
