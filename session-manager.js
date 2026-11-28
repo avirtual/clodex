@@ -9989,7 +9989,7 @@ function createSessionManager(deps) {
         try {
           const raw = JSON.parse(fs.readFileSync(file, 'utf8'));
           for (const [name, v] of Object.entries(raw && typeof raw === 'object' ? raw : {})) {
-            if (AGENT_NAME_RE.test(name) && v && Number.isFinite(v.spentAt)) map.set(name, { spentAt: v.spentAt, born: Number.isFinite(v.born) ? v.born : null });
+            if (v && Number.isFinite(v.spentAt)) map.set(name, { spentAt: v.spentAt, born: Number.isFinite(v.born) ? v.born : null });
           }
         } catch {}
       }

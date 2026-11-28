@@ -11,6 +11,7 @@ const { initStores } = require('../stores.js');
 
 const T0 = Date.UTC(2026, 10, 28, 0, 0, 0);
 const H = 3_600_000;
+let idN = 0;
 const QUIET = { info() {}, warn() {}, error() {}, debug() {} };
 
 function withClock(fn) {
@@ -28,6 +29,9 @@ function rig(t, { hours = 0, home = mkTmpRoot('clodex-pw-home-'), PENDING_DIR = 
     getUiSettings: () => ({ get: () => settings }),
     shouldHoldDm: () => ({ hold: true, reason: 'cold' }),
     draftChunkSignal: require('../proxy-util').draftChunkSignal,
+    getPeerManager: () => null,
+    isHumanPtyInput: require('../proxy-util').isHumanPtyInput,
+    randBase36: (n) => String(++idN).padStart(n, 'p'), parkIdInUse: require('../pending-store').parkIdInUse,
   });
   m.sessions.set('root', { name: 'root', agentType: 'claude', activityState: 'idle', createdAt: 1, pty: { write() {} } });
   return { m, injected, logs, settings, home, PENDING_DIR, root: () => m.sessions.get('root') };
