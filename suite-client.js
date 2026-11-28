@@ -1485,11 +1485,13 @@ function createChannelHost({
     const r = out.res;
     const note = await treeNote(tree, r.treeHash);
     const ran = (out.record && out.record.env) || {};
+    const recorded = r.output === 'unavailable' ? recordedTotals(out.record) : null;
     return say({
       ...(box ? { box: { isolation: ran.isolation || null, imageId: (ran.box && ran.box.imageId) || null } } : {}),
       run: 'remote', runner: inflight.name, status: r.status, signal: r.signal, stdout: r.stdout, stderr: r.stderr,
-      error: null, unknown: null, treeHash: r.treeHash, note: [note, aloneNote(out.record), pooled, r.notice].filter(Boolean).join(' ') || note, ...(out.rerouted ? { rerouted: out.rerouted } : {}),
+      error: null, unknown: null, treeHash: r.treeHash, note: [note, aloneNote(out.record), pooled, recorded ? null : r.notice].filter(Boolean).join(' ') || note, ...(out.rerouted ? { rerouted: out.rerouted } : {}),
       ...(r.output ? { output: r.output } : {}),
+      ...(recorded ? { recorded } : {}),
       ...(out.record && out.record.moved ? { moved: out.record.moved } : {}),
     });
   }

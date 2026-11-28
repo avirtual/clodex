@@ -173,6 +173,19 @@ test('host: an unknown result is passed on as unknown with the runner name', asy
   assert.deepStrictEqual(await f.done, { run: 'remote', runner: 'runner-1', unknown: 'runner unreachable' });
 });
 
+test('t2480: a remote run whose output could not be read carries the runner\'s recorded totals to the hand, not the notice', async () => {
+  const res = { status: 1, signal: null, stdout: '', stderr: '', treeHash: TREE, output: 'unavailable', notice: "the runner's output could not be read; the verdict and counts are the runner's own record" };
+  const record = { outcome: 'fail', pass: 6, fail: 1, tests: 7, output: 'unavailable' };
+  const client = stubClient({ result: { unknown: null, res, record } });
+  const f = hostFor({ client });
+  f.host.onMessage(ask(f.dir));
+  assert.deepStrictEqual(await f.done, {
+    run: 'remote', runner: 'runner-1', status: 1, signal: null, stdout: '', stderr: '',
+    error: null, unknown: null, treeHash: TREE, note: null, output: 'unavailable',
+    recorded: { outcome: 'fail', pass: 6, fail: 1, tests: 7 },
+  });
+});
+
 function execFixture(t, bin, { client = null, team = null, peers = null, desk = null, payload = '{}' } = {}) {
   const snapCalls = [];
   const snap = stubSnap();
@@ -519,6 +532,35 @@ test('a tree changed during a remote run appends the note to the digest', async 
     { run: 'remote', runner: 'runner-1', ...CAPTURED.green, signal: null, unknown: null, treeHash: TREE, note: '(tree changed during the run; the suite measured aaaaaaaa)' },
   ]);
   assert.match(r.digest, /^\[[^\]]+\] 3\/3 green \(\d+m \d{2}s\) \(runner runner-1\) \(tree changed during the run; the suite measured aaaaaaaa\)$/);
+});
+
+const UNREAD_ROWS = [
+  ['a green record', 0, { outcome: 'pass', pass: 7, fail: 0, tests: 7 }, 0, '7/7 green (<WALL>) (output unavailable; the counts are the runner\'s record) (runner runner-1)'],
+  ['a red record', 1, { outcome: 'fail', pass: 6, fail: 1, tests: 7 }, 1, '6/7 green, 1 failing (<WALL>) (~/.clodex/test-failures/last.txt) (output unavailable; the counts are the runner\'s record) (runner runner-1)'],
+  ['a red record on exit 0', 0, { outcome: 'fail', pass: 6, fail: 1, tests: 7 }, 1, '6/7 green, 1 failing (<WALL>) (~/.clodex/test-failures/last.txt) (output unavailable; the counts are the runner\'s record) (runner runner-1)'],
+  ['a fail outcome with 0 failing on exit 0', 0, { outcome: 'fail', pass: 7, fail: 0, tests: 7 }, 1, '7/7 green, 0 failing (<WALL>) (~/.clodex/test-failures/last.txt) (output unavailable; the counts are the runner\'s record) (runner runner-1)'],
+];
+for (const [name, status, recorded, wantCode, want] of UNREAD_ROWS) {
+  test(`t2480: a remote hand run with unreadable output and ${name} digests the recorded counts`, async () => {
+    const root = mkRoot(CAPTURED.green);
+    const leaf = path.basename(root);
+    const r = await runWithHost(root, '{}', path.join(root, 'h'), () => [
+      { run: 'remote', runner: 'runner-1', status, signal: null, stdout: '', stderr: '', error: null, unknown: null, treeHash: TREE, note: null, output: 'unavailable', recorded },
+    ]);
+    assert.strictEqual(r.ran, null, 'ENTER: the remote arm never started the local runner');
+    assert.strictEqual(wall(r.digest), `[${leaf}] ${want}`);
+    assert.strictEqual(r.code, wantCode);
+  });
+}
+
+test('t2480: a remote hand run with unreadable output and no usable record keeps the no-TOTALS digest', async () => {
+  const root = mkRoot(CAPTURED.green);
+  const leaf = path.basename(root);
+  const r = await runWithHost(root, '{}', path.join(root, 'h'), () => [
+    { run: 'remote', runner: 'runner-1', status: 0, signal: null, stdout: '', stderr: '', error: null, unknown: null, treeHash: TREE, note: null, output: 'unavailable', recorded: { outcome: 'pass', pass: 5, fail: 3, tests: 7 } },
+  ]);
+  assert.strictEqual(r.digest, `[${leaf}] no "TOTALS: <n> pass, <n> fail, <n> tests" line (exit 0) (~/.clodex/test-failures/last.txt); last:  (runner runner-1)`);
+  assert.strictEqual(r.code, 1);
 });
 
 function stubConn(handler) {
