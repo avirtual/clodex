@@ -4,6 +4,7 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const snapshotLib = require('./suite-snapshot');
+const { customField, customName, cleanCustom, BOX_ARGS_FAILED } = require('./box-args');
 
 const POLL_WAIT_MS = 25000;
 const POLL_SLACK_MS = 10000;
@@ -647,6 +648,7 @@ function createSuiteClient({
       return { unknown: `box mismatch: asked box ${ctx.boxDef.definitionHash.slice(0, 12)}, runner ran image ${String(stamped.imageId || 'unstamped').replace(/^sha256:/, '').slice(0, 12)}` };
     }
     if (job.reason == null) return {};
+    if (job.reason === 'box-args-failed') return { unknown: `${BOX_ARGS_FAILED} (${customName(cleanCustom(stamped.custom)) || 'unstamped'})` };
     if (job.reason === 'timeout') return { unknown: `the suite did not finish within ${ctx.timeoutMs || DEFAULT_RUN_MS}ms (killed)`, outcome: 'timeout' };
     if (job.reason === 'tree-mismatch') {
       const m = /\(([0-9a-f]{8})[0-9a-f]* != ([0-9a-f]{8})/.exec(stderr);
@@ -756,7 +758,7 @@ function createSuiteClient({
         at: iso(now()), team: opts.team, kind: opts.kind, ticket: opts.ticket, treeHash: snap.treeHash, sha: snap.head || null,
         envKey: e.envKey || null, wire: me.wire,
         localEnv: { os: platform, arch },
-        remoteEnv: { os: e.platform || null, arch: e.arch || null, isolation: e.isolation || null, imageId: (e.box && e.box.imageId) || null, definitionHash: (e.box && e.box.definitionHash) || null, ...(e.box && Array.isArray(e.box.shares) ? { shares: e.box.shares } : {}) },
+        remoteEnv: { os: e.platform || null, arch: e.arch || null, isolation: e.isolation || null, imageId: (e.box && e.box.imageId) || null, definitionHash: (e.box && e.box.definitionHash) || null, ...(e.box && Array.isArray(e.box.shares) ? { shares: e.box.shares } : {}), ...customField(e.box && e.box.custom) },
         local: me.local, remote,
         ...(notSent ? { skipped: 'not-sent', ...NO_AGREEMENT } : agreement(me.local, remote)),
         ...(!notSent && namesUnknown(me.local, remote) ? { names: 'unknown' } : {}),
@@ -794,7 +796,7 @@ function createSuiteClient({
       at: iso(now()), team, kind, ticket, treeHash: rec ? rec.treeHash : null, sha: rec ? rec.sha : null,
       envKey: e.envKey || null, wire: wire === 'pull' ? 'pull' : 'push',
       localEnv: local ? { os: platform, arch } : null,
-      remoteEnv: rec ? { os: e.platform || null, arch: e.arch || null, isolation: e.isolation || null, imageId: (e.box && e.box.imageId) || null, definitionHash: (e.box && e.box.definitionHash) || null, ...(e.box && Array.isArray(e.box.shares) ? { shares: e.box.shares } : {}) } : null,
+      remoteEnv: rec ? { os: e.platform || null, arch: e.arch || null, isolation: e.isolation || null, imageId: (e.box && e.box.imageId) || null, definitionHash: (e.box && e.box.definitionHash) || null, ...(e.box && Array.isArray(e.box.shares) ? { shares: e.box.shares } : {}), ...customField(e.box && e.box.custom) } : null,
       local, remote: box ? remoteHalf(box) : null, ...NO_AGREEMENT, decidedBy, ...(held ? { held: true } : {}), ...(bypass ? { bypass: true } : {}), fallback, ...(fallbackCode ? { fallbackCode } : {}), ...(runner ? { runner } : {}), ...(box && box.attempts ? { attempts: box.attempts } : {}),
     });
   }
@@ -1035,6 +1037,7 @@ const FALLBACK_CODES = Object.freeze({
   'box-build-budget': Object.freeze({ reason: 'box build', class: 'budget', retry: false }),
   'box-build-failed': Object.freeze({ reason: 'box build', class: 'deterministic', retry: false }),
   'box-build-interrupted': Object.freeze({ reason: 'box build', class: 'transient', retry: true }),
+  'box-args-failed': Object.freeze({ reason: 'box options', class: 'deterministic', retry: false }),
   'outcome-unknown': Object.freeze({ reason: 'outcome unknown', class: 'unknown', retry: false }),
 });
 
@@ -1055,6 +1058,7 @@ const FALLBACK_OF = [
   [/^the box build did not finish within |^box build on runner: the build did not finish within /, 'box-build-budget'],
   [/^box build on runner: the build was (?:cancelled$|stopped: )/, 'box-build-interrupted'],
   [/^box build on runner: /, 'box-build-failed'],
+  [/^the runner owner's box options failed to start the box /, 'box-args-failed'],
 ];
 
 function boxVerdict(out, boxDef, shares = []) {

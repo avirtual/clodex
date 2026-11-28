@@ -741,3 +741,29 @@ test('t2413: an append that would take the compare log past 5 MB rotates it to .
   assert.strictEqual(fs.readFileSync(file, 'utf8').trim().split('\n').length, 2, 'under the cap the append does not rotate');
   assert.deepStrictEqual(client.tally({ team: 'tm', envKey: 'k1' }), { envKey: 'k1', agree: 1, disagree: 1, outcomeAgreed: 1, sameCounts: 0, skipped: 0, oneSided: [], platforms: null });
 });
+
+test('t2483: the ledger row of a run on an owner-customised box carries its fingerprint and label, never a raw option', () => {
+  const file = path.join(mkTmpRoot('suite-custom-'), 'suite-compare.jsonl');
+  const client = createSuiteClient({ getPeerManager: () => null, compareFile: file });
+  const env = { platform: 'linux', arch: 'x64', isolation: 'container', envKey: 'k1', box: { imageId: 'sha256:x', definitionHash: null, custom: { fingerprint: '64c1563c2aa1', label: 'gpu', args: ['--env=SECRET_TOKEN=zzz'] } } };
+  client.decided({ team: 'tm', kind: 'verify', ticket: 't1', decidedBy: 'box', box: { record: { env, treeHash: 'h', sha: 's' } } });
+  const text = fs.readFileSync(file, 'utf8');
+  const [row] = text.trim().split('\n').map((l) => JSON.parse(l));
+  assert.deepStrictEqual(row.remoteEnv, { os: 'linux', arch: 'x64', isolation: 'container', imageId: 'sha256:x', definitionHash: null, custom: { fingerprint: '64c1563c2aa1', label: 'gpu' } });
+  assert.ok(!text.includes('SECRET_TOKEN'), text);
+});
+
+test('t2483: a box-args-failed job reads as a runner problem naming the label, classed like a box build failure and never retried', () => {
+  const { boxVerdict, FALLBACK_CODES } = require('../suite-client');
+  const unknown = 'the runner owner\'s box options failed to start the box (card-a)';
+  assert.deepStrictEqual(boxVerdict({ unknown, record: {} }, null), { fallback: 'box options', fallbackCode: 'box-args-failed', fallbackClass: 'deterministic' });
+  assert.deepStrictEqual(FALLBACK_CODES['box-args-failed'], { reason: 'box options', class: 'deterministic', retry: false });
+});
+
+test('t2483: a box-args-failed job reads unknown with the label, never the options', async () => {
+  const stamp = { ...BOX_ENV, box: { ...BOX_ENV.box, custom: { fingerprint: '64c1563c2aa1', label: 'card-a' } } };
+  const r = remoteConn({ box: READY, stamp, reason: 'box-args-failed', code: 125 });
+  const out = await boxClient(r.conn).client.run({ ...OPTS, box: true });
+  assert.strictEqual(out.unknown, 'the runner owner\'s box options failed to start the box (card-a)');
+  assert.strictEqual(require('../suite-client').boxVerdict(out, null).fallbackCode, 'box-args-failed');
+});

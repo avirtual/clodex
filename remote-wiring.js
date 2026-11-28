@@ -35,7 +35,7 @@ const { claudeProjectSlug } = require('./clodex-paths');
 const { parseProfileYaml } = require('./memory-store');
 
 const crypto = require('crypto');
-const { wireEntry, offerEntry, engineSlots } = require('./box-offer');
+const { wireEntry, offerEntry, engineSlots, engineCustom } = require('./box-offer');
 const { setNotifying } = require('./offer-directory');
 
 const CLIENT_TOKEN_RE = /^[\x21-\x7e]{16,512}$/;
@@ -171,9 +171,9 @@ function suiteSlotsRefusal(v) {
 function offerCallbacks({ getBoxOffer, getOfferFacts, offerDirectory, dialers, getSuiteEngine, onChange } = {}) {
   if (!offerDirectory || typeof getBoxOffer !== 'function' || typeof getOfferFacts !== 'function') return {};
   return {
-    offerFor: (origin) => wireEntry(getBoxOffer(), getOfferFacts, origin, undefined, { slots: engineSlots(getSuiteEngine) }),
+    offerFor: (origin) => wireEntry(getBoxOffer(), getOfferFacts, origin, undefined, { slots: engineSlots(getSuiteEngine), custom: engineCustom(getSuiteEngine) }),
     receiveOffers: ({ from, own }) => setNotifying(offerDirectory, { provenance: 'announce', source: from, name: from, offer: own }, onChange),
-    listOffers: () => ({ own: offerEntry(getBoxOffer(), getOfferFacts, undefined, { slots: engineSlots(getSuiteEngine) }), offers: offerDirectory.list() }),
+    listOffers: () => ({ own: offerEntry(getBoxOffer(), getOfferFacts, undefined, { slots: engineSlots(getSuiteEngine), custom: engineCustom(getSuiteEngine) }), offers: offerDirectory.list() }),
     ...(dialers ? { noteDialer: (origin) => dialers.note(origin) } : {}),
   };
 }

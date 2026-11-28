@@ -6,6 +6,7 @@ const BOX_ARGS_MAX = 32;
 const BOX_ARG_MAX = 512;
 const BOX_ARGS_LABEL_RE = /^[A-Za-z0-9._-]{1,32}$/;
 const FINGERPRINT_RE = /^[0-9a-f]{12}$/;
+const BOX_ARGS_FAILED = 'the runner owner\'s box options failed to start the box';
 const RESERVED_LONG = [
   '--name', '--rm', '--detach', '--entrypoint', '--cidfile', '--interactive', '--tty', '--restart',
   '--workdir', '--platform', '--pull', '--init', '--log-driver', '--log-opt', '--label', '--label-file',
@@ -82,5 +83,5 @@ const customField = (raw) => {
 const customName = (custom) => (custom ? custom.label || custom.fingerprint : null);
 
 module.exports = {
-  BOX_ARGS_MAX, BOX_ARG_MAX, boxArgRefusal, boxArgsRefusal, boxArgsLabelRefusal, boxArgsFingerprint, boxCustom, cleanCustom, customField, customName,
+  BOX_ARGS_MAX, BOX_ARG_MAX, BOX_ARGS_FAILED, boxArgRefusal, boxArgsRefusal, boxArgsLabelRefusal, boxArgsFingerprint, boxCustom, cleanCustom, customField, customName,
 };

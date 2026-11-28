@@ -383,3 +383,26 @@ test('a run record\'s entry says run only when asked for, so hello stays discove
 test('sanitizeWireOffers accepts an own with scope run', () => {
   assert.deepStrictEqual(sanitizeWireOffers({ own: { ...WIRE_OWN, scope: 'run' } }), { own: { ...WIRE_OWN, scope: 'run' } });
 });
+
+test('t2483: an offer from a runner with owner box options carries only the fingerprint and label, beside own on the wire', () => {
+  const { boxIsolation } = require('../suite-box');
+  const { offerCallbacks } = require('../remote-wiring');
+  const box = boxIsolation({ image: null, work: '/w', stateDir: '/s', uid: 501, gid: 20, docker: { call: async () => ({ ok: true }) }, boxArgs: ['--env=SECRET_TOKEN=zzz'], boxArgsLabel: 'gpu' });
+  const engine = { slotTotal: () => 1, boxCustom: () => box.custom() };
+  const facts = { os: 'linux', arch: 'x64', cpus: 8, memMb: 16384, runtime: { platforms: ['linux/amd64'] } };
+  const cb = offerCallbacks({ getBoxOffer: () => ALWAYS, getOfferFacts: () => facts, offerDirectory: { list: () => [] }, getSuiteEngine: () => engine });
+  const custom = { fingerprint: '64c1563c2aa1', label: 'gpu' };
+  const own = cb.offerFor('murmur');
+  assert.deepStrictEqual(own.custom, custom, 'ENTER: the offer is customised');
+  const bytes = JSON.stringify({ v: 1, from: 'laptop', ...wireOffers(own) });
+  assert.ok(!bytes.includes('SECRET_TOKEN') && !JSON.stringify(cb.listOffers()).includes('SECRET_TOKEN'), bytes);
+  const parsed = JSON.parse(bytes);
+  assert.deepStrictEqual([parsed.custom, 'custom' in parsed.own], [custom, false]);
+  const { custom: _c, slots: _s, ...base } = own;
+  assert.deepStrictEqual(baseSanitizeWireOffers(parsed), { own: base });
+  assert.deepStrictEqual(sanitizeWireOffers(parsed), { own: { ...base, slots: 1, custom } });
+  assert.deepStrictEqual(sanitizeWireOffers({ ...parsed, custom: { fingerprint: '64c1563c2aa1', label: 'gpu', args: ['--env=SECRET_TOKEN=zzz'] } }).own.custom, custom);
+  assert.ok(!('custom' in sanitizeWireOffers({ ...parsed, custom: { fingerprint: 'bad' } }).own));
+  const plain = offerCallbacks({ getBoxOffer: () => ALWAYS, getOfferFacts: () => facts, offerDirectory: { list: () => [] }, getSuiteEngine: () => ({ slotTotal: () => 1, boxCustom: () => null }) });
+  assert.deepStrictEqual(plain.offerFor('murmur'), { ...base, slots: 1 });
+});

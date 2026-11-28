@@ -10,7 +10,7 @@ const TOKEN = 'sekret';
 const NO_CTX_ROOT = mkTmpRoot('offers-noctx-');
 
 const OWN = {
-  scope: 'discovery', boxes: 2, slots: 1, open: true, kinds: ['container'],
+  scope: 'discovery', boxes: 2, slots: 1, custom: { fingerprint: '0b334ad4c4a0', label: 'gpu' }, open: true, kinds: ['container'],
   facts: { os: 'darwin', arch: 'arm64', cpus: 10, memMb: 32768, runtime: { platforms: ['linux/arm64'] } },
 };
 const HELLO_ROW = {
@@ -19,7 +19,7 @@ const HELLO_ROW = {
 };
 const ANNOUNCE_ROW = {
   route: 'r2', provenance: 'announce', name: 'laptop', at: 2,
-  offer: { scope: 'discovery', boxes: 1, slots: 3, open: true, kinds: ['container'], facts: { os: 'win32', arch: 'x64', cpus: 8, memMb: 512, runtime: null } },
+  offer: { scope: 'discovery', boxes: 1, slots: 3, custom: { fingerprint: '64c1563c2aa1', label: null }, open: true, kinds: ['container'], facts: { os: 'win32', arch: 'x64', cpus: 8, memMb: 512, runtime: null } },
 };
 
 function node(body) {
@@ -67,10 +67,10 @@ test('get offers prints the own offer, a hello row and an announce row', async (
     assert.strictEqual(stderr, '');
     assert.strictEqual(code, 0);
     assert.strictEqual(stdout, [
-      'SOURCE    PEER    BOXES  SLOTS  OPEN  OS/ARCH       CPUS  MEMORY  RUNTIME',
-      'self      -       2      1      yes   darwin/arm64  10    32G     linux/arm64',
-      'hello     murmur  4             no    linux/x64     8     21G     linux/amd64',
-      'announce  laptop  1      3      yes   win32/x64     8     512M    none',
+      'SOURCE    PEER    BOXES  SLOTS  CUSTOM  OPEN  OS/ARCH       CPUS  MEMORY  RUNTIME',
+      'self      -       2      1      gpu     yes   darwin/arm64  10    32G     linux/arm64',
+      'hello     murmur  4                     no    linux/x64     8     21G     linux/amd64',
+      'announce  laptop  1      3      yes     yes   win32/x64     8     512M    none',
       '',
     ].join('\n'));
     assert.deepStrictEqual(seen, ['/api/resources', '/api/offers']);
@@ -81,7 +81,7 @@ test('get offers on an empty directory with no own offer prints the header alone
   await withNode({ ok: true, own: null, offers: [] }, async (port) => {
     const { code, stdout } = await cli(['get', 'offers'], port);
     assert.strictEqual(code, 0);
-    assert.strictEqual(stdout, 'SOURCE  PEER  BOXES  SLOTS  OPEN  OS/ARCH  CPUS  MEMORY  RUNTIME\n');
+    assert.strictEqual(stdout, 'SOURCE  PEER  BOXES  SLOTS  CUSTOM  OPEN  OS/ARCH  CPUS  MEMORY  RUNTIME\n');
   });
 });
 
