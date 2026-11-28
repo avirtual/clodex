@@ -1748,7 +1748,9 @@ test('a draining runner finishes its running job with its result, starts no queu
   await f.upload(f.body('d1'));
   await f.spawned(['d1']);
   let drained = 0;
-  assert.strictEqual(f.runner.drain(() => { drained += 1; }), 1);
+  let onDrained;
+  const drainedOnce = new Promise((r) => { onDrained = r; });
+  assert.strictEqual(f.runner.drain(() => { drained += 1; onDrained(); }), 1);
   assert.strictEqual((await f.upload(f.body('d2'))).state, 'queued');
   assert.strictEqual((await f.runner.submit(f.body('d3'))).state, 'queued');
   await drain();
@@ -1757,6 +1759,7 @@ test('a draining runner finishes its running job with its result, starts no queu
   f.held.get('d1').stdout.write('TOTALS: 2 pass, 1 fail, 3 tests\n');
   f.held.get('d1').finish(1);
   const d1 = await waitState(f.runner, 'd1', 'done');
+  await drainedOnce;
   await drain();
   assert.deepStrictEqual([d1.reason, d1.exit, drained], [null, { code: 1, signal: null }, 1]);
   await f.spawned(['d2', 'd3']);
