@@ -918,6 +918,20 @@ output; it returns `{res, unknown, record}` and writes the `where:'remote'`
 records of `logs/suite-runs.jsonl`. A timeout, an unreachable runner, a lost
 job or a result for another job or tree is `unknown`, never a pass.
 
+A queued restart (reboot or Restart When Idle) also waits for the runs this
+node has in flight on other runners (`outboundRuns`), under the same
+`restartWaitsForSuite` seam and 30-minute cap as the local runner's jobs.
+A minute after boot, `recoverOpenRuns` reads the ledger's last 512 KB and
+closes every remote start row (`runner` set, `wire` push or pull) that has no
+end row, began before this process booted and within the runner's 24 h
+retention. It asks the runner once and writes one end row marked
+`recovered: true`: the runner's outcome and totals for a finished job with a
+usable record (reason `recovered after a host restart`), or `lost` for a job
+still queued or running (cancelled on the runner), gone, or a runner that did
+not answer. The row is a ledger fact only; the ticket loop's own resume
+re-runs a verify. A start row older than the tail, or split from it by the
+`.1` rotation `scripts/run-tests.js` does at 5 MB, is not recovered.
+
 ### 2d. Box offers (owner side)
 
 A node may offer test boxes to named peers (`boxOffer` ui-setting, or env
