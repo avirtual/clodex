@@ -504,37 +504,55 @@ test('a wrong suite token keeps its 401 through suiteAsk, and reachable names th
   assert.deepStrictEqual(await client.reachable('runner-1'), { ok: false, why: 'runner refused the token (status 401)' });
 });
 
-test('a failed output slice is asked again up to three times within the deadline; a 404 is asked once', async (t) => {
+test('an output slice is asked again until the 150 s read cap or the deadline, resumes at the slice that failed, and an unread output keeps a usable runner record', async (t) => {
   const root = mkTmpRoot('suite-wire-');
   const repo = makeRepo(root);
   const tree = treeOf(repo);
   const STDOUT = 'TOTALS: 4 pass, 0 fail, 4 tests\n';
+  const PASS = { outcome: 'pass', pass: 7, fail: 0, tests: 7 };
+  const FAIL = { outcome: 'fail', pass: 6, fail: 1, tests: 7 };
+  const OVER = { outcome: 'pass', pass: 5, fail: 3, tests: 7 };
+  const NO_SUMMARY = { outcome: 'no-summary', pass: null, fail: null, tests: null };
+  const TEN = [15000, 15000, 15000, 15000, 15000, 15000, 15000, 15000, 15000, 15000];
+  const unread = (outcome, pass, fail, tests) => [null, outcome, pass, fail, tests, 'unavailable', 'unavailable', '', "the runner's output could not be read; the verdict and counts are the runner's own record"];
+  const unknown = ['runner output unavailable', 'unknown', null, null, null, undefined, undefined, undefined, undefined];
   const cases = [
-    ['fails twice, then answers', 2, 503, 0, [3, 1], [15000, 15000], [null, 'pass', 4]],
-    ['fails three times', 3, 503, 0, [3, 1], [15000, 15000], ['runner output unavailable', 'unknown', null]],
-    ['a 404', 1, 404, 0, [1, 1], [], ['runner output unavailable', 'unknown', null]],
-    ['the deadline passes on the first failure', 3, 503, 60000, [1, 1], [], ['runner output unavailable', 'unknown', null]],
+    ['record pass, output never answers', PASS, 0, Infinity, 0, 503, 0, 1e6, [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], 0, TEN, unread('pass', 7, 0, 7)],
+    ['record fail, output never answers', FAIL, 1, Infinity, 0, 503, 0, 1e6, [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], 0, TEN, unread('fail', 6, 1, 7)],
+    ['no record, output never answers', null, 0, Infinity, 0, 503, 0, 1e6, [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], 0, TEN, unknown],
+    ['a no-summary record, output never answers', NO_SUMMARY, 1, Infinity, 0, 503, 0, 1e6, [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], 0, TEN, unknown],
+    ['a record with pass + fail over tests', OVER, 0, Infinity, 0, 503, 0, 1e6, [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], 0, TEN, unknown],
+    ['a 404 with a pass record is asked once', PASS, 0, 1, 0, 404, 0, 1e6, [0], 0, [], unread('pass', 7, 0, 7)],
+    ['a 404 with no record is asked once', null, 0, 1, 0, 404, 0, 1e6, [0], 0, [], unknown],
+    ['the read succeeds on the 5th try', null, 0, 4, 0, 503, 0, 1e6, [0, 0, 0, 0, 0], 1, [15000, 15000, 15000, 15000], [null, 'pass', 4, 0, 4, undefined, undefined, STDOUT, undefined]],
+    ['a failure mid-stream resumes at the failed slice', null, 0, 1, 16, 503, 0, 1e6, [0, 16, 16], 1, [15000], [null, 'pass', 4, 0, 4, undefined, undefined, STDOUT, undefined]],
+    ['the deadline passes on the first failure', null, 0, Infinity, 0, 503, 60000, 50000, [0], 0, [], unknown],
   ];
-  for (const [name, failures, status, lateMs, wantCalls, wantSlept, want] of cases) {
+  for (const [name, record, code, failures, failAt, status, lateMs, budgetMs, wantStdout, wantStderr, wantSlept, want] of cases) {
     const clock = fakeClock();
-    const asked = { stdout: 0, stderr: 0 };
+    const asked = { stdout: [], stderr: 0 };
+    let failed = 0;
     const { runner } = stubRunner({
-      poll: async (ids) => ({ ok: true, bootId: 'b', jobs: [doneView(ids[0], tree)] }),
+      poll: async (ids) => ({ ok: true, bootId: 'b', jobs: [doneView(ids[0], tree, { exit: { code, signal: null }, ...(record ? { record } : {}) })] }),
       output: async (id, o) => {
-        asked[o.stream] += 1;
-        if (o.stream === 'stdout' && asked.stdout <= failures) {
+        if (o.stream === 'stderr') { asked.stderr += 1; return { ok: true, total: 0, offset: 0, text: '' }; }
+        asked.stdout.push(o.offset);
+        if (o.offset === failAt && failed < failures) {
+          failed += 1;
           clock.t += lateMs;
           return { ok: false, status, error: 'slice failed' };
         }
-        return { ok: true, total: o.stream === 'stdout' ? STDOUT.length : 0, offset: 0, text: o.stream === 'stdout' ? STDOUT : '' };
+        const text = failAt > 0 ? STDOUT.slice(o.offset, o.offset + failAt) : STDOUT;
+        return { ok: true, total: STDOUT.length, offset: o.offset, text };
       },
     });
     const { server, port } = await startServer(t, { suiteRunner: runner });
     const { client } = clientFor(peerFor(t, port).conn, { now: clock.now, sleep: clock.sleep });
-    const out = await client.run({ peer: 'runner-1', tree: repo, budgetMs: 50000 });
-    assert.deepStrictEqual([asked.stdout, asked.stderr], wantCalls, name);
+    const out = await client.run({ peer: 'runner-1', tree: repo, budgetMs });
+    assert.deepStrictEqual([asked.stdout, asked.stderr], [wantStdout, wantStderr], name);
     assert.deepStrictEqual(clock.slept, wantSlept, name);
-    assert.deepStrictEqual([out.unknown || null, out.record.outcome, out.record.pass], want, name);
+    const r = out.record;
+    assert.deepStrictEqual([out.unknown || null, r.outcome, r.pass, r.fail, r.tests, r.output, out.res ? out.res.output : undefined, out.res ? out.res.stdout : undefined, out.res ? out.res.notice : undefined], want, name);
     server.stop();
   }
 });

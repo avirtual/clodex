@@ -10,13 +10,14 @@ const POLL_SLACK_MS = 10000;
 const RETRY_MS = 15000;
 const COMMIT_TIMEOUT_MS = 120000;
 const SLICE_BYTES = 256 * 1024;
-const SLICE_ATTEMPTS = 3;
 const MAX_RESUMES = 8;
 const DEFAULT_BUDGET_MS = 36 * 60 * 1000;
 const DEFAULT_RUN_MS = 21 * 60 * 1000;
 const BUILD_BUDGET_MS = 25 * 60 * 1000;
 const SNAPSHOT_WAIT_MS = 2000;
 const LOST_AFTER_MS = 150000;
+const OUTPUT_READ_MS = LOST_AFTER_MS;
+const OUTPUT_UNREAD_NOTICE = "the runner's output could not be read; the verdict and counts are the runner's own record";
 const CLAIM_TTL_MS = 60000;
 const MOVE_CHECK_MS = 60000;
 const MAX_MOVES = 2;
@@ -76,6 +77,13 @@ function lastTotals(text) {
   let last = null;
   for (let m = re.exec(text); m; m = re.exec(text)) last = { pass: Number(m[1]), fail: Number(m[2]), tests: Number(m[3]) };
   return last;
+}
+
+function recordedTotals(rec) {
+  if (!rec || (rec.outcome !== 'pass' && rec.outcome !== 'fail')) return null;
+  const { pass, fail, tests } = rec;
+  if (![pass, fail, tests].every((n) => Number.isInteger(n) && n >= 0) || pass + fail > tests) return null;
+  return { outcome: rec.outcome, pass, fail, tests };
 }
 
 function boxDefOf(box) {
@@ -465,14 +473,14 @@ function createSuiteClient({
     return { retry: 'upload' };
   }
 
-  async function readOutput(ctx, jobId, stream, progress) {
+  async function readOutput(ctx, jobId, stream, progress, readBy) {
     let text = '';
     let offset = 0;
     for (;;) {
       const q = `stream=${stream}&offset=${offset}&length=${SLICE_BYTES}`;
-      const r = await ask(ctx, (c) => c.suiteAsk('GET', `/api/suite/jobs/${encodeURIComponent(jobId)}/output?${q}`), progress, SLICE_ATTEMPTS);
+      const r = await ask(ctx, (c) => c.suiteAsk('GET', `/api/suite/jobs/${encodeURIComponent(jobId)}/output?${q}`), progress, Infinity, Math.max(0, Math.min(ctx.lostAfterMs, readBy - now())));
       if (restarted(r)) return RESTARTED;
-      if (!r.body || !r.body.ok) return null;
+      if (r.unreachable || !r.body || !r.body.ok) return null;
       text += r.body.text;
       offset = r.body.offset + Buffer.byteLength(r.body.text);
       if (offset >= r.body.total || !r.body.text) return text;
@@ -565,10 +573,16 @@ function createSuiteClient({
       if (job.state !== 'done') continue;
       if (job.reason === 'runner-restart') return { retry: 'runner-restart', job };
       if (job.queueMs != null) markStarted(ctx, job);
-      const stdout = await readOutput(ctx, jobId, 'stdout', progress);
-      const stderr = stdout === RESTARTED ? RESTARTED : await readOutput(ctx, jobId, 'stderr', progress);
+      const readBy = now() + OUTPUT_READ_MS;
+      const stdout = await readOutput(ctx, jobId, 'stdout', progress, readBy);
+      const stderr = stdout === RESTARTED || stdout == null ? stdout : await readOutput(ctx, jobId, 'stderr', progress, readBy);
       if (stdout === RESTARTED || stderr === RESTARTED) return { retry: 'runner-restart', job };
-      if (stdout == null || stderr == null) return { unknown: 'runner output unavailable', job };
+      if (stdout == null || stderr == null) {
+        const recorded = recordedTotals(job.record);
+        if (!recorded) return { unknown: 'runner output unavailable', job };
+        progress(`runner ${ctx.peer}: ${OUTPUT_UNREAD_NOTICE}`);
+        return { job, stdout: '', stderr: '', output: 'unavailable', recorded, ...doneVerdict(ctx, job, '') };
+      }
       return { job, stdout, stderr, ...doneVerdict(ctx, job, stderr) };
     }
   }
@@ -629,20 +643,23 @@ function createSuiteClient({
     const out = ctx.stopWhy ? { unknown: ctx.stopWhy } : given;
     runs.delete(ctx.id);
     const job = out.job || null;
+    const unread = out.output === 'unavailable' && out.recorded ? out.recorded : null;
     const res = out.stdout != null ? {
       status: job.exit ? job.exit.code : null, signal: job.exit ? job.exit.signal : null,
       stdout: out.stdout, stderr: out.stderr, treeHash: ctx.treeHash, jobId: ctx.jobId, attempt: ctx.attempt,
       reason: job.reason, truncated: !!(job.out && job.out.truncated),
+      ...(unread ? { output: 'unavailable', notice: OUTPUT_UNREAD_NOTICE } : {}),
     } : null;
     const unknown = out.unknown ? `${out.unknown}${out.outcome === 'timeout' && res ? killedTail(res.stdout, res.stderr) : ''}` : null;
-    const totals = res && !unknown ? lastTotals(res.stdout) : null;
-    const outcome = out.outcome || (unknown ? 'unknown' : !totals ? 'no-summary' : res.status === 0 ? 'pass' : 'fail');
+    const totals = res && !unknown ? unread || lastTotals(res.stdout) : null;
+    const outcome = out.outcome || (unknown ? 'unknown' : unread ? unread.outcome : !totals ? 'no-summary' : res.status === 0 ? 'pass' : 'fail');
     const endedAt = now();
     const record = {
       id: ctx.id, phase: 'end', where: ctx.where, runner: ctx.peer, wire: ctx.wire, jobId: ctx.jobId, attempt: ctx.attempt,
       kind: ctx.kind, scope: ctx.scope, ...(ctx.named ? { named: ctx.named } : {}), team: ctx.team, ticket: ctx.ticket, seat: ctx.seat,
       tree: ctx.tree, sha: ctx.sha, treeHash: ctx.treeHash, queuedAt: iso(ctx.queuedAt), route: ctx.route, override: ctx.override,
       outcome, reason: unknown, pass: totals ? totals.pass : null, fail: totals ? totals.fail : null, tests: totals ? totals.tests : null,
+      ...(unread && !unknown ? { output: 'unavailable' } : {}),
       endedAt: iso(endedAt), durationMs: ctx.startedAt != null ? endedAt - ctx.startedAt : null,
       queueMs: job ? job.queueMs : null, setupMs: job ? job.setupMs : null, runMs: job ? job.runMs : null,
       env: ctx.env,
@@ -912,6 +929,7 @@ function remoteHalf(out) {
     pass: rec.pass == null ? null : rec.pass, fail: rec.fail == null ? null : rec.fail, tests: rec.tests == null ? null : rec.tests,
     failing: measured ? failingNames(out.res.stdout || '') : [], slow: measured ? slowNames(out.res.stdout || '') : [],
     jobId: rec.jobId || null, queueMs: rec.queueMs == null ? null : rec.queueMs, runMs: rec.runMs == null ? null : rec.runMs,
+    ...(rec.output ? { output: rec.output } : {}),
   };
 }
 
@@ -1362,7 +1380,8 @@ function createChannelHost({
     return say({
       ...(box ? { box: { isolation: ran.isolation || null, imageId: (ran.box && ran.box.imageId) || null } } : {}),
       run: 'remote', runner: inflight.name, status: r.status, signal: r.signal, stdout: r.stdout, stderr: r.stderr,
-      error: null, unknown: null, treeHash: r.treeHash, note: [note, aloneNote(out.record), pooled].filter(Boolean).join(' ') || note, ...(out.rerouted ? { rerouted: out.rerouted } : {}),
+      error: null, unknown: null, treeHash: r.treeHash, note: [note, aloneNote(out.record), pooled, r.notice].filter(Boolean).join(' ') || note, ...(out.rerouted ? { rerouted: out.rerouted } : {}),
+      ...(r.output ? { output: r.output } : {}),
       ...(out.record && out.record.moved ? { moved: out.record.moved } : {}),
     });
   }
@@ -1384,4 +1403,4 @@ function createChannelHost({
   };
 }
 
-module.exports = { createSuiteClient, createChannelHost, route, jobEnvRefusal, phaseEnv, localPhaseEnv, localPhaseDropped, envDroppedLine, envDroppedRow, ENV_DROPPED_MAX, ENV_DROPPED_NAME_MAX, PHASE_ENV_KEYS, lastTotals, localHalf, failingNames, agreement, boxVerdict, fallbackOf, FALLBACK_CODES, pickRunner, runnerLoad, pickRecord, consideredOf, waitNote, ledgerPicks, ledgerFiles, LEDGER_FILES_MAX, LEDGER_PATH_MAX, CONSIDERED_MAX, pickLine, poolNote, aloneNote, HAND_QUEUE_MS, HAND_RUN_MS, handSlackMs, handExecSlackMs, HUNG_RE, BUILD_BUDGET_MS, LOST_AFTER_MS };
+module.exports = { createSuiteClient, createChannelHost, OUTPUT_UNREAD_NOTICE, OUTPUT_READ_MS, route, jobEnvRefusal, phaseEnv, localPhaseEnv, localPhaseDropped, envDroppedLine, envDroppedRow, ENV_DROPPED_MAX, ENV_DROPPED_NAME_MAX, PHASE_ENV_KEYS, lastTotals, localHalf, failingNames, agreement, boxVerdict, fallbackOf, FALLBACK_CODES, pickRunner, runnerLoad, pickRecord, consideredOf, waitNote, ledgerPicks, ledgerFiles, LEDGER_FILES_MAX, LEDGER_PATH_MAX, CONSIDERED_MAX, pickLine, poolNote, aloneNote, HAND_QUEUE_MS, HAND_RUN_MS, handSlackMs, handExecSlackMs, HUNG_RE, BUILD_BUDGET_MS, LOST_AFTER_MS };

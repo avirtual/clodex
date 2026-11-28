@@ -22,7 +22,7 @@ const { hostNotice } = require('./host-stamp');
 const { idleClearAfterMs, IDLE_CLEAR_MIN_MS } = require('./assistant-sleep');
 const { localHalf, failingNames } = require('./suite-client');
 const { RUNNER_ENV_TOKENS } = require('./intent-registry');
-const { phaseEnv, localPhaseEnv, localPhaseDropped, envDroppedLine, envDroppedRow, boxVerdict, fallbackOf, FALLBACK_CODES, pickRunner, runnerLoad, pickRecord, consideredOf, pickLine, aloneNote, BUILD_BUDGET_MS, HUNG_RE, HAND_QUEUE_MS } = require('./suite-client');
+const { OUTPUT_UNREAD_NOTICE, phaseEnv, localPhaseEnv, localPhaseDropped, envDroppedLine, envDroppedRow, boxVerdict, fallbackOf, FALLBACK_CODES, pickRunner, runnerLoad, pickRecord, consideredOf, pickLine, aloneNote, BUILD_BUDGET_MS, HUNG_RE, HAND_QUEUE_MS } = require('./suite-client');
 const {
   matchSeatRole, nameRole, defaultLeadSeat, ROLE_RE, RESERVED_ROLE_KEYS, STOCK_ROLE_DEFS,
   DEFAULT_ROLE_DISPATCH, TRUNK_HEAD, normalizeTestRoots, TEST_ROOTS_MAX, effectiveHandCap, DONE_VALUES, normalizeDone, NAME_RE: NODE_NAME_RE, TEST_RUNNER_HANDS, TEST_RUNNER_GATE, TEST_RUNNER_FALLBACK, TEST_RUNNER_WIRE_PUSH: WIRE_PUSH, TEST_RUNNER_POOL_MAX,
@@ -7135,7 +7135,7 @@ function createTicketMethods(deps, shared) {
         return ` (home, by ${flat(suite.bypass.by)}: ${flat(suite.bypass.reason)})`;
       }
       const alone = suite.decidedBy === 'box' ? aloneNote(suite) : null;
-      if (suite.decidedBy === 'box') return `${suite.rerouted ? ` (box, rerouted from ${suite.rerouted.from} to ${suite.rerouted.to})` : ' (box)'}${alone ? ` ${alone}` : ''}`;
+      if (suite.decidedBy === 'box') return `${suite.rerouted ? ` (box, rerouted from ${suite.rerouted.from} to ${suite.rerouted.to})` : ' (box)'}${alone ? ` ${alone}` : ''}${suite.box && suite.box.output === 'unavailable' ? ` — ${OUTPUT_UNREAD_NOTICE}` : ''}`;
       return ` (home, box unavailable: ${suite.fallback})`;
     },
 
@@ -7402,11 +7402,13 @@ function createTicketMethods(deps, shared) {
       // Not hoisted above the green check: a passing ticket would hold a 64KB string for no reader.
       if (res.error) { out.error = res.error; out.output = text; return out; }
       out.code = res.code;
+      const unread = boxed && boxed.output === 'unavailable' ? box.out.record : null;
+      if (unread) out.box.output = 'unavailable';
 
       // TOTALS is the only proof the run completed: exit 0 also comes from a refused lock and an empty tap.
       // Match stdout only, last hit: a TOTALS-shaped stderr line would otherwise shadow the real summary.
       const all = [...String(res.stdout || '').matchAll(/TOTALS: (\d+) pass, (\d+) fail, (\d+) tests/g)];
-      const totals = all.length ? all[all.length - 1] : null;
+      const totals = unread ? [null, unread.pass, unread.fail, unread.tests] : all.length ? all[all.length - 1] : null;
       if (!totals) {
         const hung = String(res.stderr || '').split('\n').filter((l) => HUNG_RE.test(l)).pop();
         const last = String(res.stdout || '').trim().split('\n').filter((l) => l.trim()).pop() || '(no stdout)';
@@ -7438,6 +7440,7 @@ function createTicketMethods(deps, shared) {
           const esc = /ESCAPES: (?!0)(.*)/.exec(text);
           if (esc) out.failing = `escaped errors — ${esc[1].trim().slice(0, 500)}`;
         }
+        if (!out.failing && unread) out.failing = `none named — ${OUTPUT_UNREAD_NOTICE}; the output stays on runner ${out.box.runner || 'unknown'} for 24 h as job ${out.box.jobId || 'unknown'}`;
         const slowNames = [];
         let staleEntry = false;
         const stdoutText = String(res.stdout || '');
