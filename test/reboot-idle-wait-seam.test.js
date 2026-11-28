@@ -184,7 +184,7 @@ test('t2400: main.js holds the restart on runner jobs, fences on arm, and takes 
   assert.match(src, /fence:\s*\(on\)\s*=>\s*\{\s*if \(engine\) engine\.fenceSuiteRunner\(on\);\s*\}/);
   assert.match(src, /if \(busy === 0 && !jobs\.length\) \{/);
   assert.match(src, /detail:\s*restartDetail\(\{ busy, idle, jobs \}\)/);
-  assert.match(src, /detail:\s*pendingDetail\(suiteRestartJobs\(\)\)/);
+  assert.match(src, /detail:\s*pendingDetail\(suiteRestartJobs\(\), idleWaiter\.state\(\)\)/);
   assert.match(src, /restartWaitsForSuite:\s*true,/);
 });
 
