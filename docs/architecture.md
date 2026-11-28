@@ -450,6 +450,12 @@ bundle), whose packaged form is the Docker image under
   `grant().serve` turns false. Built per `PeerConnection` by peer-wiring.js
   `suiteClaimerFor`, which injects `runGrant` and `suiteDispatch` over
   remote-wiring's `getSuiteEngine`. In SCANNED_MODULES.
+- **box-args.js** — pure validation of the test runner owner's extra `docker run`
+  options (`boxArgsRefusal`, `boxArgRefusal`, `boxArgsLabelRefusal`), their
+  fingerprint (`boxArgsFingerprint`, `boxCustom`) and the `{ fingerprint, label }`
+  stamp that is all other machines see (`cleanCustom`, `customField`,
+  `customName`). Read by stores.js, ipc-handlers.js, remote-wiring.js,
+  suite-box.js, suite-runner.js, suite-client.js, box-offer.js and team-tickets.js.
 - **box-offer.js** — pure validation of the `boxOffer` ui-setting (a
   discovery-only offer to host test boxes for named peers): `sanitizeBoxOffer`
   (whole record or null), `offerFromEnv` (`CLODEX_BOX_OFFER`), `scheduleOpen`,

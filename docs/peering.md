@@ -685,6 +685,46 @@ honour|ignore` sends it. Preferences sets the same key with its
 through `suiteRunner:set` and `applySuiteRunner`; an Apply that does not name
 `exclusive` (an older web bundle) keeps the stored value.
 
+Box options. The runner's owner may add extra `docker run` options to every
+test box on the node: the record's `boxArgs` (a list) and `boxArgsLabel`.
+`boxArgsRefusal` in box-args.js is the one validator (stores.js
+`sanitizeSuiteRunner`, `suiteRunner:set`, `setSuiteRunnerBoxArgs`,
+`boxIsolation` and `runArgv` all apply it): at most 32 elements of 1 to 512
+characters with no NUL or line break, each starting with `-`, never `--`, a
+value option with its value attached (`--device=/dev/dri`, `-v=/a:/b`); the
+options Clodex sets itself are refused by name in both forms (`--name`,
+`--rm`, `--detach`/`-d`, `--entrypoint`, `--cidfile`,
+`--interactive`/`-i`, `--tty`/`-t`, `--restart`, `--workdir`/`-w`,
+`--platform`, `--pull`, `--init`, `--log-driver`, `--log-opt`,
+`--label`/`-l`, `--label-file`), as is a short cluster holding `d`, `i` or
+`t`. A refusal names the element by its 1-based position and rejects the whole
+save. The label is at most 32 of `[A-Za-z0-9._-]`. `runArgv` puts the list
+after the env flags and immediately before the image. Box jobs only: native
+jobs (`isolation` user or none) never see it.
+
+The fingerprint is the first 12 hex of sha256 over `JSON.stringify(list)`; it
+is stamped as `identity.box.custom: { fingerprint, label }` and is an input of
+the box `envKey` only when the list is non-empty. The raw list is copied onto
+the runner's own job record at admission (`jobFrom`), and the box starts with
+that copy, so a job queued before a change runs as it was admitted. Nothing
+raw leaves the node: the offer carries `custom` beside `own` (like `slots`),
+`get offers` shows it in CUSTOM (the label, or `yes`), the ledger row's
+`remoteEnv` carries `custom`, and a verify decided on such a box adds "on an
+owner-customised box (<label or fingerprint>)" to its notice. A box that
+`docker run` cannot start (exit 125) under a list ends `box-args-failed`: the
+job's stderr holds only "the runner owner's box options failed to start the
+box (<label or fingerprint>)", Docker's own stderr goes to the runner's log,
+and the source treats it as the `box-args-failed` fallback (deterministic, not
+retried, not a test result). A suite that starts and exits non-zero is an
+ordinary result. `POST /api/testjobs/box-args` with `{ boxArgs?, boxArgsLabel? }`
+(the `testjobs/box-args` row; same token and refusals as `slots`) sets either
+key through `setSuiteRunnerBoxArgs` and answers
+`{ ok, count, custom, applied, running }`; `clodexctl patch testjobs
+--box-arg OPT… | --no-box-args [--box-args-label NAME]` sends it. Preferences
+has the `prefs-suite-runner-boxArgs` textarea (one option per line) and the
+`prefs-suite-runner-boxArgsLabel` field; an Apply that does not name them
+keeps the stored values.
+
 The job's PATH is a fixed list (`jobPath`), never the node's own:
 `/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin`, with
 `/opt/homebrew/bin:/opt/homebrew/sbin` ahead of it on macOS arm64. Its `LANG`

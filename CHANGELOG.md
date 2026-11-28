@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+- Test runners: the owner of a runner can add its own options to how its test boxes start — for example passing a GPU device into the box — in Preferences or with `clodexctl patch testjobs --box-arg`. The options stay on that machine: other machines see only a label and a fingerprint, a run on such a box is marked as customised, and a box that cannot start because of them is reported as a runner problem, not a test failure.
+
 ## 5.215.0 — 2026-11-28
 
 - Team tickets: a ticket no longer escalates at verify with "the branch was rebased or reset" when it was not. The recorded base could be a merge that landed on the trunk in the instant the ticket's branch was being created; it is now always the commit the branch was created from.
