@@ -5415,7 +5415,8 @@ function applyThinkBadge(el) {
   if (!badge) return;
   const compactSince = Number(el.dataset.compactingSince || 0);
   if (compactSince) {
-    badge.textContent = `⧗ ${compactElapsedText(Date.now() - compactSince)}`;
+    const word = el.dataset.compacting === 'clearing' || el.dataset.compacting === 'reloading' ? `${el.dataset.compacting} ` : '';
+    badge.textContent = `⧗ ${word}${compactElapsedText(Date.now() - compactSince)}`;
     badge.dataset.state = 'compact';
     return;
   }

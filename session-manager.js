@@ -17,7 +17,6 @@ const EXEC_REPLY_WAIT_MS = EXEC_ACK_MIN_TIMEOUT_MS + 10 * 1000;
 const RIDE_MAX_MS = 30 * 60 * 1000;
 const SHORT_MESSAGE_CACHE_IDLE_MS = 10 * 60 * 1000;
 const idleClearsIo = (io) => io === 'stream';
-const CTX_TRANSITION_LINE_RE = /^[ \t]*\[agent:context[ \t]+(clear|reload)\b/m;
 const SANDBOX_RELAY_TIMEOUT_MS = 60 * 1000;
 const EXEC_STATUS_DEFAULT_MS = 3 * 60 * 1000;
 const EXEC_STATUS_MIN_MS = 30 * 1000;
@@ -1396,6 +1395,7 @@ function createSessionManager(deps) {
       s._holdRearmed = false;
       getPersistence().setSessionId(agent, newSessionId);
       this._noteConversationForDigest(s, newSessionId);
+      this._ctxHoldSessionEdge(s, oldSid, newSessionId);
     }
 
     // Startup re-arm for perpetual holds, which an idle seat never gets from _maybeRearmHold (no turn);
@@ -2946,6 +2946,7 @@ function createSessionManager(deps) {
           getPersistence().remove(name);
           this._bindHold(name);
           this.dropReminders(name);
+          this._dropCtxHold(name);
         }
         if (stampExited) {
           try { getPersistence().setExited(name, { exitCode, signal: signal || null }); } catch {}
@@ -3216,7 +3217,7 @@ function createSessionManager(deps) {
         this._executeCompact(s, cmd, '');
         return { ok: true };
       }
-      this._sendContextCommand(s, cmd);
+      this._sendContextCommand(s, cmd, sub);
       log.info('session', `clear ${s.name} → ${wireCtx ? cmd.method : cmd} (operator control)`);
       return { ok: true };
     }
@@ -3278,7 +3279,7 @@ function createSessionManager(deps) {
       const same = parkKey ? s.outbox.findIndex((q) => q.parkKey === parkKey) : -1;
       if (same >= 0) {
         s.outbox[same] = item;
-      } else if (item.origin === 'operator') {
+      } else if (item.origin === 'operator' || item.ctxClear) {
         let i = 0;
         while (i < s.outbox.length && s.outbox[i].origin === 'operator') i += 1;
         s.outbox.splice(i, 0, item);
@@ -3387,6 +3388,7 @@ function createSessionManager(deps) {
 
     _onStreamToolBoundary(s) {
       if (!s || s.io !== 'stream' || s._dead || !s.stream || this._streamStopped(s)) return;
+      if (s.outbox.some((q) => q.ctxClear)) return;
       const sys = s.outbox.filter((q) => q.origin === 'system' && !q.wire && !q.solo);
       if (!sys.length) return;
       const now = Date.now();
@@ -4168,6 +4170,7 @@ function createSessionManager(deps) {
       };
       const dropSeatDir = () => {
         this.dropReminders(name);
+        this._dropCtxHold(name);
         this._dropProfile(name);
         try {
           const r = removeSeat({ root: REGISTRY_DIR, name, fs });
@@ -5529,7 +5532,7 @@ function createSessionManager(deps) {
         ...(s.fixFor ? { fixFor: s.fixFor } : {}),
         ...(s.clone ? { clone: s.clone } : {}),
         activity: s.activityState || 'idle',
-        compacting: s.compacting || null,
+        compacting: s.compacting || this.ctxHoldBadge(s.name),
         attention: s.needsAttention ? s.needsAttention.kind : null,
         account: this.accountFor(s.name, resolveAccount),
         model: s.type === 'claude' ? this.modelFor(s.name, resolveSettingsModel) : null,
@@ -5635,6 +5638,7 @@ function createSessionManager(deps) {
         this.forgetSeatFiles(s.name, rec);
         this._dropPendingDir(s.name);
         this.dropReminders(s.name);
+        this._dropCtxHold(s.name);
       }
       for (const e of records) {
         if (hasTree(e)) { await destroyArm(e.name, dropped); continue; }
@@ -5644,6 +5648,7 @@ function createSessionManager(deps) {
         this.forgetSeatFiles(e.name, e);
         this._dropPendingDir(e.name);
         this.dropReminders(e.name);
+        this._dropCtxHold(e.name);
         dropped.push(e.name);
       }
       if (dropped.length) {
@@ -6076,7 +6081,7 @@ function createSessionManager(deps) {
       if (s && state !== 'idle' && s._injectStuck) this._clearInjectStuck(s);
       if (state !== 'idle') this._touchTicketActivity(name);
       if (s && state !== 'idle') this._ctxHoldOnTurnStart(s);
-      if (s && state !== 'idle' && s.needsAttention && !(s.streamPermissions && s.streamPermissions.size)) this._setAttention(s, null);
+      if (s && state !== 'idle' && s.needsAttention && s.needsAttention.kind !== 'context-stuck' && !(s.streamPermissions && s.streamPermissions.size)) this._setAttention(s, null);
       if (s && state === 'idle') { this._maybeFlushInjectQueue(s); this._drainPendingAtIdle(s); }
       // notify marks turn-end; idle also fires mid-turn (wire gap-idle, jsonl text flush), so a consumer
       // acting on state alone acts in the middle of turns.
@@ -6344,7 +6349,7 @@ function createSessionManager(deps) {
           if (raw && Number.isInteger(raw.seq)) seq = raw.seq;
           for (const [name, r] of Object.entries(raw && raw.holds && typeof raw.holds === 'object' ? raw.holds : {})) {
             if (!r || (r.kind !== 'clear' && r.kind !== 'reload') || !Number.isInteger(r.gen)) continue;
-            map.set(name, { ...r, state: 'failed', typed: false, why: r.state === 'failed' ? r.why : 'app restarted mid-transition' });
+            map.set(name, { ...r, state: r.state === 'failed' ? 'failed' : 'restored', typed: false });
             if (r.gen > seq) seq = r.gen;
           }
         } catch {}
@@ -6362,10 +6367,10 @@ function createSessionManager(deps) {
     }
 
     _ctxHoldReason(session, passGen = null) {
-      if (!session || !session.name) return null;
+      if (!this._ctxHoldApplies(session)) return null;
       if (session._ctxPreArmed) return `${session._ctxPreArmed}-window`;
       const rec = this._ctxHoldMap().get(session.name);
-      if (!rec || (passGen !== null && rec.gen === passGen && rec.state !== 'failed')) return null;
+      if (!rec || (passGen !== null && rec.gen === passGen)) return null;
       if (rec.state === 'failed' && !rec.notified && !session._dead) this._notifyCtxHoldFailed(session.name, rec);
       return `${rec.kind}-window`;
     }
@@ -6377,10 +6382,27 @@ function createSessionManager(deps) {
       return rec.state === 'failed' ? `${verb} did not complete` : (verb === 'reload' ? 'reloading' : 'clearing');
     }
 
+    _ctxHoldApplies(session) {
+      return !!(session && session.name && session.io !== 'stream' && drainsParkedMail(session.agentType));
+    }
+
+    _dropCtxHold(name) {
+      const map = this._ctxHoldMap();
+      if (!map.has(name)) return;
+      map.delete(name);
+      this._clearCtxHoldFailTimer(name);
+      this._saveCtxHolds();
+    }
+
     _preArmCtxHold(session, text) {
-      const hit = typeof text === 'string' ? CTX_TRANSITION_LINE_RE.exec(text) : null;
-      if (!hit || session.io === 'stream') return;
-      session._ctxPreArmed = hit[1];
+      if (typeof text !== 'string' || !this._ctxHoldApplies(session)) return;
+      let sub = null;
+      for (const line of text.split('\n')) {
+        const intent = line.includes('[agent:context') ? parseIntent(line) : null;
+        if (intent && intent.type === 'context' && (intent.sub === 'clear' || intent.sub === 'reload')) { sub = intent.sub; break; }
+      }
+      if (!sub) return;
+      session._ctxPreArmed = sub;
       setImmediate(() => setImmediate(() => {
         if (!session._ctxPreArmed) return;
         session._ctxPreArmed = null;
@@ -6407,6 +6429,7 @@ function createSessionManager(deps) {
         session.needsAttention = null;
         this._sendToSession(name, 'session-attention', name, null);
       }
+      this._ctxHoldRow(name);
       this._armCtxHoldFailTimer(name, rec.gen);
       this._shadowLog({ type: 'ctx-hold-armed', agent: name, kind, gen: rec.gen });
       return rec;
@@ -6437,7 +6460,20 @@ function createSessionManager(deps) {
       rec.why = why;
       this._notifyCtxHoldFailed(name, rec);
       this._saveCtxHolds();
+      this._ctxHoldRow(name);
       return true;
+    }
+
+    ctxHoldBadge(name) {
+      const rec = this._ctxHoldMap().get(name);
+      if (!rec || rec.state === 'failed') return null;
+      return { since: rec.at || Date.now(), trigger: rec.kind === 'reload' ? 'reloading' : 'clearing' };
+    }
+
+    _ctxHoldRow(name) {
+      const s = this.sessions.get(name);
+      if (!s || s._dead || s.compacting) return;
+      this._sendToSession(name, 'session-compacting', name, this.ctxHoldBadge(name));
     }
 
     _notifyCtxHoldFailed(name, rec) {
@@ -6465,6 +6501,7 @@ function createSessionManager(deps) {
       this._shadowLog({ type: 'ctx-hold-released', agent: name, kind: rec.kind, gen: rec.gen, why });
       const s = this.sessions.get(name);
       if (!s || s._dead) return true;
+      this._ctxHoldRow(name);
       if (s.needsAttention && s.needsAttention.kind === 'context-stuck') this._setAttention(s, null);
       this._maybeFlushInjectQueue(s);
       if (s.activityState !== 'thinking') this._drainPendingAtIdle(s);
@@ -6486,12 +6523,12 @@ function createSessionManager(deps) {
 
     _ctxHoldTyped(name, gen) {
       const rec = this._ctxHoldMap().get(name);
-      if (rec && rec.gen === gen && rec.state !== 'failed') rec.typed = true;
+      if (rec && rec.gen === gen) rec.typed = true;
     }
 
     _ctxHoldOnTurnStart(session) {
       const rec = this._ctxHoldMap().get(session.name);
-      if (!rec || !rec.typed || rec.state === 'failed') return;
+      if (!rec || !rec.typed) return;
       if (rec.respawn && session._ctxGen !== rec.gen) return;
       this._releaseCtxHold(session.name, rec.gen, 'continuation turn started');
     }
@@ -6499,13 +6536,13 @@ function createSessionManager(deps) {
     _ctxHoldOnBootReady(session) {
       const rec = this._ctxHoldMap().get(session.name);
       if (!rec) return;
-      if (rec.state === 'failed') { this._releaseCtxHold(session.name, rec.gen, 'seat respawned'); return; }
+      if (rec.state === 'failed' || rec.state === 'restored') { this._releaseCtxHold(session.name, rec.gen, 'seat respawned'); return; }
       if (rec.respawn && !rec.cont && session._ctxGen === rec.gen) this._releaseCtxHold(session.name, rec.gen, 'respawned seat ready');
     }
 
     _releaseFailedCtxHold(name, why) {
       const rec = this._ctxHoldMap().get(name);
-      if (!rec || rec.state !== 'failed') return false;
+      if (!rec || (rec.state !== 'failed' && rec.state !== 'restored')) return false;
       return this._releaseCtxHold(name, rec.gen, why);
     }
 
@@ -9034,7 +9071,7 @@ function createSessionManager(deps) {
         return false;
       }
       session._reloadInFlight = true;
-      const hold = (why === 'reload' || why === 'clear') && session.io !== 'stream'
+      const hold = (why === 'reload' || why === 'clear') && this._ctxHoldApplies(session)
         ? this._armCtxHold(session, why, { cont: !!handoff, respawn: true }) : null;
       const waitExit = async (nm, timeoutMs = 8000) => {
         const start = Date.now();
@@ -9202,8 +9239,8 @@ function createSessionManager(deps) {
         return;
       }
       const cont = sub === 'clear' && body ? body.trim() : '';
-      if (sub === 'clear' && session.io !== 'stream') this._armCtxHold(session, 'clear', { cont: !!cont });
-      this._sendContextCommand(session, cmd);
+      if (sub === 'clear' && this._ctxHoldApplies(session)) this._armCtxHold(session, 'clear', { cont: !!cont });
+      this._sendContextCommand(session, cmd, sub);
       if (cont) {
         session._postClearContinuation = cont;
         this._armPostClearValve(session);
@@ -9242,11 +9279,15 @@ function createSessionManager(deps) {
       reply('[agent:probe] end is the clone\'s verb — you have no clone summary to return.');
     }
 
-    _sendContextCommand(session, cmd) {
+    _sendContextCommand(session, cmd, sub = null) {
+      const mark = (item) => {
+        if (sub === 'clear') Object.defineProperty(item, 'ctxClear', { value: true, enumerable: false });
+        return item;
+      };
       if (cmd && typeof cmd === 'object') {
-        this._streamEnqueue(session, { text: '', images: [], origin: 'system', wire: cmd });
+        this._streamEnqueue(session, mark({ text: '', images: [], origin: 'system', wire: cmd }));
       } else if (session.io === 'stream') {
-        if (!this._refuseStreamInject(session, cmd, 'context')) this._streamEnqueue(session, { text: cmd, images: [], origin: 'system', solo: true });
+        if (!this._refuseStreamInject(session, cmd, 'context')) this._streamEnqueue(session, mark({ text: cmd, images: [], origin: 'system', solo: true }));
       } else {
         this._injectText(session, cmd, { bypassHold: true });
       }

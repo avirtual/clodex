@@ -81,7 +81,7 @@ function createOpenRequests({ listSeatAttention, getNotifications, now = Date.no
     const at = now();
     const live = seats().filter((s) => workspaceId == null || s.workspaceId === workspaceId);
     const requests = live
-      .filter((s) => s.attn && (s.attn.kind === 'permission' || s.attn.kind === 'inject-stuck'))
+      .filter((s) => s.attn && (s.attn.kind === 'permission' || s.attn.kind === 'inject-stuck' || s.attn.kind === 'context-stuck'))
       .map((s) => ({
         ...(s.attn.kind === 'permission' ? {} : { kind: s.attn.kind }),
         name: s.name,
