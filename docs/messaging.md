@@ -399,7 +399,8 @@ Every hold-park logs `park-on-hold for <seat> as <id>: N waiting`, and every dra
 ### Clear/reload window
 
 Held seats are pty seats whose agent type drains parked mail
-(`_ctxHoldApplies`: claude). Codex and muse seats are unchanged: their mail
+(`_ctxHoldApplies` reads `drainsParkedMail`, which is `runsClaudeHooks`:
+claude and clodent). Codex and muse seats are unchanged: their mail
 lives in the in-memory inject queue, and codex mints its new rollout only on
 the next prompt, so a hold would never release. An accepted
 clear (`_handleContextIntent`) or reload/cold-respawn clear (`_coldRespawn`)
@@ -430,7 +431,10 @@ release and lists as an open request), `[agent:who]` reads
 clear/reload/respawn, a mail-badge click (`flushPending`) or operator input
 releases it. While in flight the row's badge reads "clearing" / "reloading"
 (`ctxHoldBadge` on the `session-compacting` channel). A restart loads an
-unfinished hold as `restored`: held, no notice, released at boot-ready. A
+unfinished hold as `restored`: held, no notice, released at boot-ready; its
+fail timer starts when its live seat first appears
+(`_armRestoredCtxHoldTimer`), so a seat that never reaches boot-ready fails
+the hold. A
 removed seat drops its record (`_dropCtxHold`).
 
 Stream seats have no hold: a clear (agent-emitted, operator control, or the
@@ -474,6 +478,7 @@ session-manager.js, so a new seat type is added in one place:
 |---|---|---|---|---|
 | busy/typing park (`_maybeParkDelivery`), park-at-fire divert (`_parkDivertFor`), operator flush (`flushPending`), passive notice park (`_injectTextPassive`) | `drainsParkedMail` | yes | yes | no |
 | turn-start window (`_turnStartPending`) | `reportsTurnStart` | yes | yes | no |
+| clear/reload hold (`_ctxHoldApplies`), pty seats only | `drainsParkedMail` | yes | yes | no |
 | submit nudge (`_armSubmitNudge`) | `agentType === 'claude'` | yes | no | no |
 
 clodent's draft protection reads the same typed and dictated draft stamps as

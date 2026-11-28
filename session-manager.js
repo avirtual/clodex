@@ -1395,7 +1395,7 @@ function createSessionManager(deps) {
       s._holdRearmed = false;
       getPersistence().setSessionId(agent, newSessionId);
       this._noteConversationForDigest(s, newSessionId);
-      this._ctxHoldSessionEdge(s, oldSid, newSessionId);
+      if (this._ctxHoldSessionEdge(s, oldSid, newSessionId) === 'continuation') this._firePostClearContinuation(s);
     }
 
     // Startup re-arm for perpetual holds, which an idle seat never gets from _maybeRearmHold (no turn);
@@ -2566,6 +2566,7 @@ function createSessionManager(deps) {
         digestNonEmpty: runsClaudeHooks(agentType) && composeDigest(memoryStore.list(name)) !== null,
       };
       this.sessions.set(name, session);
+      this._armRestoredCtxHoldTimer(name);
       this._bindHold(name, fork ? null : session.sessionId, true);
       if (intentChannel) await this._startIntentSocket(session, intentChannel);
 
@@ -2817,8 +2818,9 @@ function createSessionManager(deps) {
             }
           } catch {}
         };
-        const tailJsonl = (filePath, onEntry, onBatch = null) => {
+        const tailJsonl = (filePath, onEntry, onBatch = null, fromEnd = false) => {
           let offset = 0;
+          if (fromEnd) { try { offset = fs.statSync(filePath).size; } catch {} }
           return () => {
             try {
               const st = fs.statSync(filePath);
@@ -2858,7 +2860,7 @@ function createSessionManager(deps) {
           const stamps = entries.map((e) => Number(String(e.file || '').split('.')[0])).filter(Number.isFinite);
           const ev = typeof entries[0].ev === 'string' && /^[A-Za-z]{1,40}$/.test(entries[0].ev) ? `, ${entries[0].ev}` : '';
           this._logParkDrain(name, `seat turn${ev}`, entries.length, stamps.length ? Math.min(...stamps) : null);
-        });
+        }, true);
         try {
           session.ctxWatcher = fs.watch(runDirFor(REGISTRY_DIR, name), (_event, fname) => {
             if (fname === 'ctx') readCtx();
@@ -6192,6 +6194,7 @@ function createSessionManager(deps) {
         session._compactNoticeRev = (session._compactNoticeRev || 0) + 1;
       }
       this._sendToSession(session.name, 'session-compacting', session.name, null, { outcome, ms });
+      if (this.ctxHoldBadge(session.name)) this._ctxHoldRow(session.name);
       if (outcome === 'exit') return;
       this._sendToSession(session.name, 'transcript-changed', session.name);
       if (outcome === 'done') {
@@ -6359,6 +6362,8 @@ function createSessionManager(deps) {
       }
       this._ctxHolds = map;
       this._ctxGenSeq = seq;
+      this._ctxHoldUntimed = new Set([...map].filter(([, r]) => r.state === 'restored').map(([name]) => name));
+      for (const name of this.sessions.keys()) this._armRestoredCtxHoldTimer(name);
       if (PENDING_DIR) {
         for (const name of heldNames(PENDING_DIR)) if (!map.has(name)) this._revealHeldMail(name, 'no hold record at boot');
       }
@@ -6480,6 +6485,15 @@ function createSessionManager(deps) {
         this._ctxHoldTimers.delete(name);
         this._failCtxHold(name, gen, 'the new conversation never started');
       }, COMPACT_INFLIGHT_TIMEOUT));
+    }
+
+    _armRestoredCtxHoldTimer(name) {
+      if (!this._ctxHoldUntimed || !this._ctxHoldUntimed.has(name)) return;
+      const s = this.sessions.get(name);
+      if (!s || s._dead) return;
+      this._ctxHoldUntimed.delete(name);
+      const rec = this._ctxHolds && this._ctxHolds.get(name);
+      if (rec && rec.state === 'restored') this._armCtxHoldFailTimer(name, rec.gen);
     }
 
     _clearCtxHoldFailTimer(name) {
@@ -10093,7 +10107,11 @@ function createSessionManager(deps) {
     _deliverMessage(targetName, senderName, body, mtype, tag = '', onWrite = null, parkKey = null, images = null, rebody = null, ref = null) {
       const target = this.sessions.get(targetName);
       if (!target) {
-        this._parkInCtxGap(targetName, senderName, body, mtype, tag, onWrite, parkKey);
+        if (!this._ctxGapHold(targetName)) return;
+        if (Array.isArray(images) && images.length) log.warn('inject', `reload gap for ${targetName}: ${images.length} image(s) dropped, the message is parked as text`);
+        let parkBody = null;
+        if (rebody) { try { parkBody = rebody('parked'); } catch { parkBody = null; } }
+        this._parkInCtxGap(targetName, senderName, typeof parkBody === 'string' && parkBody ? parkBody : body, mtype, tag, onWrite, parkKey);
         return;
       }
       if (target.clone) return;
@@ -10269,7 +10287,7 @@ function createSessionManager(deps) {
       if (!entry) return null;
       const text = this._buildDeliveryText({ name, agentType: entry.type, io: entry.io }, senderTag, body, mtype || 'dm', tag);
       const parkId = this._parkHeldDelivery({ name }, text, key || null);
-      if (!parkId) return null;
+      if (!parkId) return { held: this.ctxHoldState(name) };
       if (typeof onWrite === 'function') { try { onWrite('parked'); } catch {} }
       return { parked: parkId, reason: this.ctxHoldState(name), waiting: this._parkWaiting(name) };
     }
