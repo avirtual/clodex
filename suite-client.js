@@ -16,6 +16,9 @@ const DEFAULT_RUN_MS = 21 * 60 * 1000;
 const BUILD_BUDGET_MS = 25 * 60 * 1000;
 const SNAPSHOT_WAIT_MS = 2000;
 const LOST_AFTER_MS = 150000;
+const RUNNER_KEEP_MS = 24 * 60 * 60 * 1000;
+const RECOVERED_REASON = 'recovered after a host restart';
+const IN_FLIGHT_REASON = 'host restarted while the job was in flight';
 const OUTPUT_READ_MS = LOST_AFTER_MS;
 const OUTPUT_UNREAD_NOTICE = "the runner's output could not be read; the verdict and counts are the runner's own record";
 const CLAIM_TTL_MS = 60000;
@@ -105,6 +108,8 @@ function createSuiteClient({
   snapshotSleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms).unref()), getSuiteDesk = () => null,
   platform = process.platform, arch = process.arch,
 }) {
+  const bootAt = now();
+
   function connFor(peer, wire = 'push') {
     if (wire === 'pull') {
       const desk = getSuiteDesk();
@@ -857,7 +862,64 @@ function createSuiteClient({
     return out;
   }
 
-  return { reachable, run, cancel, shadow, shadowSkip, tally, decided, decideTally, claim, sentTo, stopOn };
+  function outboundRuns() {
+    const out = [];
+    for (const { ctx: c } of runs.values()) {
+      if (!c || c.ended) continue;
+      out.push({ id: c.id, team: c.team, ticket: c.ticket, kind: c.kind, runner: c.where });
+    }
+    return out;
+  }
+
+  async function recoverRun(row) {
+    const r = await Promise.resolve()
+      .then(() => once(row.runner, (c) => c.suiteAsk('GET', `/api/suite/jobs?ids=${encodeURIComponent(row.jobId)}&wait=0`, null, LOST_AFTER_MS), row.wire))
+      .catch((e) => ({ status: 0, body: null, error: e && e.message ? e.message : String(e) }));
+    let outcome = 'lost';
+    let reason;
+    let rec = null;
+    if (!r || !r.body || !r.body.ok) {
+      reason = `${IN_FLIGHT_REASON}; runner unreachable (${(r && (r.error || (r.body && r.body.error))) || `status ${r ? r.status : 0}`})`;
+    } else {
+      const job = (Array.isArray(r.body.jobs) ? r.body.jobs : []).find((j) => j && j.id === row.jobId);
+      if (!job || job.state === 'gone') {
+        reason = `${IN_FLIGHT_REASON}; the runner no longer has the job`;
+      } else if (job.state === 'done') {
+        rec = recordedTotals(job.record);
+        outcome = rec ? rec.outcome : 'unknown';
+        reason = rec ? RECOVERED_REASON : `${RECOVERED_REASON}; the runner recorded no usable totals (${job.reason || 'no summary'})`;
+      } else {
+        const c = await Promise.resolve().then(() => cancel(row.runner, row.jobId, row.wire))
+          .catch((e) => ({ ok: false, error: e && e.message ? e.message : String(e) }));
+        reason = c.ok ? `${IN_FLIGHT_REASON}; cancelled on the runner` : `${IN_FLIGHT_REASON}; the cancel on the runner failed (${c.error})`;
+      }
+    }
+    const record = {
+      id: row.id, phase: 'end', where: row.where, runner: row.runner, wire: row.wire, jobId: row.jobId, attempt: row.attempt,
+      kind: row.kind, scope: row.scope, ...(row.named ? { named: row.named } : {}), team: row.team, ticket: row.ticket, seat: row.seat,
+      tree: row.tree, sha: row.sha, treeHash: row.treeHash, queuedAt: row.queuedAt, route: row.route, override: row.override,
+      outcome, reason, pass: rec ? rec.pass : null, fail: rec ? rec.fail : null, tests: rec ? rec.tests : null,
+      endedAt: iso(now()), durationMs: null, env: row.env, recovered: true,
+    };
+    appendLedger(record);
+    log(`suite-client: recovered run ${row.id} after a host restart: team ${row.team}, ticket ${row.ticket}, ${row.kind} on ${row.where}, job ${row.jobId}: ${outcome}`);
+    return record;
+  }
+
+  let recovering = null;
+  function recoverOpenRuns() {
+    if (recovering) return recovering;
+    recovering = (async () => {
+      if (!ledgerFile) return [];
+      const open = openRemoteRuns(ledgerTail(ledgerFile), { bootAt, since: now() - RUNNER_KEEP_MS }).filter((row) => !runs.has(row.id));
+      const written = [];
+      for (const row of open) written.push(await recoverRun(row));
+      return written;
+    })().finally(() => { recovering = null; });
+    return recovering;
+  }
+
+  return { reachable, run, cancel, shadow, shadowSkip, tally, decided, decideTally, claim, sentTo, stopOn, outboundRuns, recoverOpenRuns };
 }
 
 const MEASURED = new Set(['pass', 'fail']);
@@ -1115,8 +1177,7 @@ function waitNote(record) {
   return `(waited ${ago} on ${record.where}${why})`;
 }
 
-function ledgerPicks(file, { fsImpl = fs, maxBytes = 512 * 1024, limit = 20 } = {}) {
-  let text = '';
+function ledgerTail(file, { fsImpl = fs, maxBytes = 512 * 1024 } = {}) {
   try {
     const size = fsImpl.statSync(file).size;
     const fd = fsImpl.openSync(file, 'r');
@@ -1124,9 +1185,29 @@ function ledgerPicks(file, { fsImpl = fs, maxBytes = 512 * 1024, limit = 20 } = 
       const len = Math.min(size, maxBytes);
       const buf = Buffer.alloc(len);
       fsImpl.readSync(fd, buf, 0, len, size - len);
-      text = buf.toString('utf8');
+      return buf.toString('utf8');
     } finally { fsImpl.closeSync(fd); }
-  } catch { return []; }
+  } catch { return ''; }
+}
+
+function openRemoteRuns(text, { bootAt, since }) {
+  const open = new Map();
+  for (const line of String(text).split('\n')) {
+    let row;
+    try { row = JSON.parse(line); } catch { continue; }
+    if (!row || typeof row !== 'object' || typeof row.id !== 'string' || !row.id) continue;
+    if (row.phase === 'end') { open.delete(row.id); continue; }
+    if (row.phase !== 'start' || typeof row.runner !== 'string' || !row.runner) continue;
+    if ((row.wire !== 'push' && row.wire !== 'pull') || typeof row.jobId !== 'string' || !row.jobId) continue;
+    const at = Date.parse(row.startedAt || row.queuedAt);
+    if (!Number.isFinite(at) || at >= bootAt || at < since) continue;
+    open.set(row.id, row);
+  }
+  return [...open.values()];
+}
+
+function ledgerPicks(file, { fsImpl = fs, maxBytes = 512 * 1024, limit = 20 } = {}) {
+  const text = ledgerTail(file, { fsImpl, maxBytes });
   const jobs = new Map();
   for (const line of text.split('\n')) {
     let row;
