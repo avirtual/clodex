@@ -67,7 +67,7 @@ compact there can still be dropped by the CLI (documented degradation).
 prompt delta cold-respawns instead — docs/sessions.md, `_promptDeltaPending`).
 `[agent:context clear] <body>` stores the body on `session._postClearContinuation`
 and arms `_armPostClearValve` (same 5-min timeout as compact's); the `/clear`
-itself injects immediately, and a BODYLESS clear stores nothing. The continuation
+itself injects immediately, and a BODYLESS clear stores no continuation. The continuation
 fires from the sessionId-CHANGE edge in `create()`'s `onSessionId` — `/clear`
 mints a new conversation id and repoints the transcript symlink, `/compact` is
 in-place and keeps the id, so a changed id is the only reliable "the clear
@@ -395,6 +395,55 @@ The only bound is opt-in and off by default: `parkWakeHours` (1-48, Preferences 
 A seat on a dialog, mid-turn, drafting or dead is skipped and rechecked on the next pass. Each seat gets one such wake until the operator interacts with it (typed input, a ✉ click, an `[agent:from user]` message); the seat's own turns, peer traffic and a restart do not re-arm it.
 The allowance is spent only when the batch is actually claimed, so a drain that loses the claim race spends nothing and is not retried in a loop. It lives in `~/.clodex/park-wake.json`, keyed by seat name with the seat's createdAt.
 Every hold-park logs `park-on-hold for <seat> as <id>: N waiting`, and every drain logs `park-drain for <seat> (<cause>): …` with the cause, the count and the oldest age.
+
+### Clear/reload window
+
+Held seats are pty seats whose agent type drains parked mail
+(`_ctxHoldApplies`: claude). Codex and muse seats are unchanged: their mail
+lives in the in-memory inject queue, and codex mints its new rollout only on
+the next prompt, so a hold would never release. An accepted
+clear (`_handleContextIntent`) or reload/cold-respawn clear (`_coldRespawn`)
+arms a per-seat transition hold (`_armCtxHold`) with a generation number,
+persisted in `ctx-holds.json` at the registry root. While it is set,
+`_injectHoldReason` answers `clear-window` / `reload-window`, so every
+non-bypass `_injectText` is held, and the hold re-parks held units to disk
+(`_reparkHeldInjects`); `_maybeParkDelivery` parks dm, ticket-loop, reminder
+and operator mail even on an idle seat; `_drainParkedBatch` claims nothing,
+so the idle, boot-ready, cap, ride, age-wake and operator-flush producers
+leave mail on disk. On a wire seat the turn-completed handler parses the turn's
+lines (`parseIntent`) for a clear/reload before the idle flip and pre-arms
+(`_preArmCtxHold`), because that flip drains parked mail before the intents are
+dispatched; a pre-arm the dispatch did not turn into a real hold is dropped two
+ticks later. The continuation carries `ctxGen`, which passes only its own
+generation's hold, so busy and dialog still hold it. Release
+(`_releaseCtxHold`, one generation only): a bodyless clear on the session-id
+change edge, from `onSessionId` or a wire rotation (`_onWireSessionRotated`;
+an id the seat already left is `stale` and releases nothing); a
+clear with a body, or a reload, once its continuation was typed
+(`_ctxHoldTyped`) and that turn started; a bodyless cold-respawn clear at the
+respawned seat's boot-ready. Held mail then goes through the ordinary busy/idle
+delivery. There is no timed release: after `COMPACT_INFLIGHT_TIMEOUT`, a failed
+respawn or a handoff never typed, the hold is marked failed, the operator is
+told once (`context-stuck` ipc-message, and an attention that stays until
+release and lists as an open request), `[agent:who]` reads
+"clear did not complete", and only the record's own late transition, a later
+clear/reload/respawn, a mail-badge click (`flushPending`) or operator input
+releases it. While in flight the row's badge reads "clearing" / "reloading"
+(`ctxHoldBadge` on the `session-compacting` channel). A restart loads an
+unfinished hold as `restored`: held, no notice, released at boot-ready. A
+removed seat drops its record (`_dropCtxHold`).
+
+Stream seats have no hold: a clear (agent-emitted, operator control, or the
+idle-clear role setting, all through `_sendContextCommand`) is queued ahead of
+every non-operator outbox item, and `_onStreamToolBoundary` drains nothing
+while it is queued, so mail waiting at acceptance reaches the new conversation.
+Mail there is not ordered behind the clear's continuation.
+
+Not covered: the CLI's own `pending.sh` hook drain, which hands every parked
+`*.json` to the continuation's UserPromptSubmit, so in production held mail can
+ride the continuation's turn instead of the turn after it. Covering it needs
+held entries kept out of `*.json` (a follow-up ticket; the hook bytes are
+pinned).
 
 ### Draft and busy protections by seat type
 

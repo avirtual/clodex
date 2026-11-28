@@ -139,7 +139,10 @@ function mkManager(overrides = {}) {
   const m = new SessionManager();
   m._sendToSession = () => {};
   m._broadcast = (ch, msg) => broadcasts.push(msg);
-  m._injectText = (s, text, opts) => injected.push({ text, opts: opts || null });
+  m._injectText = (s, text, opts) => {
+    const { produce, ...rest } = opts || {};
+    injected.push({ text: produce ? produce() : text, opts: opts ? rest : null });
+  };
 
   // create() leaves an fs.watch handle and timers behind; without this the file
   // reports green and then HANGS.
@@ -193,9 +196,8 @@ test('clear continuation: fires on the sessionId CHANGE, not on the first id and
     // /compact keeps the id, /clear mints a new one — this is the edge.
     w.onSessionId('conv-2');
     await tick();
-    assert.deepStrictEqual(h.injected[1], { text: 'pick up the thread: @/tmp/handoff.md', opts: null },
-      'the continuation rides the NORMAL inject path — bypassHold exists for the bare slash command, '
-      + 'not for prose, and skipping the quiet gate would let it splice into a human draft');
+    assert.deepStrictEqual(h.injected[1], { text: 'pick up the thread: @/tmp/handoff.md', opts: { ctxGen: h.m._ctxHoldMap().get('a').gen } },
+      'the continuation passes only the clear-window hold its own clear armed; busy, dialog and the quiet gate still apply');
     assert.strictEqual(h.injected.length, 2);
     assert.strictEqual(s._postClearContinuation, null, 'consumed, not left armed for the next clear');
     assert.strictEqual(s._postClearValveTimer, null, 'valve disarmed on fire');
@@ -369,7 +371,7 @@ test('clear continuation: a second clear while one is armed is DROPPED, first bo
     w.onSessionId('conv-1');
     w.onSessionId('conv-2');
     await tick();
-    assert.deepStrictEqual(h.injected[1], { text: 'first briefing', opts: null },
+    assert.deepStrictEqual(h.injected[1], { text: 'first briefing', opts: { ctxGen: h.m._ctxHoldMap().get('a').gen } },
       'exactly one continuation, and it is the first');
     assert.strictEqual(h.injected.length, 2);
   } finally { h.stop('a'); }

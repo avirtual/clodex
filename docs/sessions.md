@@ -537,7 +537,11 @@ prompt `ipc-prompt-cache` records, or a `delta.md` is staged) does NOT type
 when the clear is body-less), so the fresh process boots on a regenerated
 prompt and `bakePrompt(reuse=false)` re-baselines the cache. The typed `/clear`
 edge (`refreshPrompt(name,'clear')` + the post-clear continuation) never fires
-on that arm. Shadow row `prompt-regen-at-clear` {agent, bytes}. Nothing
+on that arm. Shadow row `prompt-regen-at-clear` {agent, bytes}.
+On a claude pty seat, a reload and this arm hold the seat's mail across the respawn
+(`reload-window` / `clear-window`, docs/messaging.md "Clear/reload window"): the
+respawned seat carries the hold's generation on `_ctxGen`, and only its own
+handoff turn, or its boot-ready on a bodyless clear, releases it. Nothing
 pending, or a codex or muse seat: the plain `/clear` path, unchanged.
 A Clodex-driven compact whose summary lands on such a seat (`_compactRegen`,
 from `_fireCompactContinuation`) takes the same `_coldRespawn` with

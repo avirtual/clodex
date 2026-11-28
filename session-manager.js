@@ -1199,6 +1199,7 @@ function createSessionManager(deps) {
           {
             const s = this.sessions.get(t.agent);
             if (s && s.intentSource === 'wire' && !isSubagentRole(t.role)) {
+              if (!t.sideCall && !t.compact) this._preArmCtxHold(s, t.text);
               this._activity.turnCompleted(t.agent, { reqId: t.reqId, sideCall: t.sideCall, stop: t.stop });
             }
           }
@@ -1394,6 +1395,7 @@ function createSessionManager(deps) {
       s._holdRearmed = false;
       getPersistence().setSessionId(agent, newSessionId);
       this._noteConversationForDigest(s, newSessionId);
+      this._ctxHoldSessionEdge(s, oldSid, newSessionId);
     }
 
     // Startup re-arm for perpetual holds, which an idle seat never gets from _maybeRearmHold (no turn);
@@ -2656,7 +2658,7 @@ function createSessionManager(deps) {
           const snapshotSid = session.forked ? sessionId : priorSid;
           session.forked = false;
           try { this.refreshPrompt(name, 'clear', { sid: snapshotSid }); } catch { /* never block the continuation on a refresh */ }
-          this._firePostClearContinuation(session);
+          if (this._ctxHoldSessionEdge(session, priorSid, sessionId) !== 'stale') this._firePostClearContinuation(session);
         }
         // noteSession resets only on a change, so the first id (attach, resume) adopts; otherwise the digest recorded in
         // create() a moment earlier would be wiped by the very event that carried it.
@@ -2890,6 +2892,7 @@ function createSessionManager(deps) {
             clearTimeout(session._bootDrainTimer);
             session._bootDrainTimer = setTimeout(() => {
               session._bootDrainTimer = null;
+              this._ctxHoldOnBootReady(session);
               this._drainPendingAtBootReady(session);
               // Same margin: a ticket spec written before the readline loop is up is wiped by the boot re-render, and the replay
               // stamps it delivered, so the loss is silent until the next respawn.
@@ -2943,6 +2946,7 @@ function createSessionManager(deps) {
           getPersistence().remove(name);
           this._bindHold(name);
           this.dropReminders(name);
+          this._dropCtxHold(name);
         }
         if (stampExited) {
           try { getPersistence().setExited(name, { exitCode, signal: signal || null }); } catch {}
@@ -3213,7 +3217,7 @@ function createSessionManager(deps) {
         this._executeCompact(s, cmd, '');
         return { ok: true };
       }
-      this._sendContextCommand(s, cmd);
+      this._sendContextCommand(s, cmd, sub);
       log.info('session', `clear ${s.name} → ${wireCtx ? cmd.method : cmd} (operator control)`);
       return { ok: true };
     }
@@ -3275,7 +3279,7 @@ function createSessionManager(deps) {
       const same = parkKey ? s.outbox.findIndex((q) => q.parkKey === parkKey) : -1;
       if (same >= 0) {
         s.outbox[same] = item;
-      } else if (item.origin === 'operator') {
+      } else if (item.origin === 'operator' || item.ctxClear) {
         let i = 0;
         while (i < s.outbox.length && s.outbox[i].origin === 'operator') i += 1;
         s.outbox.splice(i, 0, item);
@@ -3384,6 +3388,7 @@ function createSessionManager(deps) {
 
     _onStreamToolBoundary(s) {
       if (!s || s.io !== 'stream' || s._dead || !s.stream || this._streamStopped(s)) return;
+      if (s.outbox.some((q) => q.ctxClear)) return;
       const sys = s.outbox.filter((q) => q.origin === 'system' && !q.wire && !q.solo);
       if (!sys.length) return;
       const now = Date.now();
@@ -3867,6 +3872,7 @@ function createSessionManager(deps) {
         s.lastUserInputTs = Date.now();
         this._lastOperatorInputAt = s.lastUserInputTs;
         this._rearmParkWake(name, 'typed input');
+        this._releaseFailedCtxHold(name, 'operator input');
         if (!s.firstInputAt) s.firstInputAt = s.lastUserInputTs;
         const wasInPaste = s._inPaste;
         const sig = draftChunkSignal(data, s._inPaste);
@@ -4164,6 +4170,7 @@ function createSessionManager(deps) {
       };
       const dropSeatDir = () => {
         this.dropReminders(name);
+        this._dropCtxHold(name);
         this._dropProfile(name);
         try {
           const r = removeSeat({ root: REGISTRY_DIR, name, fs });
@@ -5525,7 +5532,7 @@ function createSessionManager(deps) {
         ...(s.fixFor ? { fixFor: s.fixFor } : {}),
         ...(s.clone ? { clone: s.clone } : {}),
         activity: s.activityState || 'idle',
-        compacting: s.compacting || null,
+        compacting: s.compacting || this.ctxHoldBadge(s.name),
         attention: s.needsAttention ? s.needsAttention.kind : null,
         account: this.accountFor(s.name, resolveAccount),
         model: s.type === 'claude' ? this.modelFor(s.name, resolveSettingsModel) : null,
@@ -5631,6 +5638,7 @@ function createSessionManager(deps) {
         this.forgetSeatFiles(s.name, rec);
         this._dropPendingDir(s.name);
         this.dropReminders(s.name);
+        this._dropCtxHold(s.name);
       }
       for (const e of records) {
         if (hasTree(e)) { await destroyArm(e.name, dropped); continue; }
@@ -5640,6 +5648,7 @@ function createSessionManager(deps) {
         this.forgetSeatFiles(e.name, e);
         this._dropPendingDir(e.name);
         this.dropReminders(e.name);
+        this._dropCtxHold(e.name);
         dropped.push(e.name);
       }
       if (dropped.length) {
@@ -6071,7 +6080,8 @@ function createSessionManager(deps) {
       if (s && state !== 'idle' && (s._bootNudgeArmed || s._submitStuckTimer)) this._clearSubmitNudge(s);
       if (s && state !== 'idle' && s._injectStuck) this._clearInjectStuck(s);
       if (state !== 'idle') this._touchTicketActivity(name);
-      if (s && state !== 'idle' && s.needsAttention && !(s.streamPermissions && s.streamPermissions.size)) this._setAttention(s, null);
+      if (s && state !== 'idle') this._ctxHoldOnTurnStart(s);
+      if (s && state !== 'idle' && s.needsAttention && s.needsAttention.kind !== 'context-stuck' && !(s.streamPermissions && s.streamPermissions.size)) this._setAttention(s, null);
       if (s && state === 'idle') { this._maybeFlushInjectQueue(s); this._drainPendingAtIdle(s); }
       // notify marks turn-end; idle also fires mid-turn (wire gap-idle, jsonl text flush), so a consumer
       // acting on state alone acts in the middle of turns.
@@ -6315,11 +6325,235 @@ function createSessionManager(deps) {
       return true;
     }
 
-    _injectHoldReason(session) {
+    _injectHoldReason(session, passGen = null) {
       if (session._compactGuard) return 'compact-window';
+      const ctx = this._ctxHoldReason(session, passGen);
+      if (ctx) return ctx;
       if (session.needsAttention && session.needsAttention.kind === 'permission') return 'dialog';
       if (session.activityState === 'thinking') return 'busy';
       return null;
+    }
+
+    _ctxHoldFile() {
+      return typeof REGISTRY_DIR === 'string' && REGISTRY_DIR ? nodePath.join(REGISTRY_DIR, 'ctx-holds.json') : null;
+    }
+
+    _ctxHoldMap() {
+      if (this._ctxHolds) return this._ctxHolds;
+      const map = new Map();
+      let seq = 0;
+      const file = this._ctxHoldFile();
+      if (file) {
+        try {
+          const raw = JSON.parse(fs.readFileSync(file, 'utf8'));
+          if (raw && Number.isInteger(raw.seq)) seq = raw.seq;
+          for (const [name, r] of Object.entries(raw && raw.holds && typeof raw.holds === 'object' ? raw.holds : {})) {
+            if (!r || (r.kind !== 'clear' && r.kind !== 'reload') || !Number.isInteger(r.gen)) continue;
+            map.set(name, { ...r, state: r.state === 'failed' ? 'failed' : 'restored', typed: false });
+            if (r.gen > seq) seq = r.gen;
+          }
+        } catch {}
+      }
+      this._ctxHolds = map;
+      this._ctxGenSeq = seq;
+      return map;
+    }
+
+    _saveCtxHolds() {
+      const file = this._ctxHoldFile();
+      if (!file) return;
+      try { atomicWriteFileSync(file, JSON.stringify({ seq: this._ctxGenSeq || 0, holds: Object.fromEntries(this._ctxHoldMap()) })); }
+      catch (e) { log.error('intent', `context hold state save failed: ${e.message}`); }
+    }
+
+    _ctxHoldReason(session, passGen = null) {
+      if (!this._ctxHoldApplies(session)) return null;
+      if (session._ctxPreArmed) return `${session._ctxPreArmed}-window`;
+      const rec = this._ctxHoldMap().get(session.name);
+      if (!rec || (passGen !== null && rec.gen === passGen)) return null;
+      if (rec.state === 'failed' && !rec.notified && !session._dead) this._notifyCtxHoldFailed(session.name, rec);
+      return `${rec.kind}-window`;
+    }
+
+    ctxHoldState(name) {
+      const rec = this._ctxHoldMap().get(name);
+      if (!rec) return null;
+      const verb = rec.kind === 'reload' ? 'reload' : 'clear';
+      return rec.state === 'failed' ? `${verb} did not complete` : (verb === 'reload' ? 'reloading' : 'clearing');
+    }
+
+    _ctxHoldApplies(session) {
+      return !!(session && session.name && session.io !== 'stream' && drainsParkedMail(session.agentType));
+    }
+
+    _dropCtxHold(name) {
+      const map = this._ctxHoldMap();
+      if (!map.has(name)) return;
+      map.delete(name);
+      this._clearCtxHoldFailTimer(name);
+      this._saveCtxHolds();
+    }
+
+    _preArmCtxHold(session, text) {
+      if (typeof text !== 'string' || !this._ctxHoldApplies(session)) return;
+      let sub = null;
+      for (const line of text.split('\n')) {
+        const intent = line.includes('[agent:context') ? parseIntent(line) : null;
+        if (intent && intent.type === 'context' && (intent.sub === 'clear' || intent.sub === 'reload')) { sub = intent.sub; break; }
+      }
+      if (!sub) return;
+      session._ctxPreArmed = sub;
+      setImmediate(() => setImmediate(() => {
+        if (!session._ctxPreArmed) return;
+        session._ctxPreArmed = null;
+        if (session._dead) return;
+        this._maybeFlushInjectQueue(session);
+        if (session.activityState !== 'thinking') this._drainPendingAtIdle(session);
+      }));
+    }
+
+    _armCtxHold(session, kind, { cont = false, respawn = false } = {}) {
+      const map = this._ctxHoldMap();
+      const name = session.name;
+      session._ctxPreArmed = null;
+      const prev = map.get(name);
+      this._ctxGenSeq = (this._ctxGenSeq || 0) + 1;
+      const rec = {
+        kind, gen: this._ctxGenSeq, state: 'armed', fromSid: session.sessionId || null,
+        retired: Array.isArray(session._leftSessionIds) ? [...session._leftSessionIds] : [],
+        cont: !!cont, respawn: !!respawn, typed: false, at: Date.now(), notified: false,
+      };
+      map.set(name, rec);
+      this._saveCtxHolds();
+      if (prev && prev.state === 'failed' && session.needsAttention && session.needsAttention.kind === 'context-stuck') {
+        session.needsAttention = null;
+        this._sendToSession(name, 'session-attention', name, null);
+      }
+      this._ctxHoldRow(name);
+      this._armCtxHoldFailTimer(name, rec.gen);
+      this._shadowLog({ type: 'ctx-hold-armed', agent: name, kind, gen: rec.gen });
+      return rec;
+    }
+
+    _armCtxHoldFailTimer(name, gen) {
+      if (!Number.isFinite(COMPACT_INFLIGHT_TIMEOUT)) return;
+      if (!this._ctxHoldTimers) this._ctxHoldTimers = new Map();
+      clearTimeout(this._ctxHoldTimers.get(name));
+      this._ctxHoldTimers.set(name, setTimeout(() => {
+        this._ctxHoldTimers.delete(name);
+        this._failCtxHold(name, gen, 'the new conversation never started');
+      }, COMPACT_INFLIGHT_TIMEOUT));
+    }
+
+    _clearCtxHoldFailTimer(name) {
+      if (!this._ctxHoldTimers) return;
+      clearTimeout(this._ctxHoldTimers.get(name));
+      this._ctxHoldTimers.delete(name);
+    }
+
+    _failCtxHold(name, gen, why) {
+      const rec = this._ctxHoldMap().get(name);
+      if (!rec || rec.gen !== gen || rec.state === 'failed') return false;
+      this._clearCtxHoldFailTimer(name);
+      rec.state = 'failed';
+      rec.typed = false;
+      rec.why = why;
+      this._notifyCtxHoldFailed(name, rec);
+      this._saveCtxHolds();
+      this._ctxHoldRow(name);
+      return true;
+    }
+
+    ctxHoldBadge(name) {
+      const rec = this._ctxHoldMap().get(name);
+      if (!rec || rec.state === 'failed') return null;
+      return { since: rec.at || Date.now(), trigger: rec.kind === 'reload' ? 'reloading' : 'clearing' };
+    }
+
+    _ctxHoldRow(name) {
+      const s = this.sessions.get(name);
+      if (!s || s._dead || s.compacting) return;
+      this._sendToSession(name, 'session-compacting', name, this.ctxHoldBadge(name));
+    }
+
+    _notifyCtxHoldFailed(name, rec) {
+      rec.notified = true;
+      this._saveCtxHolds();
+      const words = this.ctxHoldState(name);
+      const count = typeof countPending === 'function' ? countPending(PENDING_DIR, name) : 0;
+      const body = `context ${words} for ${name} (${rec.why || 'unknown'}) — ${count} message${count === 1 ? '' : 's'} held on disk; `
+        + 'click the seat\'s mail badge or type into the seat to release them';
+      log.warn('intent', body);
+      this._broadcast('ipc-message', { ts: Date.now(), from: 'clodex', to: name, kind: 'context-stuck', body });
+      const s = this.sessions.get(name);
+      if (s && !s._dead && !(s.needsAttention && s.needsAttention.kind === 'permission')) {
+        this._setAttention(s, { kind: 'context-stuck', ts: Date.now(), message: words });
+      }
+    }
+
+    _releaseCtxHold(name, gen, why) {
+      const map = this._ctxHoldMap();
+      const rec = map.get(name);
+      if (!rec || (gen !== null && rec.gen !== gen)) return false;
+      map.delete(name);
+      this._clearCtxHoldFailTimer(name);
+      this._saveCtxHolds();
+      this._shadowLog({ type: 'ctx-hold-released', agent: name, kind: rec.kind, gen: rec.gen, why });
+      const s = this.sessions.get(name);
+      if (!s || s._dead) return true;
+      this._ctxHoldRow(name);
+      if (s.needsAttention && s.needsAttention.kind === 'context-stuck') this._setAttention(s, null);
+      this._maybeFlushInjectQueue(s);
+      if (s.activityState !== 'thinking') this._drainPendingAtIdle(s);
+      return true;
+    }
+
+    _ctxHoldSessionEdge(session, priorSid, sessionId) {
+      const rec = this._ctxHoldMap().get(session.name);
+      if (!rec || rec.kind !== 'clear' || rec.respawn) return 'none';
+      if (sessionId === rec.fromSid || rec.retired.includes(sessionId)) return 'stale';
+      if (rec.cont && session._postClearContinuation) {
+        rec.state = 'continuation';
+        this._saveCtxHolds();
+        return 'continuation';
+      }
+      this._releaseCtxHold(session.name, rec.gen, 'new conversation');
+      return 'released';
+    }
+
+    _ctxHoldTyped(name, gen) {
+      const rec = this._ctxHoldMap().get(name);
+      if (rec && rec.gen === gen) rec.typed = true;
+    }
+
+    _ctxHoldOnTurnStart(session) {
+      const rec = this._ctxHoldMap().get(session.name);
+      if (!rec || !rec.typed) return;
+      if (rec.respawn && session._ctxGen !== rec.gen) return;
+      this._releaseCtxHold(session.name, rec.gen, 'continuation turn started');
+    }
+
+    _ctxHoldOnBootReady(session) {
+      const rec = this._ctxHoldMap().get(session.name);
+      if (!rec) return;
+      if (rec.state === 'failed' || rec.state === 'restored') { this._releaseCtxHold(session.name, rec.gen, 'seat respawned'); return; }
+      if (rec.respawn && !rec.cont && session._ctxGen === rec.gen) this._releaseCtxHold(session.name, rec.gen, 'respawned seat ready');
+    }
+
+    _releaseFailedCtxHold(name, why) {
+      const rec = this._ctxHoldMap().get(name);
+      if (!rec || (rec.state !== 'failed' && rec.state !== 'restored')) return false;
+      return this._releaseCtxHold(name, rec.gen, why);
+    }
+
+    _flushCtxGenEntries(session) {
+      const rec = this._ctxHoldMap().get(session.name);
+      const queue = session._injectQueue;
+      if (!rec || !queue || !queue.length || this._injectHoldReason(session, rec.gen)) return;
+      const mine = queue.filter((e) => e && e.opts && e.opts.ctxGen === rec.gen);
+      if (!mine.length) return;
+      session._injectQueue = queue.filter((e) => !mine.includes(e));
+      for (const e of mine) this._injectText(session, e.text || '', { ...e.opts, bypassHold: true });
     }
 
     _bootDialogOf(session) {
@@ -6434,6 +6668,10 @@ function createSessionManager(deps) {
       session._injectHoldTimer = setTimeout(() => {
         session._injectHoldTimer = null;
         const reason = this._injectHoldReason(session);
+        if (this._ctxHoldReason(session)) {
+          log.info('inject', `inject hold ${session.name}: ${reason} — held until the transition completes`);
+          return;
+        }
         console.warn(`inject hold ${session.name}: release never came (${reason || 'none'}) — ${reason === 'dialog' ? 're-parking (dialog)' : 'forcing flush after timeout'}`);
         session._compactGuard = false;
         this._maybeFlushInjectQueue(session, true);
@@ -6484,9 +6722,13 @@ function createSessionManager(deps) {
       if (!cont) return;
       session._postClearContinuation = null;
       this._clearPostClearValve(session);
+      const rec = this._ctxHoldMap().get(session.name);
+      const gen = rec && rec.state === 'continuation' ? rec.gen : null;
       setTimeout(() => {
         if (session._dead) return;
-        this._injectText(session, this._handoffText(session, cont));
+        const text = this._handoffText(session, cont);
+        if (gen === null) { this._injectText(session, text); return; }
+        this._injectText(session, '', { ctxGen: gen, produce: () => { this._ctxHoldTyped(session.name, gen); return text; } });
       }, COMPACT_CONTINUATION_DELAY);
     }
 
@@ -6532,7 +6774,10 @@ function createSessionManager(deps) {
         return;
       }
       const reason = this._injectHoldReason(session);
-      if (!force && reason) return;
+      if (!force && reason) {
+        if (this._ctxHoldReason(session)) this._flushCtxGenEntries(session);
+        return;
+      }
       if (reason === 'dialog') {
         session._injectQueue = this._reparkHeldInjects(session, queue);
         clearTimeout(session._injectHoldTimer);
@@ -6553,7 +6798,7 @@ function createSessionManager(deps) {
       this._flushInjectRun(session, run);
     }
 
-    _reparkHeldInjects(session, queue) {
+    _reparkHeldInjects(session, queue, why = 'dialog') {
       const kept = [];
       let parked = 0;
       const born = typeof session.createdAt === 'number' ? session.createdAt : null;
@@ -6574,7 +6819,7 @@ function createSessionManager(deps) {
           parkDelivery(PENDING_DIR, session.name, text, this._nextParkSeq(), opts.parkId || null, false, born, opts.parkKey || null);
           parked++;
           if (e && typeof e.produce === 'function' && typeof opts.onDivert === 'function') {
-            try { opts.onDivert(session._dead ? 'dead' : 'dialog'); } catch {}
+            try { opts.onDivert(session._dead ? 'dead' : why); } catch {}
           }
         } catch (err) {
           log.error('inject', `re-park of a held inject failed for ${session.name}: ${err.message} — ${text.length} chars dropped`);
@@ -7259,7 +7504,7 @@ function createSessionManager(deps) {
         case 'who': {
           const localAgents = Array.from(this.sessions.values())
             .filter(s => s.agentType && !s.clone && !s._assistant)
-            .map(s => ({ name: s.name, label: peerStatusLabel({
+            .map(s => ({ name: s.name, label: this.ctxHoldState(s.name) || peerStatusLabel({
               state: s.activityState || 'idle',
               idleMs: Date.now() - (s.activityTs || Date.now()),
               payload: this._proxyPoller ? this._proxyPoller.snapshot(s.name) : null,
@@ -8826,6 +9071,8 @@ function createSessionManager(deps) {
         return false;
       }
       session._reloadInFlight = true;
+      const hold = (why === 'reload' || why === 'clear') && this._ctxHoldApplies(session)
+        ? this._armCtxHold(session, why, { cont: !!handoff, respawn: true }) : null;
       const waitExit = async (nm, timeoutMs = 8000) => {
         const start = Date.now();
         while (this.sessions.has(nm)) {
@@ -8874,8 +9121,11 @@ function createSessionManager(deps) {
           if (entry.label) getPersistence().setLabel(name, entry.label);
           this._sendToSession(name, 'session:context-action', this._reattachAction(name, entry.type, cwd));
           const fresh = this.sessions.get(name);
-          if (fresh && handoff) this._injectReloadHandoff(fresh, handoff, undefined, why);
+          if (fresh && hold) fresh._ctxGen = hold.gen;
+          if (fresh && handoff) this._injectReloadHandoff(fresh, handoff, undefined, why, hold ? hold.gen : null);
+          else if (fresh && hold && fresh._bootReadySeen) this._releaseCtxHold(name, hold.gen, 'respawned seat ready');
         } catch (err) {
+          if (hold) this._failCtxHold(name, hold.gen, `respawn failed: ${err.message}`);
           session._reloadInFlight = false;
           session._respawning = false;
           this._freshBakeOnce.delete(name);
@@ -8988,8 +9238,9 @@ function createSessionManager(deps) {
         unsupported();
         return;
       }
-      this._sendContextCommand(session, cmd);
       const cont = sub === 'clear' && body ? body.trim() : '';
+      if (sub === 'clear' && this._ctxHoldApplies(session)) this._armCtxHold(session, 'clear', { cont: !!cont });
+      this._sendContextCommand(session, cmd, sub);
       if (cont) {
         session._postClearContinuation = cont;
         this._armPostClearValve(session);
@@ -9028,11 +9279,15 @@ function createSessionManager(deps) {
       reply('[agent:probe] end is the clone\'s verb — you have no clone summary to return.');
     }
 
-    _sendContextCommand(session, cmd) {
+    _sendContextCommand(session, cmd, sub = null) {
+      const mark = (item) => {
+        if (sub === 'clear') Object.defineProperty(item, 'ctxClear', { value: true, enumerable: false });
+        return item;
+      };
       if (cmd && typeof cmd === 'object') {
-        this._streamEnqueue(session, { text: '', images: [], origin: 'system', wire: cmd });
+        this._streamEnqueue(session, mark({ text: '', images: [], origin: 'system', wire: cmd }));
       } else if (session.io === 'stream') {
-        if (!this._refuseStreamInject(session, cmd, 'context')) this._streamEnqueue(session, { text: cmd, images: [], origin: 'system', solo: true });
+        if (!this._refuseStreamInject(session, cmd, 'context')) this._streamEnqueue(session, mark({ text: cmd, images: [], origin: 'system', solo: true }));
       } else {
         this._injectText(session, cmd, { bypassHold: true });
       }
@@ -9066,12 +9321,14 @@ function createSessionManager(deps) {
       }
     }
 
-    async _injectReloadHandoff(session, handoff, timeoutMs = 30000, why = 'reload') {
-      await this._injectAfterBoot(session, handoff, {
+    async _injectReloadHandoff(session, handoff, timeoutMs = 30000, why = 'reload', gen = null) {
+      const ok = await this._injectAfterBoot(session, handoff, {
         logPrefix: `[agent:context ${why}]`,
         dropBody: `context ${why} → handoff NOT injected (fresh CLI never signaled boot)`,
         timeoutMs,
+        gen,
       });
+      if (!ok && gen !== null) this._failCtxHold(session.name, gen, 'the handoff was never typed');
     }
 
     // Gate on the transcript symlink via readlinkSync, not session.sessionId: Claude creates the transcript
@@ -9095,7 +9352,10 @@ function createSessionManager(deps) {
       }
       await new Promise(r => setTimeout(r, RELOAD_CONTINUATION_DELAY));
       if (session._dead) return false;
-      this._injectText(session, this._handoffText(session, text, { snapshot: opts.snapshot !== false }));
+      const handoff = this._handoffText(session, text, { snapshot: opts.snapshot !== false });
+      const gen = Number.isInteger(opts.gen) ? opts.gen : null;
+      if (gen === null) this._injectText(session, handoff);
+      else this._injectText(session, '', { ctxGen: gen, produce: () => { this._ctxHoldTyped(session.name, gen); return handoff; } });
       return true;
     }
 
@@ -9961,6 +10221,11 @@ function createSessionManager(deps) {
     }
 
     _drainParkedBatch(session, tag, cause) {
+      const held = this._ctxHoldReason(session);
+      if (held) {
+        log.info('inject', `park-drain for ${session.name} (${cause}) held (${held}) — mail stays on disk`);
+        return [];
+      }
       const before = parkBacklog(PENDING_DIR, session.name);
       const texts = drainPending(PENDING_DIR, session.name, tag, this._bornFor(session.name));
       this._logParkDrain(session.name, cause, texts.length, before.oldestAt);
@@ -10071,7 +10336,7 @@ function createSessionManager(deps) {
       if (!target || !drainsParkedMail(target.agentType) || target._dead) return false;
       const typing = Date.now() - (target.lastUserInputTs || 0) < INJECT_QUIET_MS;
       const busy = target.activityState === 'thinking';
-      if (!typing && !busy) return false;
+      if (!typing && !busy && !this._ctxHoldReason(target)) return false;
       try {
         const text = typeof finalText === 'function' ? finalText() : finalText;
         parkDelivery(PENDING_DIR, target.name, text, this._nextParkSeq(), null, false, this._bornFor(target.name), key);
@@ -10140,6 +10405,7 @@ function createSessionManager(deps) {
         return { ok: false, reason: 'no-such-agent' };
       }
       this._rearmParkWake(name, 'operator click');
+      this._releaseFailedCtxHold(name, 'operator click');
       const hold = this._injectHoldReason(target);
       if (hold) {
         const count = countPending(PENDING_DIR, target.name);
@@ -10167,10 +10433,14 @@ function createSessionManager(deps) {
           });
         return;
       }
-      if (!opts.bypassHold && this._injectHoldReason(session)) {
-        const carry = opts.parkable || opts.human === true || typeof opts.onDivert === 'function';
+      const ctxGen = Number.isInteger(opts.ctxGen) ? opts.ctxGen : null;
+      if (!opts.bypassHold && this._injectHoldReason(session, ctxGen)) {
+        const carry = opts.parkable || opts.human === true || typeof opts.onDivert === 'function' || ctxGen !== null;
         const entry = carry ? { ...(produce ? { produce } : { text }), opts } : (produce ? { produce } : text);
-        (session._injectQueue = session._injectQueue || []).push(entry);
+        const ctx = this._ctxHoldReason(session, ctxGen);
+        const kept = ctx && drainsParkedMail(session.agentType) ? this._reparkHeldInjects(session, [entry], ctx) : [entry];
+        if (!kept.length) return;
+        (session._injectQueue = session._injectQueue || []).push(...kept);
         this._armInjectValve(session);
         return;
       }

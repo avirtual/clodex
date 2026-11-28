@@ -22349,8 +22349,8 @@ test('t2177: a solo /clear is never drained into a tool-boundary system batch', 
   h.m._injectText(s, 'sys note');
   h.m._handleContextIntent(s, 'clear', '');
   h.m._onStreamToolBoundary(s);
-  assert.deepStrictEqual(t2177Texts(seat), ['first', 'sys note']);
-  assert.deepStrictEqual(s.outbox.map((q) => q.text), ['/clear']);
+  assert.deepStrictEqual(t2177Texts(seat), ['first']);
+  assert.deepStrictEqual(s.outbox.map((q) => q.text), ['/clear', 'sys note']);
 });
 
 test('t2177: parking a stream outbox drops a solo /clear instead of re-parking it', async (t) => {
@@ -22364,7 +22364,7 @@ test('t2177: parking a stream outbox drops a solo /clear instead of re-parking i
   h.m.seatSend('sc5', 'first');
   h.m._injectText(s, 'sys note');
   h.m._handleContextIntent(s, 'clear', '');
-  assert.strictEqual(s.outbox[1].solo, true, 'ENTER: the clear is a solo item');
+  assert.strictEqual(s.outbox[0].solo, true, 'ENTER: the clear is a solo item');
   h.m._parkStreamOutbox(s, 'test');
   const dir = path.join(h.root, 'pending', 'sc5');
   const parked = fs.readdirSync(dir).map((f) => fs.readFileSync(path.join(dir, f), 'utf8'));
