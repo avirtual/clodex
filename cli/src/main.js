@@ -24,8 +24,8 @@ const { parse } = require('./args');
 
 // Parser option spec shared by all verbs (a verb ignores flags it doesn't use).
 const PARSE_OPTS = {
-  booleans: ['force', 'cut-jobs', 'fresh', 'fork', 'restart', 'detail', 'verbose', 'dry-run', 'no-enter', 'raw', 'wait', 'pty', 'no-ctx', 'keep-ctx', 'keep-data', 'no-wirescope', 'use-bedrock', 'follow', 'read-only', 'no-open', 'probe-http', 'force-conflicts', 'all-workspaces', 'docker', 'helm', 'fargate', 'current', 'import', 'test', 'versions', 'help', 'version', 'timestamps', 'replace', 'stderr'],
-  multi: ['arg', 'ssh-opt', 'volume', 'env', 'set', 'values', 'param'],
+  booleans: ['force', 'cut-jobs', 'fresh', 'fork', 'restart', 'detail', 'verbose', 'dry-run', 'no-enter', 'raw', 'wait', 'pty', 'no-ctx', 'keep-ctx', 'keep-data', 'no-wirescope', 'use-bedrock', 'follow', 'read-only', 'no-open', 'probe-http', 'force-conflicts', 'all-workspaces', 'docker', 'helm', 'fargate', 'current', 'import', 'test', 'versions', 'help', 'version', 'timestamps', 'replace', 'stderr', 'no-box-args'],
+  multi: ['arg', 'ssh-opt', 'volume', 'env', 'set', 'values', 'param', 'box-arg'],
   greedy: ['tunnel'],
   aliases: { h: 'help', V: 'version', f: 'follow', o: 'output', n: 'workspace', A: 'all-workspaces', q: 'query', 'remote-port': 'remotePort' },
 };

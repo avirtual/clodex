@@ -318,6 +318,7 @@ const VERB_REGISTRY = [
       'patch session <name> --subresource profile -f <file.yaml|file.json> [--replace] [-o json|yaml]',
       'patch testjobs --slots N [-o json|yaml]',
       'patch testjobs --exclusive honour|ignore [-o json|yaml]',
+      'patch testjobs [--box-arg OPT…|--no-box-args] [--box-args-label NAME] [-o json|yaml]',
     ],
     args: [['resource', 'session (singular or plural spelling), or testjobs'], ['name', 'session to patch (session form only)']],
     flags: [
@@ -330,11 +331,14 @@ const VERB_REGISTRY = [
       ['--replace', 'with --subresource profile: replace the whole profile (merge=0) instead of merging by key'],
       ['--slots N', 'testjobs form: how many suite jobs the node\'s test runner runs at once (1 to 4)'],
       ['--exclusive honour|ignore', 'testjobs form: whether the node\'s test runner runs a job that asks to run alone by itself (honour, the default) or as an ordinary job (ignore)'],
+      ['--box-arg OPT', 'testjobs form: an extra docker run option for every test box on the node, value attached (--box-arg=--device=/dev/dri) — repeatable, replaces the whole list; box jobs only, never native ones'],
+      ['--no-box-args', 'testjobs form: remove every extra box option'],
+      ['--box-args-label NAME', 'testjobs form: the name other machines see for the box options (at most 32 of A-Z a-z 0-9 . _ -); empty clears it'],
     ],
     examples: ['clodexctl patch session bob --arg --model --arg opus --restart', 'clodexctl patch session asst --subresource profile -f profile.yaml', 'clodexctl patch testjobs --slots 1'],
     notes: [
       'Needs at least one of --arg / --proxy / --restart / --idle-clear. Undefined keys are left untouched owner-side.',
-      'patch testjobs changes only the runner\'s slot count or its exclusive setting, one per call; it is refused when the node has no runner or the runner is off. With jobs running it prints how many it waits for; the change applies when they finish. In the ctl tab and [agent:ctl] it runs only against the node\'s own engine.',
+      'patch testjobs changes only the runner\'s slot count, its exclusive setting or its box options (with their label), one per call; the box options stay on the node and other machines see only the label and a fingerprint; it is refused when the node has no runner or the runner is off. With jobs running it prints how many it waits for; the change applies when they finish. In the ctl tab and [agent:ctl] it runs only against the node\'s own engine.',
       'To READ the same args: clodexctl get session <name> --subresource args.',
     ],
   },

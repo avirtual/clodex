@@ -23,7 +23,7 @@ function node(answer, { rows = [SLOTS_ROW] } = {}) {
       };
       if (req.url === '/api/resources') return send(200, { ok: true, version: 7, resources: rows });
       if (req.url === '/api/peer/hello') return send(200, { ok: true, host: 'runner', version: '1.0.0' });
-      if (req.method === 'POST' && (req.url === '/api/testjobs/slots' || req.url === '/api/testjobs/exclusive')) return send(answer.status, answer.body);
+      if (req.method === 'POST' && (req.url === '/api/testjobs/slots' || req.url === '/api/testjobs/exclusive' || req.url === '/api/testjobs/box-args')) return send(answer.status, answer.body);
       return send(404, { ok: false, error: 'not found' });
     });
   });
@@ -81,7 +81,7 @@ test('patch testjobs exits non-zero with the node refusal', async () => {
 test('patch testjobs refuses a missing or non-numeric --slots before the wire', async () => {
   await withNode({ status: 200, body: { ok: true } }, async (port, seen) => {
     const missing = await cli(['patch', 'testjobs'], port);
-    assert.deepStrictEqual([missing.code, missing.stderr], [2, 'clodexctl: patch testjobs needs --slots N or --exclusive honour|ignore\n']);
+    assert.deepStrictEqual([missing.code, missing.stderr], [2, 'clodexctl: patch testjobs needs --slots N, --exclusive honour|ignore, or --box-arg / --no-box-args / --box-args-label\n']);
     const word = await cli(['patch', 'testjobs', '--slots', 'two'], port);
     assert.deepStrictEqual([word.code, word.stderr], [2, 'clodexctl: --slots must be a whole number, not "two"\n']);
     const extra = await cli(['patch', 'testjobs', 'x', '--slots', '1'], port);
@@ -120,7 +120,7 @@ test('t2428: patch testjobs refuses a bad --exclusive and --slots with --exclusi
     const bad = await cli(['patch', 'testjobs', '--exclusive', 'maybe'], port);
     assert.deepStrictEqual([bad.code, bad.stderr], [2, 'clodexctl: --exclusive must be honour or ignore, not "maybe"\n']);
     const both = await cli(['patch', 'testjobs', '--slots', '1', '--exclusive', 'ignore'], port);
-    assert.deepStrictEqual([both.code, both.stderr], [2, 'clodexctl: patch testjobs takes --slots or --exclusive, one per call\n']);
+    assert.deepStrictEqual([both.code, both.stderr], [2, 'clodexctl: patch testjobs takes --slots, --exclusive or the box options flags, one per call\n']);
     assert.deepStrictEqual(seen, []);
   }, { rows: [SLOTS_ROW, EXCLUSIVE_ROW] });
 });
@@ -132,4 +132,30 @@ test('t2428: a node that does not serve testjobs/exclusive is told to upgrade, a
     assert.match(stderr, /does not serve testjobs\/exclusive post/);
     assert.deepStrictEqual(seen.filter(([m]) => m === 'POST'), []);
   });
+});
+
+const BOX_ARGS_ROW = { name: 'testjobs/box-args', singular: 'testjobs/box-args', scope: 'node', verbs: ['post'] };
+
+test('t2483: patch testjobs --box-arg posts the repeated options and the label to their own route and prints the fingerprint, never the options', async () => {
+  const body = { ok: true, count: 2, custom: { fingerprint: '0b334ad4c4a0', label: 'gpu' }, applied: 'after-drain', running: 1 };
+  await withNode({ status: 200, body }, async (port, seen) => {
+    const { code, stdout, stderr } = await cli(['patch', 'testjobs', '--box-arg', '--device=/dev/dri', '--box-arg=--group-add=993', '--box-args-label', 'gpu'], port);
+    assert.deepStrictEqual([code, stderr, stdout], [0, '', 'test runner set to 2 box options (gpu, fingerprint 0b334ad4c4a0) — applies when 1 running job finishes\n']);
+    assert.deepStrictEqual(seen.filter(([m]) => m === 'POST'), [['POST', '/api/testjobs/box-args', '{"boxArgs":["--device=/dev/dri","--group-add=993"],"boxArgsLabel":"gpu"}']]);
+  }, { rows: [SLOTS_ROW, BOX_ARGS_ROW] });
+  await withNode({ status: 200, body: { ok: true, count: 0, custom: null, applied: 'now', running: 0 } }, async (port, seen) => {
+    const { code, stdout } = await cli(['patch', 'testjobs', '--no-box-args'], port);
+    assert.deepStrictEqual([code, stdout], [0, 'test runner set to no box options — applied now\n']);
+    assert.deepStrictEqual(seen.filter(([m]) => m === 'POST'), [['POST', '/api/testjobs/box-args', '{"boxArgs":[]}']]);
+  }, { rows: [SLOTS_ROW, BOX_ARGS_ROW] });
+});
+
+test('t2483: patch testjobs refuses --box-arg with --no-box-args, and with --slots, before the wire', async () => {
+  await withNode({ status: 200, body: { ok: true } }, async (port, seen) => {
+    const both = await cli(['patch', 'testjobs', '--box-arg=--privileged', '--no-box-args'], port);
+    assert.deepStrictEqual([both.code, both.stderr], [2, 'clodexctl: patch testjobs takes --box-arg or --no-box-args, not both\n']);
+    const mixed = await cli(['patch', 'testjobs', '--slots', '1', '--box-arg=--privileged'], port);
+    assert.deepStrictEqual([mixed.code, mixed.stderr], [2, 'clodexctl: patch testjobs takes --slots, --exclusive or the box options flags, one per call\n']);
+    assert.deepStrictEqual(seen, []);
+  }, { rows: [SLOTS_ROW, BOX_ARGS_ROW] });
 });
