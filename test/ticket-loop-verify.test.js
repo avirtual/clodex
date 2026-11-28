@@ -7114,7 +7114,7 @@ const BOX_OUT = { green: 'TOTALS: 5 pass, 0 fail, 5 tests\n', red: ' ✖ box onl
 
 function boxRemote(mode, events) {
   const doneJob = (id, over = {}) => ({
-    id, state: 'done', treeHash: BOX_TREE, env: BOX_ENV(), exit: { code: mode === 'green' ? 0 : 1, signal: null },
+    id, state: 'done', treeHash: BOX_TREE, env: BOX_ENV(), exit: { code: mode === 'green' || mode === 'unread green' ? 0 : 1, signal: null },
     reason: null, queueMs: 0, setupMs: 0, runMs: 1, out: {}, ...over,
   });
   const jobFor = (id) => {
@@ -7128,6 +7128,8 @@ function boxRemote(mode, events) {
     if (mode === 'runner killed') return doneJob(id, { reason: 'timeout' });
     if (mode === 'cancelled') return doneJob(id, { reason: 'cancelled' });
     if (mode === 'no totals') return doneJob(id, { exit: { code: 0, signal: null } });
+    if (mode === 'unread green') return doneJob(id, { record: { outcome: 'pass', pass: 5, fail: 0, tests: 5 } });
+    if (mode === 'unread red') return doneJob(id, { record: { outcome: 'fail', pass: 4, fail: 1, tests: 5 } });
     return doneJob(id);
   };
   const conn = {
@@ -7136,6 +7138,7 @@ function boxRemote(mode, events) {
       if (mode === 'unreachable') return { status: 0, body: null };
       if (p === '/api/suite/info') return { status: 200, body: { ok: true, limits: {}, env: { envKey: 'k' } } };
       if (method === 'POST') { events.push('post'); return mode === 'refused' ? { status: 200, body: { ok: false, error: 'nope' } } : { status: 200, body: { ok: true, state: 'queued' } }; }
+      if (p.includes('/output?') && mode.startsWith('unread')) return { status: 503, body: null };
       if (p.includes('/output?')) {
         const text = p.includes('stream=stdout') ? (BOX_OUT[mode] || BOX_OUT.red) : mode === 'build failed' ? 'ERROR: boom\nsuite-runner: box build: docker build exited 1: ERROR: boom\n' : '';
         return { status: 200, body: { ok: true, text, offset: 0, total: Buffer.byteLength(text) } };
@@ -7175,13 +7178,13 @@ function boxLoop(script, { suite = 'green', extraDeps = {} } = {}) {
   f.m._runnerPeerStatus = (n) => (n === 'runner-1' ? { id: 'p1' } : null);
   const dir = mkTmpRoot('clodex-box-team-');
   require('../team-box').writeBox(dir, BOX_DEF);
-  const run = async (testRunner, client) => {
+  const run = async (testRunner, client, keepBox = false) => {
     holder.client = client;
     events.length = 0;
     f.team.testRunner = testRunner;
     f.team.dir = dir;
     const { box: _box, ...out } = await f.m._runTicketSuite(f.team, f.one());
-    return { ...out, startedAt: '<at>', durationMs: typeof out.durationMs, runnerPid: typeof out.runnerPid };
+    return { ...out, startedAt: '<at>', durationMs: typeof out.durationMs, runnerPid: typeof out.runnerPid, ...(keepBox ? { box: _box } : {}) };
   };
   return { f, repo, events, holder, run };
 }
@@ -7209,6 +7212,28 @@ test('t2338: under gate:on a box pass and a box fail decide the result without a
       localEnv: null, remoteEnv: { os: 'linux', arch: 'arm64', isolation: 'container', imageId: `sha256:${'e'.repeat(64)}`, definitionHash: BOX_HASH },
       local: null, remote, agree: null, outcomeAgree: null, countsAgree: null, failingAgree: null, decidedBy: 'box', fallback: null,
     }], mode);
+  }
+});
+
+test('t2471: a box run whose output cannot be read decides on the runner record: a pass passes with the notice, a fail names no tests and points at the job on the runner', async () => {
+  const b = boxLoop(SHADOW_LOCAL.red);
+  const NOTICE = "the runner's output could not be read; the verdict and counts are the runner's own record";
+  const rows = [
+    ['unread green', true, 0, '5/5 passing, 0 failing (exit 0)', { pass: 5, fail: 0, tests: 5 }, 'pass'],
+    ['unread red', false, 1, '4/5 passing, 1 failing (exit 1)', { pass: 4, fail: 1, tests: 5 }, 'fail'],
+  ];
+  for (const [mode, green, code, summary, totals, outcome] of rows) {
+    const r = boxRemote(mode, b.events);
+    const out = await b.run(GATE_ON, r.client, true);
+    assert.deepStrictEqual([out.decidedBy, out.ran, out.green, out.code, out.summary, out.totals, out.error, out.box.output, out.box.runner, typeof out.box.jobId],
+      ['box', true, green, code, summary, totals, null, 'unavailable', 'runner-1', 'string'], mode);
+    assert.deepStrictEqual(b.events, ['post'], `${mode}: one box job, no home spawn`);
+    assert.strictEqual(b.f.m._suiteWhere(out), ` (box) — ${NOTICE}`, mode);
+    assert.deepStrictEqual([out.failing, out.slow], green ? ['', []]
+      : [`none named — ${NOTICE}; the output stays on runner runner-1 for 24 h as job ${out.box.jobId}`, []], mode);
+    const [row] = r.rows();
+    assert.deepStrictEqual([row.decidedBy, row.remote.outcome, row.remote.pass, row.remote.fail, row.remote.tests, row.remote.failing, row.remote.slow, row.remote.output],
+      ['box', outcome, totals.pass, totals.fail, totals.tests, [], [], 'unavailable'], mode);
   }
 });
 

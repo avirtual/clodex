@@ -16,6 +16,7 @@ blocks a release.
 - Test runners: `clodexctl get offers` shows a SLOTS column, the number of test jobs a node runs at once, next to BOXES; the two were unrelated and only BOXES was shown.
 - Test runners: a run on the source machine now names the team env variables it did not apply (reserved names such as PATH), in the run's digest and ledger row, instead of dropping them in silence.
 - Preferences: the test runner section has a control for whether a team's exclusive jobs may take the whole runner; before, an owner could change it only through the API.
+- Test runners: when a finished run's output cannot be read from the runner, the run keeps the runner's own verdict and counts (marked as such) instead of ending as unknown and holding the ticket; reading the output now retries for as long as polling does.
 
 ## 5.213.0 — 2026-11-28
 
