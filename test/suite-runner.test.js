@@ -2437,3 +2437,43 @@ test('t2470: retention sets a pruned job store aside at once, removes it in the 
   assert.strictEqual(fs.existsSync(gone), false);
   removals[0].resolve();
 });
+
+const LIST_A = ['--device=/dev/dri', '--env=SECRET_TOKEN=zzz'];
+const LIST_B = ['--group-add=993'];
+const jobArgOf = (id) => (c) => c.cmd === 'docker' && c.args.includes(`clodex.suite.job=${id}`);
+const ownOf = (c) => c.args.slice(c.args.indexOf('SHELL=/bin/sh') + 1, c.args.indexOf('-c') - 1);
+
+test('t2483: a job queued under list A runs with A after the setting changes to B, and its stamp says A', async (t) => {
+  let blocker = null;
+  const f = await fixture(t, {
+    runnerOver: { box: labelledBox({ boxArgs: LIST_A, boxArgsLabel: 'card-a' }).box },
+    onSpawn: (c) => {
+      if (jobArgOf('blocker')(c)) { blocker = c.child; return; }
+      c.child.stdout.write('TOTALS: 1 pass, 0 fail, 1 tests\n');
+      c.child.finish(0);
+    },
+  });
+  assert.strictEqual((await f.upload(f.body('blocker', 'hand', { isolation: 'container' }))).ok, true);
+  await waitState(f.runner, 'blocker', 'running');
+  assert.strictEqual((await f.runner.submit(f.body('q', 'hand', { isolation: 'container', boxArgs: LIST_B }))).state, 'queued');
+  const queued = (await f.runner.poll(['q'])).jobs[0];
+  assert.deepStrictEqual(queued.env.box.custom, { fingerprint: '64c1563c2aa1', label: 'card-a' }, 'ENTER: admitted under A');
+  assert.ok(!JSON.stringify(queued).includes('SECRET_TOKEN'), 'the status answer carries no raw option');
+  assert.ok(!JSON.stringify(await f.runner.info()).includes('SECRET_TOKEN'), 'the info answer carries no raw option');
+  f.runner.close();
+  const next = f.make({ box: labelledBox({ boxArgs: LIST_B, boxArgsLabel: 'card-b' }).box });
+  t.after(() => next.close());
+  next.start();
+  const done = await waitState(next, 'q', 'done');
+  assert.deepStrictEqual([done.reason, done.env.box.custom], [null, { fingerprint: '64c1563c2aa1', label: 'card-a' }]);
+  assert.deepStrictEqual(f.calls.filter(jobArgOf('q')).map(ownOf), [LIST_A]);
+  assert.ok(!JSON.stringify(done).includes('SECRET_TOKEN'), 'the finished status carries no raw option');
+});
+
+test('t2483: a submitted body carrying boxArgs is ignored: a runner with no list runs the plain line', async (t) => {
+  const f = await fixture(t, { runnerOver: { box: labelledBox().box } });
+  assert.strictEqual((await f.upload(f.body('plain', 'hand', { isolation: 'container', boxArgs: LIST_B }))).ok, true);
+  const done = await waitState(f.runner, 'plain', 'done');
+  assert.deepStrictEqual([done.reason, 'custom' in done.env.box], [null, false]);
+  assert.deepStrictEqual(f.calls.filter(jobArgOf('plain')).map(ownOf), [[]]);
+});

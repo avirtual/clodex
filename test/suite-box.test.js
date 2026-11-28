@@ -528,3 +528,54 @@ test('t2470: reap removes the job dir through a pending async rm with no sync wa
   rms[1].land().catch(() => {});
   await assert.rejects(failing, (e) => e.removal === true && e.message === `removing ${jobDir} failed: EACCES: permission denied`);
 });
+
+const GPU_ARGS = ['--device=/dev/dri', '--group-add=993'];
+
+test('t2483: runArgv puts the owner list after the env flags and immediately before the image', () => {
+  const argv = runArgv({
+    image: IMAGE, runnerKey: RUNNER_KEY, n: 2, uid: 501, gid: 20, jobDir: '/w/jobs/abcd1234',
+    job: { id: 'j-1', identity: { arch: 'x64' } },
+    argv: ['node', 'scripts/run-tests.js'],
+    env: { FOO: 'bar' },
+    boxArgs: ['--device=/dev/dri', '--group-add=993', '--user=0:0'],
+  });
+  assert.deepStrictEqual(argv, [
+    'docker', 'run', '-i', '--rm',
+    '--name', 'clodex-suite-68ce9ee28045-abcd1234-2',
+    '--label', 'clodex.suite=1', '--label', 'clodex.suite.runner=68ce9ee28045', '--label', 'clodex.suite.job=j-1',
+    '--platform', 'linux/amd64', '--pull', 'never', '--init', '--log-driver', 'none',
+    '--entrypoint', '/bin/sh', '--workdir', '/job/tree', '--user', '501:20',
+    '--network', 'bridge', '--cap-drop', 'ALL', '--security-opt', 'no-new-privileges',
+    '--pids-limit', '4096', '--shm-size', '1g',
+    '--mount', 'type=bind,src=/w/jobs/abcd1234/tree,dst=/job/tree',
+    '-e', 'HOME=/tmp/home', '-e', 'TMPDIR=/tmp', '-e', 'GIT_CEILING_DIRECTORIES=/job', '-e', 'LANG=C.UTF-8', '-e', 'TZ=UTC',
+    '-e', 'USER=box', '-e', 'LOGNAME=box', '-e', 'SHELL=/bin/sh',
+    '-e', 'FOO=bar',
+    '--device=/dev/dri', '--group-add=993', '--user=0:0',
+    IMAGE,
+    '-c', WRAPPER,
+    'sh', 'node', 'scripts/run-tests.js',
+  ]);
+  assert.throws(() => runArgv({ image: IMAGE, runnerKey: RUNNER_KEY, n: 1, uid: 501, gid: 20, jobDir: '/w/jobs/x', job: ARM_JOB, argv: [], env: {}, boxArgs: ['ubuntu'] }), /box option 1 must be an option/);
+});
+
+test('t2483: a box adapter with a list stamps box.custom and keys a different envKey; without one the envKey is unchanged', async () => {
+  const docker = () => stubDocker((args) => (args[0] === 'info' ? { stdout: '27.3.1 linux aarch64 8\n' } : { stdout: `${IMAGE} linux arm64\n` }));
+  const plain = await adapter({ docker: docker(), env: { CLODEX_NODE_NAME: 'node-a' }, platform: 'darwin', arch: 'arm64' }).probe();
+  const own = adapter({ docker: docker(), env: { CLODEX_NODE_NAME: 'node-a' }, platform: 'darwin', arch: 'arm64', boxArgs: GPU_ARGS, boxArgsLabel: 'gpu' });
+  const custom = await own.probe();
+  assert.deepStrictEqual([plain.env.envKey, plain.env.box], ['b2d0badeb218', { imageId: IMAGE, definitionHash: null, rev: null }]);
+  assert.deepStrictEqual([custom.env.envKey, custom.env.box], ['84ca573b51bd', { imageId: IMAGE, definitionHash: null, rev: null, custom: { fingerprint: '0b334ad4c4a0', label: 'gpu' } }]);
+  assert.deepStrictEqual([own.boxArgs(), own.custom()], [GPU_ARGS, { fingerprint: '0b334ad4c4a0', label: 'gpu' }]);
+  assert.throws(() => adapter({ boxArgs: ['--name=x'] }), /the test runner box options are invalid: box option 1 --name is reserved by Clodex/);
+});
+
+test('t2483: the adapter spawns with the list recorded on the job, not its own', () => {
+  const seen = [];
+  const box = adapter({ boxArgs: ['--group-add=1'] });
+  const spawn = (cmd, args) => { seen.push([cmd, ...args]); return new EventEmitter(); };
+  box.spawn({ jobDir: '/w/jobs/a', argv: ['node'], env: {}, spawn, job: { ...ARM_JOB, boxArgs: GPU_ARGS } });
+  box.spawn({ jobDir: '/w/jobs/b', argv: ['node'], env: {}, spawn, job: ARM_JOB });
+  const before = (a) => a.slice(a.indexOf('SHELL=/bin/sh') + 1, a.indexOf(IMAGE));
+  assert.deepStrictEqual(seen.map(before), [GPU_ARGS, []]);
+});

@@ -1524,6 +1524,7 @@ function createSuiteRunner({
 
   function jobFrom(body, origin, stamp, build) {
     const boxed = body.isolation === 'container';
+    const ownArgs = boxed && box && typeof box.boxArgs === 'function' ? box.boxArgs() : [];
     return {
       id: body.id, attempt: body.attempt || 1, repoKey: body.repoKey, kind: body.kind, scope: body.scope || null,
       team: body.team || null, ticket: body.ticket || null, seat: body.seat || null,
@@ -1536,6 +1537,7 @@ function createSuiteRunner({
       ...(boxed && Array.isArray(body.shares) && body.shares.length ? { shares: body.shares.map(({ share, version }) => ({ share, version })) } : {}),
       ...(typeof origin === 'string' && origin ? { origin: origin.slice(0, 64) } : {}),
       ...(build ? { build } : {}),
+      ...(ownArgs.length ? { boxArgs: ownArgs } : {}),
       ...(body.exclusive === true ? { exclusive: true } : {}),
       ...(body.shadow === true ? { shadow: true } : {}),
     };

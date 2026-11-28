@@ -155,6 +155,7 @@ function suiteRunnerOptions(env, root, { platform = process.platform, setting = 
     ...(Array.isArray(s.shares) && s.shares.length ? { shares: s.shares } : {}),
     ...(s.buildBoxes === true ? { buildBoxes: true } : {}),
     ...(s.exclusive === 'ignore' ? { exclusive: 'ignore' } : {}),
+    ...(Array.isArray(s.boxArgs) && s.boxArgs.length ? { boxArgs: s.boxArgs, ...(s.boxArgsLabel ? { boxArgsLabel: s.boxArgsLabel } : {}) } : {}),
     forced,
   };
 }
@@ -180,8 +181,8 @@ function offerCallbacks({ getBoxOffer, getOfferFacts, offerDirectory, dialers, g
 function startSuiteRunner(opts, { log, onActivity = null, load =() => require('./suite-runner'), loadBox = () => require('./suite-box') }) {
   try {
     const { createSuiteRunner, noneIsolation, userIsolation, statePaths } = load();
-    const { forced, boxImage, ...runnerOpts } = opts;
-    const docker = loadBox().boxIsolation({ image: boxImage || null, work: opts.work, stateDir: statePaths(opts.root).dir });
+    const { forced, boxImage, boxArgs, boxArgsLabel, ...runnerOpts } = opts;
+    const docker = loadBox().boxIsolation({ image: boxImage || null, work: opts.work, stateDir: statePaths(opts.root).dir, ...(boxArgs ? { boxArgs, boxArgsLabel: boxArgsLabel || null } : {}) });
     const runner = createSuiteRunner({
       ...runnerOpts,
       isolation: opts.isolation === 'none' ? noneIsolation() : userIsolation(),

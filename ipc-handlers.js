@@ -25,6 +25,7 @@ const { randomBytes } = require('node:crypto');
 const { validateSeatFiles } = require('./seat-files');
 const { BOX_ID_RE, runningInSandboxBox } = require('./sandbox');
 const { SETUP_CHOICES, execRowOf, sanitizeSuiteRunner } = require('./stores');
+const { boxArgsRefusal, boxArgsLabelRefusal } = require('./box-args');
 const { sanitizeBoxOffer, runConfirmed, offerEntry, NODE_NAME_RE } = require('./box-offer');
 const { offerRunnerFrom } = require('./renderer/lib/offer-view');
 const { peerSharesAgents } = require('./relay-protocol');
@@ -1903,8 +1904,13 @@ function registerIpcHandlers(deps) {
       : { ok: false, status: 501, error: 'the test runner is off' }));
     handle('suiteRunner:set', (_e, sent) => {
       const kept = uiSettings.get().suiteRunner;
-      const rec = sent && typeof sent === 'object' && !Array.isArray(sent) && sent.exclusive === undefined && kept && kept.exclusive
-        ? { ...sent, exclusive: kept.exclusive } : sent;
+      let rec = sent;
+      if (sent && typeof sent === 'object' && !Array.isArray(sent) && kept) {
+        rec = { ...sent };
+        for (const k of ['exclusive', 'boxArgs', 'boxArgsLabel']) if (sent[k] === undefined && kept[k] !== undefined) rec[k] = kept[k];
+      }
+      const boxArgsWhy = rec && typeof rec === 'object' ? (rec.boxArgs != null && boxArgsRefusal(rec.boxArgs)) || boxArgsLabelRefusal(rec.boxArgsLabel) : null;
+      if (boxArgsWhy) return { ok: false, error: boxArgsWhy, state: suiteRunnerState() };
       const clean = rec === null ? null : sanitizeSuiteRunner(rec);
       if (rec !== null && !clean) return { ok: false, error: 'invalid test runner setting', state: suiteRunnerState() };
       if (rec && Array.isArray(rec.shares) && rec.shares.length && !clean.shares) {
