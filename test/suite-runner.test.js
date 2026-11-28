@@ -2363,7 +2363,7 @@ test('t2470: while a finished job tree removal is pending, info, poll and the ou
   assert.deepStrictEqual([i.slots, i.queue.queued.length], [{ total: 1, inUse: 1 }, 1]);
   const polled = (await f.runner.poll(['first', 'second'])).jobs;
   assert.deepStrictEqual(polled.map((j) => [j.id, j.state]), [['first', 'done'], ['second', 'queued']]);
-  assert.deepStrictEqual([polled[0].outcome, polled[0].pass], ['pass', 1]);
+  assert.deepStrictEqual([polled[0].record.outcome, polled[0].record.pass], ['pass', 1]);
   assert.strictEqual((await f.runner.output('first')).text, 'TOTALS: 1 pass, 0 fail, 1 tests\n');
   const stored = JSON.parse(fs.readFileSync(path.join(f.root, 'suite-runner', 'jobs', 'first', 'job.json'), 'utf8'));
   assert.deepStrictEqual([stored.state, stored.record.outcome], ['done', 'pass']);
@@ -2387,7 +2387,7 @@ test('t2470: a failed job tree removal is logged once with its path, keeps the o
   const second = await waitState(f.runner, 'second', 'done');
   const firstDir = jobPaths(f.work, 'first').dir;
   assert.deepStrictEqual(logs.filter((m) => m.includes('reap first')), [`suite-runner: reap first (${firstDir}) failed: EACCES: permission denied`]);
-  assert.deepStrictEqual([(await f.runner.poll(['first'])).jobs[0].outcome, second.outcome], ['pass', 'pass']);
+  assert.deepStrictEqual([(await f.runner.poll(['first'])).jobs[0].record.outcome, second.record.outcome], ['pass', 'pass']);
 });
 
 test('t2470: a box job tree removal that fails does not hold box jobs', async (t) => {
