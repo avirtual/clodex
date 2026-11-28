@@ -2110,7 +2110,7 @@ function createTicketMethods(deps, shared) {
           return;
         }
         if (!anc.merged) {
-          fail('base-is-ancestor', `${baseSha} is NOT an ancestor of ${branch} — the branch was rebased or reset, so it is not the tree the review was written against`,
+          fail('base-is-ancestor', `${baseSha} is NOT an ancestor of ${branch} — the branch was rebased or reset, so it is not the tree the review was written against; or the trunk moved while the ticket started, so the recorded base is wrong, and merging the trunk into the branch and closing again clears it`,
             `ran isMerged(${baseSha}, ${branch}); nothing was merged`);
           return;
         }
@@ -6694,7 +6694,7 @@ function createTicketMethods(deps, shared) {
           return;
         }
         if (!anc.merged) {
-          fail('verify: base-is-ancestor', `${baseSha} is NOT an ancestor of ${branch} — the branch was rebased or reset, so it is no longer the tree the spec was written against`,
+          fail('verify: base-is-ancestor', `${baseSha} is NOT an ancestor of ${branch} — the branch was rebased or reset, so it is no longer the tree the spec was written against; or the trunk moved while the ticket started, so the recorded base is wrong, and merging the trunk into the branch and closing again clears it`,
             `ran isMerged(${baseSha}, ${branch}); no reviewer spawned`, 'hand');
           return;
         }

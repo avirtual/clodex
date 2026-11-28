@@ -56,3 +56,7 @@ A conflict on `CHANGELOG.md` alone reads `clean:true, changelogOnly:true`:
 
 The 2.48 floor is from git's release notes (RelNotes 2.48.0: worktree linkage switched to relative paths, plus the extension that keeps older git from misreading them); by behaviour, 2.39.5 lists such a tree `prunable` and its `worktree prune` deletes the live tree's admin dir, 2.52.0 reads it. 2.47 was not run.
 A failed version read is not cached, so a transient spawn failure refuses only that dispatch.
+
+## createWorktree
+
+`baseSha` is read once, before `worktree add`, and that sha is the start point: a second read of a moving `HEAD` after the add stamped a merge that landed during the checkout (DIAG t2476). An existing branch gets `baseSha: null`, since its tip already carries its own commits; the ticket caller carries the recorded fork point instead.

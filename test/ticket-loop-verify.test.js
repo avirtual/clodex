@@ -910,6 +910,9 @@ test('a base that is no longer an ancestor escalates, naming that check', async 
   assert.strictEqual(esc.length, 1);
   assert.match(esc[0].body, /base-is-ancestor/, 'the escalation names the ancestry check, not the commit check');
   assert.match(esc[0].body, /NOT an ancestor/);
+  assert.match(esc[0].body, /the branch was rebased or reset/);
+  assert.match(esc[0].body, /the trunk moved while the ticket started, so the recorded base is wrong, and merging the trunk into the branch and closing again clears it/);
+  assert.strictEqual(f.one().verifyHold.recovery, 'hand');
   assert.strictEqual(f.created.length, 0);
 });
 

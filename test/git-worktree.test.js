@@ -398,6 +398,90 @@ test('createWorktree: an EXISTING branch reports no fork point', { skip: !gitAva
   fs.rmSync(repo, { recursive: true, force: true });
 });
 
+function withRacingGit(repo, fn) {
+  const realGit = execFileSync('sh', ['-c', 'command -v git'], { encoding: 'utf8' }).trim();
+  const bin = mkTmpRoot('clodex-wt-shim-');
+  const shim = path.join(bin, 'git');
+  fs.writeFileSync(shim, [
+    '#!/bin/sh',
+    `"${realGit}" "$@"; rc=$?`,
+    'if [ $rc -eq 0 ]; then case " $* " in *" worktree add "*)',
+    `  "${realGit}" -C "${repo}" commit -q --allow-empty -m racing-merge`,
+    `  "${realGit}" -C "${repo}" rev-parse -q --verify refs/remotes/origin/main >/dev/null && "${realGit}" -C "${repo}" update-ref refs/remotes/origin/main HEAD ;; esac; fi`,
+    'exit $rc',
+    '',
+  ].join('\n'));
+  fs.chmodSync(shim, 0o755);
+  const savedPath = process.env.PATH;
+  process.env.PATH = `${bin}${path.delimiter}${savedPath}`;
+  return Promise.resolve().then(fn).finally(() => { process.env.PATH = savedPath; });
+}
+
+for (const race of [false, true]) {
+  for (const row of [{ kind: 'branch', base: 'master' }, { kind: 'HEAD', base: 'HEAD' }, { kind: 'sha', base: null }]) {
+    test(`createWorktree: baseSha is the new branch's fork point, base as ${row.kind}, ${race ? 'with' : 'without'} a commit landing during worktree add`, { skip: !gitAvailable() }, async () => {
+      const repo = makeRepo();
+      const rev = (ref) => execFileSync('git', ['-C', repo, 'rev-parse', ref], { encoding: 'utf8' }).trim();
+      const startTip = rev('refs/heads/master');
+      const base = row.base || startTip;
+      const mint = () => wt.createWorktree(repo, `t-race-${row.kind}`, { base });
+      const made = race ? await withRacingGit(repo, mint) : await mint();
+      assert.equal(made.ok, true, made.error);
+      const masterNow = rev('refs/heads/master');
+      assert.strictEqual(masterNow !== startTip, race, 'ENTER: master moved during the add exactly when the race is on');
+      assert.strictEqual(made.baseSha, rev(`refs/heads/t-race-${row.kind}`));
+      assert.strictEqual(made.baseSha, startTip);
+      assert.strictEqual(made.base, base);
+      const anc = await wt.isMerged(repo, made.baseSha, `t-race-${row.kind}`);
+      assert.deepStrictEqual([anc.ok, anc.merged], [true, true]);
+      await wt.removeWorktree(made.path);
+      fs.rmSync(repo, { recursive: true, force: true });
+    });
+  }
+}
+
+function makeRepoWithRemote() {
+  const repo = makeRepo();
+  const bare = mkTmpRoot('clodex-wt-bare-');
+  execFileSync('git', ['init', '-q', '--bare', bare], { stdio: 'ignore' });
+  const run = (...a) => execFileSync('git', ['-C', repo, ...a], { stdio: 'ignore' });
+  run('remote', 'add', 'origin', bare);
+  run('push', '-q', 'origin', 'master:main');
+  run('fetch', '-q', 'origin');
+  return { repo, bare };
+}
+
+for (const row of [
+  { label: 'origin/main', base: 'origin/main', race: false, autoSetupMerge: null, upstream: 'origin/main' },
+  { label: 'origin/main, racing commit', base: 'origin/main', race: true, autoSetupMerge: null, upstream: 'origin/main' },
+  { label: 'origin/main, autoSetupMerge=false', base: 'origin/main', race: false, autoSetupMerge: 'false', upstream: null },
+  { label: 'HEAD', base: 'HEAD', race: false, autoSetupMerge: null, upstream: null },
+  { label: 'local branch', base: 'master', race: false, autoSetupMerge: null, upstream: null },
+  { label: 'sha', base: null, race: false, autoSetupMerge: null, upstream: null },
+]) {
+  test(`createWorktree: upstream for base ${row.label} is ${row.upstream || 'none'}`, { skip: !gitAvailable() }, async () => {
+    const { repo, bare } = makeRepoWithRemote();
+    const rev = (ref) => execFileSync('git', ['-C', repo, 'rev-parse', ref], { encoding: 'utf8' }).trim();
+    if (row.autoSetupMerge) execFileSync('git', ['-C', repo, 'config', 'branch.autoSetupMerge', row.autoSetupMerge], { stdio: 'ignore' });
+    const startTip = rev(row.base === 'origin/main' ? 'refs/remotes/origin/main' : 'refs/heads/master');
+    const base = row.base || startTip;
+    const mint = () => wt.createWorktree(repo, 't-up', { base });
+    const made = row.race ? await withRacingGit(repo, mint) : await mint();
+    assert.equal(made.ok, true, made.error);
+    if (row.race) assert.notStrictEqual(rev('refs/remotes/origin/main'), startTip, 'ENTER: origin/main moved during the add');
+    assert.strictEqual(made.baseSha, startTip);
+    assert.strictEqual(made.baseSha, rev('refs/heads/t-up'));
+    let upstream = null;
+    try {
+      upstream = execFileSync('git', ['-C', repo, 'rev-parse', '--abbrev-ref', 't-up@{upstream}'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
+    } catch { upstream = null; }
+    assert.strictEqual(upstream, row.upstream);
+    await wt.removeWorktree(made.path);
+    fs.rmSync(repo, { recursive: true, force: true });
+    fs.rmSync(bare, { recursive: true, force: true });
+  });
+}
+
 test('commitsOnBranch degrades to a null count, never a false zero', { skip: !gitAvailable() }, async () => {
   const repo = makeRepo();
   // "git failed" must not read as "produced nothing" — that would score a

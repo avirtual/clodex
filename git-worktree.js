@@ -160,11 +160,23 @@ async function createWorktree(cwd, branch, opts = null) {
   // rather than as an opaque `git worktree add` error. A local branch, a remote
   // tracking ref (origin/main), a tag, or a SHA are all fine.
   let baseRef = null;
+  let baseSha = null;
+  let upstreamRef = null;
   if (!exists) {
     const wantBase = base && String(base).trim();
     baseRef = wantBase || (await defaultBranch(repo)) || 'HEAD';
-    if (baseRef !== 'HEAD' && !(await git(repo, ['rev-parse', '--verify', '--quiet', baseRef])).ok) {
+    const sha = await git(repo, ['rev-parse', '--verify', '--quiet', `${baseRef}^{commit}`]);
+    baseSha = sha.ok ? (sha.stdout.trim() || null) : null;
+    if (baseRef !== 'HEAD' && !baseSha) {
       return { ok: false, error: `Base ref not found: ${baseRef}` };
+    }
+    if (baseSha && baseRef !== 'HEAD') {
+      const full = await git(repo, ['rev-parse', '--symbolic-full-name', baseRef]);
+      const fullRef = full.ok ? full.stdout.trim() : '';
+      if (fullRef.startsWith('refs/remotes/')) {
+        const setup = await git(repo, ['config', '--get', 'branch.autoSetupMerge']);
+        if (!(setup.ok && setup.stdout.trim().toLowerCase() === 'false')) upstreamRef = fullRef;
+      }
     }
   }
 
@@ -178,26 +190,16 @@ async function createWorktree(cwd, branch, opts = null) {
   }
 
   // `git worktree add [-b <branch>] <path> [<commit-ish>]`. New branch → -b with
-  // the base ref as the start point; existing branch → add at that branch (it
+  // the base resolved once to a SHA; existing branch → add at that branch (it
   // must not already be checked out elsewhere).
   const args = exists
     ? ['worktree', 'add', dest, br]
-    : ['worktree', 'add', '-b', br, dest, baseRef];
+    : ['worktree', 'add', '-b', br, dest, baseSha || baseRef];
   const r = await git(repo, args);
   if (!r.ok) return { ok: false, error: (r.stderr || 'git worktree add failed').trim() };
-  // The fork point as a SHA, resolved now. A caller counting the branch's own
-  // commits later cannot recover it: the ref it forked from (routinely 'HEAD')
-  // has moved by then, and counting against a moved base credits the ticket
-  // with the base's commits or with none of its own. Best-effort — a null just
-  // sends that caller to its merge-base fallback.
-  //
-  // Only for a branch this call CREATED. An existing branch is checked out at a
-  // tip that already carries its own commits, so pinning that as the base would
-  // report every later count as zero — exactly the false "wasted worktree".
-  let baseSha = null;
-  if (!exists) {
-    const sha = await git(repo, ['rev-parse', `${baseRef}^{commit}`]);
-    baseSha = sha.ok ? (sha.stdout.trim() || null) : null;
+  if (upstreamRef) {
+    const up = await git(repo, ['branch', `--set-upstream-to=${upstreamRef}`, br]);
+    if (!up.ok) console.warn(`[git-worktree] ${br}: could not set upstream ${upstreamRef}: ${(up.stderr || '').trim()}`);
   }
   return { ok: true, path: dest, branch: br, base: exists ? null : baseRef, baseSha, repo };
 }
