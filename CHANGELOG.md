@@ -14,6 +14,7 @@ blocks a release.
 ## Unreleased
 
 - Messages: when a message to a long-idle agent is held for its next turn, the sender is now told how many are waiting and for how long, and `[agent:who]` shows the count. A new setting, off by default, delivers waiting messages once the oldest has waited a set number of hours, waking each idle agent at most once until you interact with it.
+- Messages and test runners: the notice that a message is waiting for an idle agent now gives the count and age when sender and receiver are on the same machine too; and Preferences says that a runner's box options do not affect jobs run without a box.
 
 ## 5.216.0 — 2026-11-28
 
