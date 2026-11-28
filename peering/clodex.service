@@ -21,6 +21,7 @@ Environment=CLODEX_SUPERVISED=1
 # stands up the same engine the Electron app hosts and answers the peer wire.
 ExecStart=/usr/bin/env node headless-main.js
 Restart=always
+OOMPolicy=continue
 RestartSec=5
 # Give the app time to release its single-instance lock + unix sockets on stop
 # before systemd would consider a restart, mirroring the seed script's sleep.

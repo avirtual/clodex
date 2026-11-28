@@ -124,6 +124,7 @@ Environment=CLODEX_SUPERVISED=1
 #           Environment=CLODEX_WORKSPACES=default
 ExecStart=/usr/bin/node headless-main.js
 Restart=always
+OOMPolicy=continue
 RestartSec=5
 # exit 64 = a deliberate restart request; Restart=always relaunches it like a
 # crash. Give the app time to release its pidfile + unix sockets first.
@@ -277,6 +278,23 @@ systemctl --user status  clodex
 systemctl --user restart clodex           # every session --resumes with history
 systemctl --user stop    clodex
 journalctl   --user -u   clodex -f        # live app logs
+```
+
+The unit sets `OOMPolicy=continue`: without it, systemd stops and restarts the
+whole unit when the kernel OOM killer takes any one process in its cgroup — a
+runaway test or script started by a seat — and every agent on the host dies
+with it. If the engine process itself is the victim, `Restart=always` still
+brings it back.
+
+`clodexctl upgrade` (ssh/ssm) and a redeploy re-run `clodex-deploy.sh`, which
+rewrites the installed unit from `peering/clodex.service` and runs
+`daemon-reload`, so they pick the setting up. A node you installed by hand
+keeps its old unit; add the line with a drop-in:
+
+```bash
+mkdir -p ~/.config/systemd/user/clodex.service.d
+printf '[Service]\nOOMPolicy=continue\n' > ~/.config/systemd/user/clodex.service.d/oom.conf
+systemctl --user daemon-reload
 ```
 
 ## macOS peers
