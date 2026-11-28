@@ -616,6 +616,17 @@
 |---|---|---|---|---|
 | `_mintParkId` | Mints a 5-char base36 resend id unused in the pending store, widening to 10 chars after 50 collisions | pending/ | pending-store.parkIdInUse | unpinned |
 | `_parkHeldDelivery` | Parks a cost- or dialog-held dm with a resend id for the target's next turn, without arming the park cap | pending/<name>/ | _mintParkId, parkDelivery, _bornFor | session-manager.test.js ticket-replay.test.js |
+| `_parkWaiting` | The backlog a parked-dm answer carries: count, oldest age and the age-wake state for that seat | pending/<name>/ | pending-store.parkBacklog, _parkWakeHours, _parkWakeSpent | unpinned |
+| `_drainParkedBatch` | Claims a seat's whole park dir and logs the drain cause, count and oldest age | pending/<name>/ | parkBacklog, drainPending, _logParkDrain | unpinned |
+| `_logParkDrain` | One info line per drain: seat, cause, count claimed, oldest age | — | fmtWaitAge | unpinned |
+| `_parkWakeHours` | The `parkWakeHours` setting, 1-48 or 0 for off | ui-settings | getUiSettings | unpinned |
+| `_parkWakeFile` | Path of the age-wake allowance store under REGISTRY_DIR | — | — | unpinned |
+| `_parkWakeState` | Lazily loads the spent-allowance map from park-wake.json | `this._parkWakeSpentMap` | fs | unpinned |
+| `_saveParkWakeState` | Writes the spent-allowance map atomically | park-wake.json | atomicWriteFileSync | unpinned |
+| `_parkWakeSpent` | Whether this incarnation of the seat already had its automatic wake | `this._parkWakeSpentMap` | _bornFor | park-wake.test.js |
+| `_spendParkWake` | Marks the seat's automatic wake used, stamped with its createdAt | park-wake.json | _saveParkWakeState | unpinned |
+| `_rearmParkWake` | Clears a spent allowance on operator interaction (typed input, ✉ click, operator message) | park-wake.json | _saveParkWakeState | unpinned |
+| `_sweepParkWake` | Age-limit pass: flushes a seat whose oldest hold-park waited `parkWakeHours`, once per allowance, skipping held, busy or drafting seats | pending/<name>/, park-wake.json | parkBacklog, _injectHoldReason, _flushParkedNow, _spendParkWake | park-wake.test.js |
 | `_parkBehindQueue` | Parks a dm instead of queueing it when the claude seat's PTY queue is busy or its last unit's turn has not started | pending/<name>/, `target._injectPtyQueue` | _turnStartPending, parkDelivery, _armParkCap | unpinned |
 | `_maybeParkDelivery` | Parks a delivery for a claude seat being typed into or busy so the PostToolUse hook drains it mid-loop; false means inject | pending/<name>/, `target.lastUserInputTs`, `target.activityState` | parkDelivery, _armParkCap | dm-delivery-latch.test.js parked-drain-fallback.test.js speaking-defers-inject.test.js session-manager.test.js |
 | `_flushParkedNow` | Forces all parked mail through the inject queue as one joined write, claiming the files late inside the producer | `target._rebootNoticeFlushTimer`, pending/<name>/ | countPending, drainPending, _injectText, _broadcast | dm-delivery-latch.test.js session-manager.test.js |

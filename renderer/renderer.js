@@ -6544,6 +6544,8 @@ const prefsDefaultMode = document.getElementById('prefs-default-mode');
 const prefsDiscoverOnStartup = document.getElementById('prefs-discover-on-startup');
 const prefsIdlePauseHours = document.getElementById('prefs-idle-pause-hours');
 const prefsIdlePauseAuto = document.getElementById('prefs-idle-pause-auto');
+const prefsParkWake = document.getElementById('prefs-park-wake');
+const prefsParkWakeHours = document.getElementById('prefs-park-wake-hours');
 const prefsToolsRow = document.getElementById('prefs-tools-row');
 const prefsToolsList = document.getElementById('prefs-tools-list');
 wireBulkToggles(prefsToolsRow, prefsToolsList);
@@ -9699,6 +9701,8 @@ async function openPrefs(group = null) {
   if (prefsDiscoverOnStartup) prefsDiscoverOnStartup.checked = !!s.discoverOnStartup;
   if (prefsIdlePauseHours) prefsIdlePauseHours.value = String(s.idlePauseHours);
   if (prefsIdlePauseAuto) prefsIdlePauseAuto.checked = s.idlePauseAuto === true;
+  if (prefsParkWake) prefsParkWake.checked = Number.isInteger(s.parkWakeHours) && s.parkWakeHours > 0;
+  if (prefsParkWakeHours) prefsParkWakeHours.value = String(Number.isInteger(s.parkWakeHours) && s.parkWakeHours > 0 ? s.parkWakeHours : 12);
   restorePrefsGroups();
   if (group) for (const g of prefsGroups()) { if (g.dataset.group === group) g.open = true; }
   applyPrefsGate();
@@ -9820,6 +9824,7 @@ async function writePrefsSettings() {
     discoverOnStartup: prefsDiscoverOnStartup ? prefsDiscoverOnStartup.checked : false,
     ...(prefsIdlePauseHours && prefsIdlePauseHours.value.trim() ? { idlePauseHours: Number(prefsIdlePauseHours.value) } : {}),
     ...(prefsIdlePauseAuto ? { idlePauseAuto: prefsIdlePauseAuto.checked } : {}),
+    ...(prefsParkWake && prefsParkWakeHours ? { parkWakeHours: prefsParkWake.checked ? Number(prefsParkWakeHours.value) : 0 } : {}),
     remoteEnabled: prefsRemoteEnabled.checked,
     ...(prefsRemoteBasePath
       ? patchUnlessEnvLocked(prefsEnvLocked, 'remoteBasePath', prefsRemoteBasePath.value)

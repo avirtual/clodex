@@ -96,6 +96,12 @@ function sanitizeIdlePauseHours(v) {
   return Number.isInteger(v) && v >= 0 && v <= IDLE_PAUSE_HOURS_MAX ? v : IDLE_PAUSE_HOURS_DEFAULT;
 }
 
+const PARK_WAKE_HOURS_MAX = 48;
+
+function sanitizeParkWakeHours(v) {
+  return Number.isInteger(v) && v >= 1 && v <= PARK_WAKE_HOURS_MAX ? v : 0;
+}
+
 function sanitizeIdlePauseDeclined(v) {
   if (!v || typeof v !== 'object' || Array.isArray(v) || !Number.isFinite(v.at) || !Array.isArray(v.names)) return null;
   const names = v.names.filter((n) => typeof n === 'string' && /^(?!\.+$)[a-zA-Z0-9._-]{1,64}$/.test(n));
@@ -229,6 +235,7 @@ const DEFAULT_UI_SETTINGS = {
   idlePauseHours: IDLE_PAUSE_HOURS_DEFAULT,
   idlePauseDeclined: null,
   idlePauseAuto: false,
+  parkWakeHours: 0,
   peers: [],
   // Auto-reattach of peer tabs across app restarts: { [peerId]: [name, ...] }.
   // Kept OUTSIDE the peers array on purpose — the prefs dialog rebuilds that
@@ -2045,6 +2052,7 @@ function initStores(userDataPath, {
           idlePauseHours: sanitizeIdlePauseHours(raw?.idlePauseHours),
           idlePauseDeclined: sanitizeIdlePauseDeclined(raw?.idlePauseDeclined),
           idlePauseAuto: raw?.idlePauseAuto === true,
+          parkWakeHours: sanitizeParkWakeHours(raw?.parkWakeHours),
           peers,
           peerAttached: sanitizePeerAttached(raw?.peerAttached) ?? {},
           peerVisible: sanitizePeerVisible(raw?.peerVisible) ?? {},
@@ -2152,6 +2160,7 @@ function initStores(userDataPath, {
         idlePauseHours: (partial && 'idlePauseHours' in partial) ? sanitizeIdlePauseHours(partial.idlePauseHours) : cur.idlePauseHours,
         idlePauseDeclined: (partial && 'idlePauseDeclined' in partial) ? sanitizeIdlePauseDeclined(partial.idlePauseDeclined) : cur.idlePauseDeclined,
         idlePauseAuto: (partial && 'idlePauseAuto' in partial) ? partial.idlePauseAuto === true : cur.idlePauseAuto,
+        parkWakeHours: (partial && 'parkWakeHours' in partial) ? sanitizeParkWakeHours(partial.parkWakeHours) : cur.parkWakeHours,
         peers: sanitizePeers(partial?.peers, cur.peers) ?? cur.peers,
         peerAttached: sanitizePeerAttached(partial?.peerAttached) ?? cur.peerAttached,
         peerVisible: sanitizePeerVisible(partial?.peerVisible) ?? cur.peerVisible,

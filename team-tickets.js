@@ -9758,6 +9758,7 @@ function createTicketMethods(deps, shared) {
     },
 
     _sweepTickets(now = Date.now()) {
+      try { if (typeof this._sweepParkWake === 'function') this._sweepParkWake(now); } catch (e) { log.error('inject', `park-wake sweep failed: ${e.message}`); }
       if (typeof pruneStaleRows === 'function') pruneStaleRows().catch((e) => log.error('team', `roster prune failed: ${e.message}`));
       const sweptBoards = new Set();
       const sweptTeams = new Set();

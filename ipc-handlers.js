@@ -1392,6 +1392,7 @@ function registerIpcHandlers(deps) {
       discoverOnStartup: s.discoverOnStartup,
       idlePauseHours: s.idlePauseHours,
       idlePauseAuto: s.idlePauseAuto === true,
+      parkWakeHours: s.parkWakeHours,
       theme: s.theme,
       terminalWebgl: s.terminalWebgl,
       transcriptPane: s.transcriptPane,

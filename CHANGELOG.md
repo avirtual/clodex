@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+- Messages: when a message to a long-idle agent is held for its next turn, the sender is now told how many are waiting and for how long, and `[agent:who]` shows the count. A new setting, off by default, delivers waiting messages once the oldest has waited a set number of hours, waking each idle agent at most once until you interact with it.
+
 ## 5.216.0 — 2026-11-28
 
 - Test runners: a node stopped by a signal now says which of the jobs it cuts are runs it sent to other machines; a hand's test run whose output could not be read reports the totals the runner recorded instead of 'no TOTALS line'; and a restart removes job directories a previous quit left half-removed.
