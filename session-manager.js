@@ -121,7 +121,7 @@ const { readEffectiveClaudeEnv, teeBlindBackend } = require('./claude-env');
 const { readerFor } = require('./transcript-readers');
 const { specFor: toolSpecFor } = require('./tool-doctor');
 const { scanIntentLines } = require('./intent-segments');
-const { suiteWaitClause } = require('./restart-waiter');
+const { suiteWaitClause, blockersPhrase, waitedClause, restartWaitLine, restartWaitLogLine, ageText } = require('./restart-waiter');
 const { deepMerge, bootstrapSeatConfig, museDataHome, findMuseTranscript, oldestMuseTranscript, findCodexRollout, museRegistryFor, linkTranscript } = require('./seat-config');
 const { activationSettings } = require('./muse-skills');
 const { seatImageFileName, seatImageHead } = require('./seat-images');
@@ -917,7 +917,7 @@ function createSessionManager(deps) {
     getWorkspaces, readCtxFor,
     getPluginHooks,
     getUserDataPath, openPath, notifyOS, setAppQuitting, relaunchApp, relaunchUnavailable,
-    suiteRestartJobs,
+    suiteRestartJobs, restartWaitState,
     restartSession,
   } = deps;
   const spawnStreamSeat = deps.spawnStreamSeat || streamSeatLib.spawnStreamSeat;
@@ -7576,7 +7576,8 @@ function createSessionManager(deps) {
           const list = others.length
             ? others.map(p => `${p.label ? `${p.name} (${p.label})` : p.name}${p.waiting ? ` (${p.waiting} waiting)` : ''}${p.nudged ? ` (nudged ${p.nudged})` : ''}`).join(', ')
             : '(none)';
-          if (session) this._injectText(session, `[agent:peers] ${list}`, { parkable: true });
+          const waitLine = this._restartWaitWhoLine(session, senderName);
+          if (session) this._injectText(session, waitLine ? `[agent:peers] ${waitLine}\n${list}` : `[agent:peers] ${list}`, { parkable: true });
           break;
         }
         case 'name': {
@@ -7946,7 +7947,11 @@ function createSessionManager(deps) {
         // Capture born and now here, not in the callback: the wait runs up to 30 minutes, and both ends of
         // the abandon must tell this request from a later same-name one.
         const born = this._bornFor(who);
-        if (relaunchApp) relaunchApp({ requester: who, onAbandon: (why) => this._rebootAbandoned(who, why, born, now) });
+        if (relaunchApp) relaunchApp({
+          requester: who,
+          onAbandon: (why, wait) => this._rebootAbandoned(who, why, born, now, wait),
+          onProgress: (p) => this._rebootProgress(who, born, p),
+        });
         relaunched = true;
       } catch (e) {
         log.error('intent', `reboot relaunch failed: ${e.message}`);
@@ -7960,8 +7965,10 @@ function createSessionManager(deps) {
 
     // Advice differs by why: a cancelled restart must not tell the seat to ask again, or the operator's
     // no becomes an invitation to re-arm.
-    _rebootAbandoned(who, why, born, at) {
+    _rebootAbandoned(who, why, born, at, wait = null) {
       const cancelled = why === 'cancelled';
+      const named = waitedClause(wait);
+      const busy = `sessions stayed busy${named}`;
       const store = getUiSettings && getUiSettings();
       if (store) {
         try {
@@ -7975,12 +7982,12 @@ function createSessionManager(deps) {
       }
       log.warn('intent', cancelled
         ? `reboot requested by ${who} CANCELLED by the operator`
-        : `reboot requested by ${who} ABANDONED — sessions never settled`);
+        : `reboot requested by ${who} ABANDONED — sessions never settled${named}`);
       this._broadcast('ipc-message', {
         type: 'reboot',
         from: 'clodex',
         to: who,
-        body: cancelled ? 'reboot CANCELLED (operator)' : 'reboot DROPPED (sessions stayed busy)',
+        body: cancelled ? 'reboot CANCELLED (operator)' : `reboot DROPPED (${busy})`,
       });
       // Compare createdAt to born: the inject is parkable, so a same-name recreated seat would receive it
       // as a report about a restart it never asked for. Null born delivers.
@@ -7992,8 +7999,33 @@ function createSessionManager(deps) {
       }
       this._injectText(live, cancelled
         ? '[agent:reboot] reboot CANCELLED — the operator cancelled the pending restart. Nothing was restarted, and this is a decision, not a timeout: do not re-request it, ask them first.'
-        : '[agent:reboot] reboot DROPPED — sessions stayed busy, so the restart was never taken. Nothing was restarted; ask again when work settles.',
+        : `[agent:reboot] reboot DROPPED — ${busy}, so the restart was never taken. Nothing was restarted; ask again when work settles.`,
         { parkable: true });
+    }
+
+    _rebootProgress(who, born, p) {
+      const live = this.sessions.get(who);
+      if (!live || !p || (born != null && live.createdAt !== born)) return;
+      const ran = ageText(p.at - p.armedAt);
+      const named = Array.isArray(p.blockers) && p.blockers.length ? blockersPhrase(p.blockers, p.at) : 'nothing right now (waiting out the quiet window)';
+      this._injectTextPassive(live, `[agent:reboot] restart still waiting after ${ran}, dropped in ${ageText(p.leftMs)} if the host stays busy; waiting on: ${named}`);
+    }
+
+    restartWaitEvent(ev) {
+      if (!ev) return;
+      const body = restartWaitLogLine(ev);
+      this._broadcast('ipc-message', {
+        type: 'restart-wait', from: 'clodex', to: 'user', ts: Date.now(),
+        phase: ev.phase, requesters: ev.requesters || [], armedAt: ev.armedAt, blockers: ev.blockers || [], body,
+      });
+    }
+
+    _restartWaitWhoLine(session, senderName) {
+      let st = null;
+      try { st = restartWaitState ? restartWaitState() : null; } catch { st = null; }
+      if (!st) return '';
+      const team = session ? this._teamOfOrNull(session) : null;
+      return restartWaitLine(st, { viewer: senderName, team: team ? team.name : null });
     }
 
     maybeDeliverRebootNotice(opts = {}) {

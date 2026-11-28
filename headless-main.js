@@ -171,6 +171,8 @@ const headlessRestart = createHeadlessRestart({
   inFlightRuns: () => engine.manager.inFlightRestartHolds(),
   suiteJobs: () => engine.suiteRestartJobs(),
   fence: (on) => engine.fenceSuiteRunner(on),
+  teamOf: (s) => engine.manager.teamNameOf(s.name, s.cwd),
+  onEvent: (ev) => engine.manager.restartWaitEvent(ev),
 });
 log.info('app', headlessRestart.supervised
   ? 'restart capability: supervised — [agent:reboot] will exit 64 once every session and the keyboard are idle'
@@ -201,6 +203,7 @@ const engine = createEngine({
     restartHost: restartNow,
     restartHostWhenIdle: headlessRestart.restartHostWhenIdle,
     restartUnavailable: headlessRestart.restartUnavailable,
+    restartWaitState: headlessRestart.restartWaitState,
     restartWaitsForSuite: true,
     electronChild: null,
   },

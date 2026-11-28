@@ -1338,6 +1338,7 @@ const SessionManager = createSessionManager({
   relaunchApp: restartHostWhenIdle,
   suiteRestartJobs: () => (seams.restartWaitsForSuite ? restartSuiteJobs() : []),
   relaunchUnavailable: restartUnavailable,
+  restartWaitState: () => (seams.restartWaitState ? seams.restartWaitState() : null),
   restartSession: (...a) => restartSession(...a),
   getPluginHooks: () => (pluginHost ? pluginHost.hooks : null),
 });
