@@ -911,9 +911,25 @@ function createSuiteRunner({
         else reaps.push(Promise.resolve().then(() => isolation.reap(jobWork(id))).catch((e) => log(`suite-runner: reap ${id} after restart failed: ${e.message}`)));
       }
     }
-    if ((box && !box.labelsOnly) || boxed.length || boxHold) reaps.push(recoverBox(boxed).catch((e) => log(`suite-runner: box recovery failed: ${e.message}`)));
+    const boxStep = (box && !box.labelsOnly) || boxed.length || boxHold ? recoverBox(boxed).catch((e) => log(`suite-runner: box recovery failed: ${e.message}`)) : null;
+    if (boxStep) reaps.push(boxStep);
+    const orphans = orphanDirs();
+    if (orphans.length) reaps.push(Promise.resolve(boxStep).then(() => reapOrphans(orphans)));
     if (buildHold) reaps.push(sweepBuild());
     return Promise.all(reaps);
+  }
+
+  function orphanDirs() {
+    const root = path.join(work, 'jobs');
+    const owned = new Set([...jobs.keys()].map((id) => path.basename(jobWork(id))));
+    return fs.readdirSync(root).filter((name) => !owned.has(name)).map((name) => path.join(root, name));
+  }
+
+  async function reapOrphans(dirs) {
+    if (boxHold) { enterHold(boxHold.why, dirs); return; }
+    for (const dir of dirs) {
+      try { await isolation.reap(dir); } catch (e) { log(`suite-runner: reap of orphan ${dir} failed: ${e.message}`); }
+    }
   }
 
   function reconcile() {

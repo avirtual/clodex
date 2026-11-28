@@ -1290,6 +1290,45 @@ test('recovery with the box removed keeps an interrupted box job dir until a swe
   assert.deepStrictEqual([sweeps, fs.existsSync(cutDir), fs.existsSync(holdFile)], [['fail', 'fail', 'pass'], false, false]);
 });
 
+test('t2480: recovery reaps a job work dir no stored job maps to through the isolation, and keeps a retained job\'s dir', async (t) => {
+  const reaped = [];
+  const f = await fixture(t, { wrap: (base) => ({ ...base, reap: (jobDir, ...rest) => { reaped.push(path.basename(jobDir)); return base.reap(jobDir, ...rest); } }) });
+  f.runner.close();
+  storeJob(f, 'kept-done', 'done', { endedAt: Date.now(), exit: { code: 0, signal: null } });
+  const keptDir = jobPaths(f.work, 'kept-done').dir;
+  fs.mkdirSync(path.join(keptDir, 'tree'), { recursive: true });
+  const orphan = path.join(f.work, 'jobs', 'deadbeef');
+  fs.mkdirSync(path.join(orphan, 'tree', 'sub'), { recursive: true });
+  fs.writeFileSync(path.join(orphan, 'tree', 'sub', 'x.txt'), 'x\n');
+  fs.chmodSync(path.join(orphan, 'tree', 'sub'), 0o500);
+  const runner = f.make();
+  t.after(() => runner.close());
+  await drain();
+  assert.deepStrictEqual((await runner.poll(['kept-done'])).jobs.map((j) => [j.id, j.state]), [['kept-done', 'done']]);
+  assert.deepStrictEqual([reaped, fs.existsSync(orphan), fs.existsSync(keptDir)], [['deadbeef'], false, true]);
+});
+
+test('t2480: an orphan job work dir found while a box hold is in force joins the hold and goes when a sweep confirms', async (t) => {
+  const fb = fakeBox();
+  const f = await fixture(t, { runnerOver: { box: fb.box } });
+  f.runner.close();
+  storeJob(f, 'cut-box', 'running', { isolation: 'container', identity: BOX_IDENTITY });
+  const cutDir = jobPaths(f.work, 'cut-box').dir;
+  fs.mkdirSync(path.join(cutDir, 'tree'), { recursive: true });
+  const orphan = path.join(f.work, 'jobs', 'deadbeef');
+  fs.mkdirSync(path.join(orphan, 'tree'), { recursive: true });
+  const holdFile = path.join(f.root, 'suite-runner', 'box-hold.json');
+  const r1 = f.make({ box: null });
+  await drain();
+  r1.close();
+  assert.deepStrictEqual([fs.existsSync(orphan), JSON.parse(fs.readFileSync(holdFile, 'utf8'))],
+    [true, { why: 'no box is configured to confirm cleanup', dirs: [cutDir, orphan] }]);
+  const r2 = f.make({ box: null, boxSweep: async () => {} });
+  t.after(() => r2.close());
+  await drain();
+  assert.deepStrictEqual([fs.existsSync(orphan), fs.existsSync(cutDir), fs.existsSync(holdFile)], [false, false, false]);
+});
+
 test('a box test exec whose setup path cannot be mounted ends setup-failed with the reason, at setup or at the test exec, and exit 125 or a CLI error ends box-failed', async (t) => {
   const fb = fakeBox();
   const f = await fixture(t, {
