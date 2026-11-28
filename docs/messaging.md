@@ -67,7 +67,7 @@ compact there can still be dropped by the CLI (documented degradation).
 prompt delta cold-respawns instead — docs/sessions.md, `_promptDeltaPending`).
 `[agent:context clear] <body>` stores the body on `session._postClearContinuation`
 and arms `_armPostClearValve` (same 5-min timeout as compact's); the `/clear`
-itself injects immediately, and a BODYLESS clear stores nothing. The continuation
+itself injects immediately, and a BODYLESS clear stores no continuation. The continuation
 fires from the sessionId-CHANGE edge in `create()`'s `onSessionId` — `/clear`
 mints a new conversation id and repoints the transcript symlink, `/compact` is
 in-place and keeps the id, so a changed id is the only reliable "the clear
@@ -78,6 +78,32 @@ leave the body armed for the NEXT id change, which could be an operator's manual
 `ipc-message`, mirroring compact. Applies to codex too: a codex `/clear`
 produces the same edge (verified against the real CLI), though the new rollout
 is minted lazily, so the edge can arrive well after the keystroke.
+
+**Clear/reload window** (pty seats; stream seats are not held). An accepted
+clear (`_handleContextIntent`) or reload/cold-respawn clear (`_coldRespawn`)
+arms a per-seat transition hold (`_armCtxHold`) with a generation number,
+persisted in `ctx-holds.json` at the registry root. While it is set,
+`_injectHoldReason` answers `clear-window` / `reload-window`, so every
+non-bypass `_injectText` is held, and the hold re-parks held units to disk
+(`_reparkHeldInjects`); `_maybeParkDelivery` parks dm, ticket-loop, reminder
+and operator mail even on an idle seat; `_drainParkedBatch` claims nothing,
+so the idle, boot-ready, cap, ride, age-wake and operator-flush producers
+leave mail on disk. On a wire seat the turn-completed handler scans the turn's
+intents before the idle flip and pre-arms (`_preArmCtxHold`), because that flip
+drains parked mail before the intents are dispatched; a pre-arm the dispatch
+did not turn into a real hold is dropped two ticks later. Release
+(`_releaseCtxHold`, one generation only): a bodyless clear on the session-id
+change edge (an id the seat already left is `stale` and releases nothing); a
+clear with a body, or a reload, once its continuation was typed
+(`_ctxHoldTyped`) and that turn started; a bodyless cold-respawn clear at the
+respawned seat's boot-ready. Held mail then goes through the ordinary busy/idle
+delivery. There is no timed release: after `COMPACT_INFLIGHT_TIMEOUT`, a failed
+respawn or a handoff never typed, the hold is marked failed, the operator is
+told once (`context-stuck` ipc-message and attention), `[agent:who]` reads
+"clear did not complete", and only a later clear/reload/respawn, a mail-badge
+click (`flushPending`) or operator input releases it. A restart loads every
+hold as failed. Not covered: the CLI's own `pending.sh` hook drain, which can
+hand parked mail to the continuation's turn.
 
 ## 2. Grammar (intent-scanner.js — pure, electron-free)
 

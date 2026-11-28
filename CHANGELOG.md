@@ -14,6 +14,7 @@ blocks a release.
 ## Unreleased
 
 - Messages: when a message to a long-idle agent is held for its next turn, the sender is now told how many are waiting and for how long, and `[agent:who]` shows the count. A new setting, off by default, delivers waiting messages once the oldest has waited a set number of hours, waking each idle agent at most once until you interact with it.
+- Context clear and reload: messages that arrive while an agent is clearing or reloading its conversation now wait for the new one. Before, a message could be typed into the conversation being cleared, which then acted on it before the fresh conversation repeated the work, and on a reload it could be lost. A clear or reload that does not complete is shown on the agent's row and keeps the messages.
 
 ## 5.216.0 — 2026-11-28
 
