@@ -6797,7 +6797,7 @@ function createTicketMethods(deps, shared) {
           log.info('ticket', `ticket ${ticketId}: verify suite red (${suite.summary}) — re-measuring once`);
           this._broadcast('ipc-message', { type: 'task', from: 'ticket-loop', to: team.lead, body: [`ticket ${ticketId} verify: suite red (${suite.summary})${this._suiteWhere(suite)} — re-measuring`, envDroppedLine(suite.envDropped)].filter(Boolean).join('\n') });
           this._stampVerifyPhase(team, ticketId, { phase: 'suite', since: Date.now(), run: 2 });
-          const again = await this._runTicketSuite(team, ticket, null, runOpts);
+          const again = await this._runTicketSuite(team, ticket, null, { ...runOpts, remeasure: true });
           still = this._loadTicket(team, ticketId);
           if (again.cancelled) { superseded = true; return; }
           if (!current(still)) { this._reapRunner(ticketId, again.runnerPid); return; }
@@ -7043,9 +7043,10 @@ function createTicketMethods(deps, shared) {
         }
       };
       const teamQueueMs = this._gateQueueMs(tr);
-      const deadline = retry ? boxRetrySince(retry) + BOX_RETRY_WINDOW_MS : null;
+      const budgetRetry = opts && opts.remeasure ? null : retry;
+      const deadline = budgetRetry ? boxRetrySince(budgetRetry) + BOX_RETRY_WINDOW_MS : null;
       const startedAt = this._boxRetryNow();
-      const gateQueueMs = retry
+      const gateQueueMs = budgetRetry
         ? Math.min(Math.max(teamQueueMs, deadline - startedAt), Math.max(0, deadline + teamQueueMs - startedAt)) : teamQueueMs;
       const gateQueueExtra = gateQueueMs - BOX_DECIDE_QUEUE_MS;
       let runStamped = null;
