@@ -109,3 +109,6 @@ A pruned store is renamed to `.gone~<hex>` (a name no job id can take) before it
 
 ## forceRemoveAsync
 Job-end tree removal (`reap` in `noneIsolation`, `retain`) runs here off the main thread; measured: a synchronous removal of a ~746 MB box job dir blocked the runner for up to 63 s. `finish` still awaits `reap` before the slot frees, and a done job's work dir left by a quit mid-removal is swept by nothing at boot (it is never reused: `jobPaths` hashes the id). `maintain`'s cache eviction stays synchronous: `reconcile` would keep a half-removed deps entry whose marker survived.
+
+## boxNeverStarted
+Measured on Docker 29.9.2: a daemon start error naming a missing path (`--device=/dev/<absent>`) exits 127, "permission denied" 126, other start errors 125, the same codes a started suite can return. `--rm` removes a container that never started, so nothing is left to inspect afterwards, and the box's stdout and stderr belong to the suite; the client's `docker: Error response from daemon:` line in the stderr is the only start signal the adapter has.

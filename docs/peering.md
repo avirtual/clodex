@@ -712,7 +712,7 @@ raw leaves the node: the offer carries `custom` beside `own` (like `slots`),
 `get offers` shows it in CUSTOM (the label, or `yes`), the ledger row's
 `remoteEnv` carries `custom`, and a verify decided on such a box adds "on an
 owner-customised box (<label or fingerprint>)" to its notice. A box that
-`docker run` cannot start (exit 125) under a list ends `box-args-failed`: the
+`docker run` cannot start under a list (exit 125, 126 or 127 with Docker's `docker: Error response from daemon:` line in its stderr) ends `box-args-failed`: the
 job's stderr holds only "the runner owner's box options failed to start the
 box (<label or fingerprint>)", Docker's own stderr goes to the runner's log,
 and the source treats it as the `box-args-failed` fallback (deterministic, not

@@ -473,19 +473,22 @@ if (process.argv.includes(CHILD_FLAG)) {
       assert.ok(!JSON.stringify(await runner.info()).includes(own), 'the info answer carries the raw option');
     });
 
-    test('an owner box option Docker refuses ends box-args-failed, not a test failure, and leaves no labelled container', async () => {
-      const own = '--device=/dev/clodex-no-such-device';
-      const f = await fixture({ boxArgs: [own], boxArgsLabel: 'live-dev' });
-      const runner = f.make();
-      const id = 'live-own-device';
-      const v = await runJob(f, runner, id, { isolation: 'container' });
-      assert.deepStrictEqual({ reason: v.reason, exit: v.exit, outcome: v.record.outcome, custom: v.env.box.custom },
-        { reason: 'box-args-failed', exit: { code: 125, signal: null }, outcome: 'unknown', custom: { fingerprint: '8b978dfaa59b', label: 'live-dev' } },
-        `logs: ${f.logs.join(' | ')}`);
-      const stderr = (await runner.output(id, { stream: 'stderr', offset: 0, length: 1 << 20 })).text;
-      assert.strictEqual(stderr, 'suite-runner: the runner owner\'s box options failed to start the box (live-dev)\n');
-      assert.ok(!JSON.stringify(v).includes(own), 'the wire status carries the raw option');
-      assert.deepStrictEqual(idsOf(`clodex.suite.job=${id}`), []);
-    });
+    for (const [own, id, code, fingerprint] of [
+      ['--device=/dev/clodex-no-such-device', 'live-own-device', 127, '8b978dfaa59b'],
+      ['--group-add=nosuchgroup-clodex', 'live-own-group', 125, 'e4e596f45406'],
+    ]) {
+      test(`an owner box option Docker refuses (${own}, exit ${code}) ends box-args-failed, not a test failure, and leaves no labelled container`, async () => {
+        const f = await fixture({ boxArgs: [own], boxArgsLabel: 'live-bad' });
+        const runner = f.make();
+        const v = await runJob(f, runner, id, { isolation: 'container' });
+        assert.deepStrictEqual({ reason: v.reason, exit: v.exit, outcome: v.record.outcome, custom: v.env.box.custom },
+          { reason: 'box-args-failed', exit: { code, signal: null }, outcome: 'unknown', custom: { fingerprint, label: 'live-bad' } },
+          `logs: ${f.logs.join(' | ')}`);
+        const stderr = (await runner.output(id, { stream: 'stderr', offset: 0, length: 1 << 20 })).text;
+        assert.strictEqual(stderr, 'suite-runner: the runner owner\'s box options failed to start the box (live-bad)\n');
+        assert.ok(!JSON.stringify(v).includes(own), 'the wire status carries the raw option');
+        assert.deepStrictEqual(idsOf(`clodex.suite.job=${id}`), []);
+      });
+    }
   }
 }

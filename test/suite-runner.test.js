@@ -2641,3 +2641,48 @@ test('t2483: a suite that starts and exits non-zero under owner box options is a
   assert.strictEqual((await g2.upload(g2.body('plain125', 'hand', { isolation: 'container' }))).ok, true);
   assert.strictEqual((await waitState(g2.runner, 'plain125', 'done')).reason, 'box-failed');
 });
+
+const DAEMON_125 = 'docker: Error response from daemon: unable to find group nosuchgroup-clodex: no matching entries in group file\n';
+const DAEMON_127 = 'docker: Error response from daemon: error gathering device information while adding custom device "/dev/clodex-no-such-device": no such file or directory\n';
+const DAEMON_126 = 'docker: Error response from daemon: failed to create task for container: permission denied\n';
+const SUITE_127 = 'sh: 1: node: not found\n';
+const SUITE_126 = 'sh: 1: ./run: Permission denied\n';
+const START_ROWS = [
+  ['list, daemon 125 before start', LIST_A, DAEMON_125, 125, 'box-args-failed'],
+  ['list, daemon 126 before start', LIST_A, DAEMON_126, 126, 'box-args-failed'],
+  ['list, daemon 127 before start', LIST_A, DAEMON_127, 127, 'box-args-failed'],
+  ['list, suite started then 126', LIST_A, SUITE_126, 126, null],
+  ['list, suite started then 127', LIST_A, SUITE_127, 127, null],
+  ['no list, daemon 125', [], DAEMON_125, 125, 'box-failed'],
+  ['no list, daemon 126', [], DAEMON_126, 126, null],
+  ['no list, daemon 127', [], DAEMON_127, 127, null],
+];
+for (const [name, list, stderr, code, reason] of START_ROWS) {
+  test(`t2486: ${name} ends with reason ${reason}`, async (t) => {
+    const logged = [];
+    const f = await fixture(t, {
+      runnerOver: { box: labelledBox(list.length ? { boxArgs: list, boxArgsLabel: 'card-a' } : {}).box, log: (m) => logged.push(m) },
+      onSpawn: (c) => { c.child.stderr.write(stderr); c.child.finish(code); },
+    });
+    assert.strictEqual((await f.upload(f.body('j', 'hand', { isolation: 'container' }))).ok, true);
+    const done = await waitState(f.runner, 'j', 'done');
+    assert.deepStrictEqual([done.reason, done.exit], [reason, { code, signal: null }]);
+    const out = (await f.runner.output('j', { stream: 'stderr' })).text;
+    if (reason === 'box-args-failed') {
+      assert.strictEqual(out, 'suite-runner: the runner owner\'s box options failed to start the box (card-a)\n');
+      assert.ok(logged.some((m) => m === `suite-runner: j: docker run exited ${code} under the owner box options: ${stderr.trim()}`), logged.join('\n'));
+    } else {
+      assert.ok(out.includes(stderr), `the job's own stderr survives: ${out}`);
+    }
+  });
+}
+
+test('t2486: a daemon 127 at the setup exec under owner box options ends box-args-failed', async (t) => {
+  const f = await fixture(t, {
+    runnerOver: { box: labelledBox({ boxArgs: LIST_A, boxArgsLabel: 'card-a' }).box },
+    onSpawn: (c) => { c.child.stderr.write(DAEMON_127); c.child.finish(127); },
+  });
+  assert.strictEqual((await f.upload(f.body('s', 'hand', { isolation: 'container', setup: { run: 'npm ci', key: ['package.json'], paths: ['node_modules'] } }))).ok, true);
+  const done = await waitState(f.runner, 's', 'done');
+  assert.deepStrictEqual([done.reason, done.exit], ['box-args-failed', { code: 127, signal: null }]);
+});
