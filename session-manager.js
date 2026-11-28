@@ -6413,6 +6413,7 @@ function createSessionManager(deps) {
     }
 
     _armCtxHoldFailTimer(name, gen) {
+      if (!Number.isFinite(COMPACT_INFLIGHT_TIMEOUT)) return;
       if (!this._ctxHoldTimers) this._ctxHoldTimers = new Map();
       clearTimeout(this._ctxHoldTimers.get(name));
       this._ctxHoldTimers.set(name, setTimeout(() => {
