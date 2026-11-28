@@ -238,3 +238,11 @@ test('[agent:who] shows the waiting count on the owning node', async () => {
   await m._handleIntent('a', { type: 'who' });
   assert.deepStrictEqual(injected, ['[agent:peers] b (idle) (3 waiting), c (idle)']);
 });
+
+test('the 60 s ticket watchdog pass runs the age wake', withClock(async (t) => {
+  const r = rig(t, { hours: 12 });
+  r.m._gatedDeliver('root', 'clodex@laptop', 'via watchdog', false);
+  await r.m._sweepTickets(T0 + 12 * H);
+  assert.strictEqual(r.injected.length, 1);
+  assert.match(r.injected[0], /via watchdog/);
+}));
