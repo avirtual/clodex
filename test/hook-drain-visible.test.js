@@ -18,6 +18,7 @@ function harness(t) {
   const root = mkTmpRoot('clodex-t1532-');
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const record = { name: 'seat', type: 'claude', createdAt: 1 };
+  const infos = [];
   let onRunDirEvent = null;
   const runDir = runDirFor(root, 'seat');
   const fsSpy = Object.assign(Object.create(fs), {
@@ -87,14 +88,14 @@ function harness(t) {
     pty: { spawn: () => ({ onData() {}, onExit() {}, pid: 999 }) },
     os: tmpHomeOs(),
     notifyOS: () => {},
-    log: { info: () => {}, warn: () => {}, error: () => {} },
+    log: { info: (_c, msg) => infos.push(msg), warn: () => {}, error: () => {} },
   });
   const m = new SessionManager();
   m._sendToSession = () => {};
   const sent = [];
   m._broadcast = (channel, payload) => sent.push({ channel, payload });
   return {
-    m, root, sent, PENDING_DIR,
+    m, root, sent, PENDING_DIR, infos,
     fire: (fname) => onRunDirEvent('change', fname),
     hasWatcher: () => typeof onRunDirEvent === 'function',
     append: (entry) => fs.appendFileSync(pathFor(root, 'seat', 'delivered'), JSON.stringify(entry) + '\n'),
@@ -164,4 +165,19 @@ test('delivered.jsonl tail: an attn.jsonl event does not read the delivered spoo
   h.sent.length = 0;
   h.fire('attn.jsonl');
   assert.deepStrictEqual(ofChannel(h.sent, 'ipc-message'), []);
+});
+
+test('delivered.jsonl tail: a journal left by an earlier run is not replayed; the first new line logs claimed 1', async (t) => {
+  const h = harness(t);
+  fs.mkdirSync(runDirFor(h.root, 'seat'), { recursive: true });
+  for (let i = 0; i < 5; i++) h.append({ ts: i, ev: 'UserPromptSubmit', file: `100${i}.json`, head: `old ${i}` });
+  await h.spawn();
+  t.after(() => { try { h.m._cleanup('seat'); } catch {} });
+  h.sent.length = 0;
+  h.append({ ts: 9, ev: 'PostToolUse', file: '2000.json', head: 'new' });
+  h.fire('delivered.jsonl');
+  assert.deepStrictEqual(ofChannel(h.sent, 'ipc-message').map((r) => r.body), ['drained by PostToolUse hook: new']);
+  const drains = h.infos.filter((l) => /park-drain for seat \(seat turn/.test(l));
+  assert.strictEqual(drains.length, 1);
+  assert.match(drains[0], /claimed 1 for delivery/);
 });

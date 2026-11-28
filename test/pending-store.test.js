@@ -540,6 +540,20 @@ test('Y1: a look-alike seat\'s own dead claim is not swept into the shorter-name
   assert.deepStrictEqual(drainPending(root, 'a.draining.99999', 'idle.1'), ['for the other seat']);
 });
 
+test('a dead claim rehomed while the seat is held goes to the held dir, out of the hook\'s reach', () => {
+  const root = tmpRoot();
+  const { hideParked, heldDir } = require('../pending-store');
+  hideParked(root, 'a');
+  const orphan = path.join(claimsDir(root), 'a.draining.idle.999999');
+  fs.mkdirSync(orphan, { recursive: true });
+  fs.writeFileSync(path.join(orphan, '0001.json'), JSON.stringify({ text: 'orphaned' }));
+  assert.throws(() => process.kill(999999, 0));
+  rehomeOrphans(root, 'a');
+  assert.ok(fs.existsSync(path.join(heldDir(root, 'a'), '0001.json')));
+  assert.ok(!fs.existsSync(path.join(agentDir(root, 'a'), '0001.json')));
+  assert.ok(!fs.existsSync(orphan));
+});
+
 test('allParkedTexts / parkIdInUse / claimParkedById skip a single-file entry under .claims and list a seat named x.draining.1', () => {
   const root = tmpRoot();
   parkDelivery(root, 'x.draining.1', 'seat text', SEQ(1), 'q1w');

@@ -10,7 +10,7 @@ const pend = require('../pending-store');
 
 const HOUR = 3_600_000;
 
-function rig({ root = mkTmpRoot('clx-ctxhold-'), session = {} } = {}) {
+function rig({ root = mkTmpRoot('clx-ctxhold-'), session = {}, deps = {} } = {}) {
   const PENDING_DIR = path.join(root, 'pending');
   const casts = [];
   const persisted = new Map();
@@ -43,6 +43,7 @@ function rig({ root = mkTmpRoot('clx-ctxhold-'), session = {} } = {}) {
     INJECT_HOLD_TIMEOUT: 60_000, COMPACT_INFLIGHT_TIMEOUT: 300_000, COMPACT_CONTINUATION_DELAY: 1500,
     RELOAD_CONTINUATION_DELAY: 0,
     log: { info: () => {}, warn: () => {}, error: () => {}, debug: () => {} },
+    ...deps,
   });
   const written = [];
   const queue = {
@@ -568,8 +569,8 @@ test('deleting the seat removes its hidden mail with its other pending files', (
   } finally { mock.timers.reset(); }
 });
 
-function gapRig() {
-  const h = rig();
+function gapRig(opts) {
+  const h = rig(opts);
   const old = h.s;
   let open;
   const gate = new Promise((r) => { open = r; });
@@ -747,5 +748,82 @@ test('reload gap: a failed respawn leaves the escalation counted, watched and he
     assert.strictEqual(e.told(), 1);
     h.m._emitActivity('a', 'thinking');
     assert.strictEqual(e.state(back._parkedEscalations).loopStep, undefined, 'the delivered escalation releases the hold');
+  } finally { mock.timers.reset(); }
+});
+
+async function enterGap(h) {
+  h.m._handleContextIntent(h.old, 'reload', 'next');
+  await new Promise((r) => setImmediate(r));
+  await ticks();
+  assert.strictEqual(h.m.sessions.has('a'), false, 'ENTER: in the gap');
+}
+
+test('reload gap: a message whose park write fails is reported NOT delivered to its sender, nothing kept', async () => {
+  mock.timers.enable({ apis: ['setTimeout'] });
+  try {
+    let failWrite = false;
+    const parkDelivery = (...a) => { if (failWrite) throw new Error('disk full'); return pend.parkDelivery(...a); };
+    const h = gapRig({ deps: { parkDelivery } });
+    await enterGap(h);
+    failWrite = true;
+    assert.deepStrictEqual(h.m._gatedDeliver('a', 'ticket-loop', 'NOTE', false), { held: 'reloading' });
+    await h.m._handleIntent('bob', { type: 'dm', target: 'a', body: 'LOST-DM' });
+    assert.ok(h.written.some((w) => w.startsWith('[agent:dm] NOT delivered to a: reloading. Nothing was kept')), 'the sender is told');
+    assert.strictEqual(h.onDisk(), 0);
+  } finally { mock.timers.reset(); }
+});
+
+test('reload gap: a message with images parks its rebodied text and warns that the images were dropped', async () => {
+  mock.timers.enable({ apis: ['setTimeout'] });
+  try {
+    const warns = [];
+    const log = { info: () => {}, warn: (_c, m) => warns.push(m), error: () => {}, debug: () => {} };
+    const h = gapRig({ deps: { log } });
+    await enterGap(h);
+    h.m._deliverMessage('a', 'bob', 'PLAIN', 'dm', '', null, null, [{ data: 'x' }, { data: 'y' }], (d) => `REBODY-${d}`);
+    assert.deepStrictEqual(pend.parkedTexts(h.PENDING_DIR, 'a'), ['[agent:from bob] REBODY-parked']);
+    assert.ok(warns.some((w) => /reload gap for a: 2 image/.test(w)), warns.join('\n'));
+  } finally { mock.timers.reset(); }
+});
+
+test('a wire rotation that lands the clear edge fires the post-clear continuation', () => {
+  mock.timers.enable({ apis: ['setTimeout'] });
+  try {
+    const h = rig();
+    h.m._handleContextIntent(h.s, 'clear', 'carry on');
+    assert.deepStrictEqual(h.written, ['/clear'], 'ENTER: the clear was typed');
+    h.m._wireSessionCorroborated = () => true;
+    h.m._noteConversationForDigest = () => {};
+    h.m._onWireSessionRotated(h.s, 'a', 'sid-B');
+    assert.strictEqual(h.m._ctxHoldMap().get('a').state, 'continuation');
+    mock.timers.tick(1500);
+    assert.deepStrictEqual(h.written, ['/clear', 'HANDOFF carry on']);
+  } finally { mock.timers.reset(); }
+});
+
+test('a restored hold whose seat never reaches boot-ready fails with its notice', () => {
+  mock.timers.enable({ apis: ['setTimeout'] });
+  try {
+    const root = mkTmpRoot('clx-ctxhold-restored-timer-');
+    const a = rig({ root });
+    a.m._handleContextIntent(a.s, 'clear', 'cont');
+    const b = rig({ root });
+    assert.strictEqual(b.m._ctxHoldMap().get('a').state, 'restored', 'ENTER: restored with its live seat');
+    mock.timers.tick(300_000);
+    assert.strictEqual(b.m._ctxHoldMap().get('a').state, 'failed');
+    assert.strictEqual(b.casts.filter((c) => c.p && c.p.kind === 'context-stuck').length, 1);
+  } finally { mock.timers.reset(); }
+});
+
+test('a compact that ends during a clear leaves the clearing badge on the row', () => {
+  mock.timers.enable({ apis: ['setTimeout'] });
+  try {
+    const h = rig();
+    const rows = [];
+    h.m._sendToSession = (_n, ch, _name, c) => { if (ch === 'session-compacting') rows.push(c && c.trigger); };
+    h.m._handleContextIntent(h.s, 'clear', '');
+    h.s.compacting = { since: Date.now() };
+    h.m._onCompactEnd(h.s, 'done');
+    assert.deepStrictEqual(rows, ['clearing', null, 'clearing']);
   } finally { mock.timers.reset(); }
 });

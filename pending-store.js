@@ -233,7 +233,7 @@ function claimIsStale(p) {
 }
 
 function rehomeOrphans(root, name) {
-  const dir = agentDir(root, name);
+  const dir = isHeld(root, name) ? heldDir(root, name) : agentDir(root, name);
   const prefix = `${name}.draining.`;
   const listings = [];
   try { listings.push([claimsDir(root), fs.readdirSync(claimsDir(root))]); } catch {}
